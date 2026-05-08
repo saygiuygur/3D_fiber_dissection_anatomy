@@ -4,47 +4,42 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>3D Fiber Dissection Anatomy</title>
-
-  <!-- 3D viewer -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-
   <style>
-    body { margin: 0; font-family: system-ui, sans-serif; }
-    .wrap { display: flex; height: 100vh; }
-    .sidebar {
-      width: 300px; border-right: 1px solid #ddd; padding: 12px;
-      overflow: auto; background: #fff;
-    }
-    .btn {
-      width: 100%;
-      padding: 10px;
-      margin: 6px 0;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      background: #fff;
-      text-align: left;
-      cursor: pointer;
-    }
-    .btn.active { border-color: #111; }
-    .small { font-size: 12px; color: #666; margin-top: 10px; line-height: 1.4; }
-    model-viewer { width: calc(100vw - 300px); height: 100vh; }
+    body { margin:0; font-family: system-ui, sans-serif; }
+    .wrap { display:flex; height:100vh; }
+    .sidebar { width:320px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
+    .btn { width:100%; padding:10px; margin:6px 0; border:1px solid #ddd; border-radius:10px; background:#fff; text-align:left; cursor:pointer; }
+    .btn.active { border-color:#111; }
+    model-viewer { width:calc(100vw - 320px); height:100vh; }
+    .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
   </style>
 </head>
-
 <body>
   <div class="wrap">
     <div class="sidebar">
-      <h3 style="margin: 6px 0 12px;">Parts</h3>
-      <div id="list">Loading parts…</div>
+      <h3 style="margin:6px 0 12px;">Models</h3>
+
+      <button class="btn active" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb">01_Veselled</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb">02_Veselless</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers.glb">03_U_Fibers</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF.glb">04_Superficial_SLF</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate.glb">05_Superficial_Arcuate</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Arcuate_SLF.glb">06_Arcuate_SLF</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule.glb">07_Extreme_Capsule</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/08_Claustrum.glb">08_Claustrum</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule.glb">09_Putamen_External_Capsule</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Internal_Capsule_Perforators.glb">10_Internal_Capsule_Perforators</button>
+      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb">11_Anterior_Comissure</button>
 
       <div class="small">
-        This list is created from <b>material names</b> inside your GLB.<br>
-        If you see only a few items (or weird names like “Material.001”), rename materials in Blender and re-export.
+        Click a name → only that model loads.<br>
+        If you don’t see updates, hard refresh: <b>Ctrl+F5</b>.
       </div>
     </div>
 
     <model-viewer id="mv"
-      src="https://github.com/saygiuygur/3D_fiber_dissection_anatomy/releases/download/v1/Combined_Right.glb"
+      src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb"
       camera-controls
       interaction-prompt="none"
       exposure="1"
@@ -52,49 +47,16 @@
     </model-viewer>
   </div>
 
-  <script type="module">
+  <script>
     const mv = document.getElementById('mv');
-    const list = document.getElementById('list');
+    const buttons = [...document.querySelectorAll('.btn')];
 
-    // Set material alpha (opacity)
-    function setAlpha(material, alpha) {
-      const pbr = material.pbrMetallicRoughness;
-      const base = pbr.baseColorFactor; // [r,g,b,a]
-      pbr.setBaseColorFactor([base[0], base[1], base[2], alpha]);
-    }
-
-    // Show only one material; hide all others
-    function showOnly(targetName) {
-      for (const mat of mv.model.materials) {
-        const on = (mat.name === targetName);
-        setAlpha(mat, on ? 1.0 : 0.0);
-      }
-    }
-
-    mv.addEventListener('load', () => {
-      const mats = mv.model?.materials || [];
-      const names = mats.map(m => m.name).filter(n => n && n.trim().length);
-
-      if (!names.length) {
-        list.textContent = 'No named materials found in GLB.';
-        return;
-      }
-
-      list.innerHTML = '';
-      names.forEach((name, i) => {
-        const b = document.createElement('button');
-        b.className = 'btn' + (i === 0 ? ' active' : '');
-        b.textContent = name;
-        b.onclick = () => {
-          document.querySelectorAll('.btn').forEach(x => x.classList.remove('active'));
-          b.classList.add('active');
-          showOnly(name);
-        };
-        list.appendChild(b);
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        buttons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        mv.src = btn.dataset.src;
       });
-
-      // default: show first item only
-      showOnly(names[0]);
     });
   </script>
 </body>
