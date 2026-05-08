@@ -10,28 +10,24 @@
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
     .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
-    .row {
+
+    .row{
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
       border-radius:10px; background:#fff; cursor:pointer; user-select:none;
       gap:10px;
       transition: border-color 120ms ease;
     }
-
-    /* Black border = ONLY model in view (selected) */
     .row.active { border-color:#111; }
-
-    /* Transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name {
+    .name{
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
       flex: 1 1 auto;
     }
-
-    .meta {
+    .meta{
       width:24px;
       height:24px;
       display:flex;
@@ -39,21 +35,19 @@
       justify-content:center;
       flex: 0 0 24px;
     }
-
-    .status-icon {
+    .status-icon{
       width:20px;
       height:20px;
       display:block;
     }
-
-    .small {
+    .small{
       font-size:12px;
       color:#666;
       margin-top:10px;
       line-height:1.4;
     }
 
-    model-viewer {
+    model-viewer{
       width:calc(100vw - 360px);
       height:100vh;
     }
@@ -99,15 +93,15 @@
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
 
-    // Model state
+    // State per model
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Current fetch control
+    // Current download control
     let currentController = null;
     let currentDownloadingId = null;
 
-    // Model in view (border follows this only)
+    // Selection (black border follows this only)
     let selectedId = MODELS[0].id;
 
     // Preload pause logic
@@ -122,39 +116,7 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Camera memory (angle + zoom + target + fov) =====
-    // cameraOrbit contains zoom via radius, but we also store fieldOfView to be safe.
-    let savedCamera = { orbit: null, target: null, fov: null };
-    let cameraReady = false;
-
-    function snapshotCamera() {
-      // mv.cameraOrbit / cameraTarget / fieldOfView are strings like "45deg 75deg 2.5m"
-      // We store them as-is and reapply after load.
-      if (mv.cameraOrbit) savedCamera.orbit = mv.cameraOrbit;
-      if (mv.cameraTarget) savedCamera.target = mv.cameraTarget;
-      if (mv.fieldOfView) savedCamera.fov = mv.fieldOfView;
-    }
-
-    function applySavedCamera() {
-      if (savedCamera.orbit) mv.cameraOrbit = savedCamera.orbit;
-      if (savedCamera.target) mv.cameraTarget = savedCamera.target;
-      if (savedCamera.fov) mv.fieldOfView = savedCamera.fov;
-
-      // Ensure the goal camera values are actually applied immediately if supported.
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    // Update camera memory whenever user moves camera (once model is ready)
-    mv.addEventListener('camera-change', () => {
-      if (!cameraReady) return;
-      snapshotCamera();
-    });
-
-    // ===== Visuals =====
-
-    // Downloading visual (transparent border)
+    // Downloading visual (light border)
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -172,6 +134,7 @@
       }
     }
 
+    // ===== Status Icons (loading ring / done / pause / error) =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -181,7 +144,6 @@
       return Math.max(0, Math.min(100, n));
     }
 
-    // Gray circle filling with blue arc clockwise
     function loadingIconSVG(percent) {
       const r = 7;
       const c = 2 * Math.PI * r;
@@ -189,8 +151,7 @@
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
-          <circle
-            cx="10" cy="10" r="${r}"
+          <circle cx="10" cy="10" r="${r}"
             fill="none"
             stroke="#1e88e5"
             stroke-width="2.5"
@@ -203,7 +164,6 @@
       `;
     }
 
-    // Green filled circle + white tick
     function doneIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -218,7 +178,6 @@
       `;
     }
 
-    // Gray outlined circle + white inside + pause bars
     function pausedIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -247,8 +206,7 @@
       if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
       if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
       if (st.status === "loading") {
-        const pct = parsePercent(st.progressText);
-        meta.innerHTML = loadingIconSVG(pct);
+        meta.innerHTML = loadingIconSVG(parsePercent(st.progressText));
         return;
       }
       meta.innerHTML = "";
@@ -281,7 +239,46 @@
       paintDownloading(null);
     }
 
-    // Resume scheduler helpers
+    // ===== Camera persistence (store numeric orbit/target/fov) =====
+    // Using getCameraOrbit/getCameraTarget is more reliable than string parsing.
+    let savedCamera = {
+      orbit: null,   // {theta, phi, radius}
+      target: null,  // {x, y, z}
+      fov: null      // number (deg)
+    };
+
+    function snapshotCamera() {
+      try {
+        if (typeof mv.getCameraOrbit === "function") savedCamera.orbit = mv.getCameraOrbit();
+        if (typeof mv.getCameraTarget === "function") savedCamera.target = mv.getCameraTarget();
+        if (typeof mv.getFieldOfView === "function") savedCamera.fov = mv.getFieldOfView();
+      } catch (_) {}
+    }
+
+    function applySavedCamera() {
+      try {
+        if (savedCamera.orbit) {
+          const o = savedCamera.orbit;
+          // model-viewer accepts: "<theta>rad <phi>rad <radius>m"
+          mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${o.radius}m`;
+        }
+        if (savedCamera.target) {
+          const t = savedCamera.target;
+          mv.cameraTarget = `${t.x}m ${t.y}m ${t.z}m`;
+        }
+        if (savedCamera.fov != null) {
+          mv.fieldOfView = `${savedCamera.fov}deg`;
+        }
+        if (typeof mv.jumpCameraToGoal === "function") {
+          try { mv.jumpCameraToGoal(); } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    // Keep camera memory updated when user moves it
+    mv.addEventListener('camera-change', () => snapshotCamera());
+
+    // ===== Resume scheduler =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -301,7 +298,7 @@
       }, 1200);
     }
 
-    // Download
+    // ===== Downloader (your existing logic, unchanged behavior) =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -314,7 +311,7 @@
       st.progressText = "";
       refreshMeta(modelId);
 
-      // Abort previous active download (this is what causes mid-way restart; we keep it as you decided)
+      // Abort previous active download
       if (currentController) {
         currentController.abort();
         if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -362,7 +359,6 @@
 
         paintDownloading(null);
         maybeResumePreload();
-
         return blobUrl;
 
       } catch (err) {
@@ -383,10 +379,9 @@
       }
     }
 
-    // Viewer: ONLY here we change selectedId + black border + keep camera (angle + zoom + target)
+    // ===== Viewer switch (preserve zoom+angle+target; do NOT restart downloads for already-done models) =====
     async function showModel(modelId) {
-      // Snapshot camera just before switching (captures current zoom/radius too)
-      // If cameraReady is false, this is still fine (it stores the default orbit once available)
+      // Save camera right before switching
       snapshotCamera();
 
       selectedId = modelId;
@@ -394,18 +389,18 @@
 
       const st = state.get(modelId);
 
-      // Apply camera AFTER the new model is loaded and model-viewer has set its internal framing.
-      const applyAfterLoad = () => {
-        // Important: apply in the next tick to avoid model-viewer's own post-load camera adjustment
-        setTimeout(() => {
-          applySavedCamera();
-          cameraReady = true; // after first successful load, start tracking camera-change
-        }, 0);
+      // Apply camera AFTER model-viewer's own fit pass.
+      const onLoad = () => {
+        // Use two rAFs to ensure we run after internal layout/fit.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            applySavedCamera();
+          });
+        });
       };
-      mv.addEventListener('load', applyAfterLoad, { once: true });
+      mv.addEventListener('load', onLoad, { once: true });
 
-      // IMPORTANT: setting mv.src should happen only once per switch to avoid restarting downloads.
-      // We only assign src after we have the blobUrl (or cached blobUrl).
+      // IMPORTANT: If already downloaded, NEVER call downloadToBlobUrl (prevents abort/restart).
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
         return;
@@ -449,7 +444,7 @@
     (function init() {
       buildListOnce();
 
-      // Initial snapshot (will be updated after first load)
+      // Initial snapshot (default camera)
       snapshotCamera();
 
       showModel(selectedId).then(() => {
