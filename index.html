@@ -27,7 +27,12 @@
     .status-icon{ width:20px; height:20px; display:block; }
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-    model-viewer{ width:calc(100vw - 360px); height:100vh; background:#fff; }
+
+    model-viewer{
+      width:calc(100vw - 360px);
+      height:100vh;
+      background:#fff;
+    }
   </style>
 </head>
 
@@ -44,7 +49,7 @@
       </div>
     </div>
 
-    <!-- reveal="manual" prevents the model from rendering until dismissPoster() -->
+    <!-- IMPORTANT: reveal="manual" requires dismissPoster() to show anything -->
     <model-viewer id="mv"
       reveal="manual"
       camera-controls
@@ -72,75 +77,43 @@
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
 
-    // ---- Model state ----
+    // ✅ CRITICAL FIX:
+    // With reveal="manual", always reveal after ANY successful load
+    mv.addEventListener('load', () => {
+      mv.dismissPoster?.();
+    });
+
+    // Per-model state
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Single active fetch
+    // Current download control
     let currentController = null;
     let currentDownloadingId = null;
 
-    // Prevent redownload loops
+    // Prevent self-restart loops
     const inFlight = new Map(); // modelId -> Promise<string>
 
-    // Selection UI
+    // Selection (black border)
     let selectedId = MODELS[0].id;
 
-    // Preload scheduler
+    // Preload pause logic
     let preloadEnabled = true;
     let preloadTimer = null;
+
+    // Resume scheduler
     let resumeRequested = false;
+
+    // Prevent resumePreload re-entrancy
     let preloadRunning = false;
+
     const preloadQueue = MODELS.map(m => m.id);
 
     // UI nodes
-    const rowEls = new Map();
+    const rowEls = new Map(); // id -> { row, meta }
+
+    // Downloading visual (transparent border)
     let downloadingVisualId = null;
-
-    // ---- Camera carry (freeze per swap) ----
-    // We store numeric (orbit/target/fov) and apply only once after load, before dismissPoster.
-    let savedCam = null;
-
-    function readCam() {
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      const f = mv.getFieldOfView?.();
-      if (!o || !t || typeof f !== "number") return null;
-      return {
-        orbit: { theta: o.theta, phi: o.phi, radius: o.radius },
-        target: { x: t.x, y: t.y, z: t.z },
-        fov: f
-      };
-    }
-
-    function applyCam(cam) {
-      if (!cam) return;
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    // Capture initial framed cam once (so swaps work even before user touches camera)
-    let initialCamCaptured = false;
-    mv.addEventListener('load', () => {
-      if (initialCamCaptured) return;
-      const cam = readCam();
-      if (cam) {
-        savedCam = cam;
-        initialCamCaptured = true;
-      }
-    });
-
-    // When user changes camera, keep savedCam updated (no debounce needed with reveal-manual)
-    mv.addEventListener('camera-change', () => {
-      const cam = readCam();
-      if (cam) savedCam = cam;
-    });
-
-    // ---- UI ----
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
         rowEls.get(downloadingVisualId).row.classList.remove("downloading");
@@ -157,6 +130,7 @@
       }
     }
 
+    // ===== Status icons =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -243,11 +217,12 @@
       paintDownloading(null);
     }
 
-    // ---- Preload scheduling ----
+    // ===== Preload scheduling =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+
       resumeRequested = false;
       resumePreload();
     }
@@ -262,7 +237,7 @@
       }, 1200);
     }
 
-    // ---- Download with inFlight dedupe ----
+    // ===== Download with inFlight dedupe =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -272,11 +247,11 @@
 
       const p = (async () => {
         paintDownloading(modelId);
-
         st.status = "loading";
         st.progressText = "";
         refreshMeta(modelId);
 
+        // Abort previous active download (your chosen behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -351,20 +326,63 @@
       return p;
     }
 
-    // ---- Show model (the important part) ----
+    // ===== Camera carry =====
+    // Keep last known camera, apply after model load.
+    let savedCam = null;
+
+    function readCam() {
+      const o = mv.getCameraOrbit?.();
+      const t = mv.getCameraTarget?.();
+      const f = mv.getFieldOfView?.();
+      if (!o || !t || typeof f !== "number") return null;
+      return {
+        orbit: { theta: o.theta, phi: o.phi, radius: o.radius },
+        target: { x: t.x, y: t.y, z: t.z },
+        fov: f
+      };
+    }
+
+    function applyCam(cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    // Capture initial camera once first model is loaded (so swaps work even before user moves camera)
+    let initialCamCaptured = false;
+    mv.addEventListener('load', () => {
+      if (initialCamCaptured) return;
+      const cam = readCam();
+      if (cam) {
+        savedCam = cam;
+        initialCamCaptured = true;
+      }
+    });
+
+    // Keep savedCam updated while user moves camera
+    mv.addEventListener('camera-change', () => {
+      const cam = readCam();
+      if (cam) savedCam = cam;
+    });
+
+    // ===== Show model =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // Save camera right now (this is your “current view”)
+      // Save current camera right now
       const camNow = readCam();
       if (camNow) savedCam = camNow;
 
       selectedId = modelId;
       paintActive();
 
-      // Hide the model immediately (no fade) while swapping
+      // With reveal="manual", hide while swapping
       mv.showPoster?.();
 
       const onLoad = () => {
@@ -373,6 +391,7 @@
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             applyCam(savedCam);
+            // ✅ ensure it's visible even if something went wrong elsewhere
             mv.dismissPoster?.();
           });
         });
