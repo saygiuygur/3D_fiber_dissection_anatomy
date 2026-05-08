@@ -2,9 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>3D Fiber Dissection Anatomy</title>
-  <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
@@ -31,7 +30,7 @@
       <div id="list"></div>
       <div class="small">
         Auto-preloads 01 → 11.<br>
-        Clicking a model prioritizes it (current download is paused).
+        Clicking a model prioritizes it (preload pauses while you interact).
       </div>
     </div>
 
@@ -44,7 +43,6 @@
   </div>
 
   <script>
-    // Models (name + URL)
     const MODELS = [
       { id: "01_Veselled", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb" },
       { id: "02_Veselless", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb" },
@@ -62,108 +60,84 @@
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
 
-    // Cache: model id -> { status, progressText, blobUrl }
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Abort controller for the *current* download (so we can pause it)
     let currentController = null;
     let currentDownloadingId = null;
 
-    // Preload queue: start from 01 to last
+    // IMPORTANT: user selection is separate from downloading id
+    let selectedId = MODELS[0].id;
+
+    // Pause auto preload while user is interacting
+    let preloadEnabled = true;
+    let preloadTimer = null;
+
     const preloadQueue = MODELS.map(m => m.id);
 
-    // ---- FIX #1: build sidebar ONCE and update in place ----
+    // ---- UI: build once + update in place (keeps clicks reliable) ----
     const rowEls = new Map(); // id -> { row, meta }
-    let activeId = null;
 
     function setActive(id) {
-      activeId = id;
+      selectedId = id;
       for (const m of MODELS) {
-        const el = rowEls.get(m.id);
-        if (el) el.row.classList.toggle("active", m.id === id);
+        rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
       }
-    }
-
-    // Throttle UI updates to once per animation frame
-    const dirty = new Set();
-    let rafPending = false;
-
-    function markDirty(id) {
-      dirty.add(id);
-      scheduleFlush();
-    }
-    function scheduleFlush() {
-      if (rafPending) return;
-      rafPending = true;
-      requestAnimationFrame(() => {
-        rafPending = false;
-        flushDirty();
-      });
-    }
-    function flushDirty() {
-      for (const id of dirty) refreshMeta(id);
-      dirty.clear();
     }
 
     function refreshMeta(id) {
       const st = state.get(id);
-      const el = rowEls.get(id);
-      if (!el) return;
+      const meta = rowEls.get(id).meta;
 
-      if (st.status === "done") {
-        el.meta.innerHTML = `<span class="tick">✓</span>`;
-      } else if (st.status === "loading") {
-        el.meta.textContent = st.progressText || "loading…";
-      } else if (st.status === "paused") {
-        el.meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
-      } else if (st.status === "error") {
-        el.meta.textContent = "error";
-      } else {
-        el.meta.textContent = "";
-      }
+      if (st.status === "done") meta.innerHTML = `<span class="tick">✓</span>`;
+      else if (st.status === "loading") meta.textContent = st.progressText || "loading…";
+      else if (st.status === "paused") meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
+      else if (st.status === "error") meta.textContent = "error";
+      else meta.textContent = "";
     }
 
-    function buildListOnce(initialActiveId) {
+    function buildListOnce() {
       list.innerHTML = "";
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
-
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
-
         const meta = document.createElement('div');
         meta.className = "meta";
-        meta.textContent = "";
 
         row.appendChild(name);
         row.appendChild(meta);
+
         row.addEventListener('click', () => onUserSelect(m.id));
 
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
-
-        // initial paint for this item
         refreshMeta(m.id);
       }
-      setActive(initialActiveId);
+      setActive(selectedId);
     }
 
-    // --- Download with progress + abort ---
+    function pausePreloadForAWhile() {
+      preloadEnabled = false;
+      if (preloadTimer) clearTimeout(preloadTimer);
+      preloadTimer = setTimeout(() => {
+        preloadEnabled = true;
+        resumePreload(); // restart after user stops clicking for a moment
+      }, 1200);
+    }
+
+    // ---- Download: DO NOT change active selection here ----
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
 
-      // Already downloaded
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
 
-      // Mark loading
       st.status = "loading";
       st.progressText = "";
-      setActive(modelId);
-      markDirty(modelId);
+      refreshMeta(modelId); // update status text only
 
       // Abort previous active download
       if (currentController) {
@@ -172,7 +146,7 @@
           const prev = state.get(currentDownloadingId);
           if (prev && prev.status === "loading") {
             prev.status = "paused";
-            markDirty(currentDownloadingId);
+            refreshMeta(currentDownloadingId);
           }
         }
       }
@@ -186,7 +160,6 @@
 
         const total = Number(res.headers.get("Content-Length")) || null;
 
-        // Stream reader (lets us show progress)
         const reader = res.body.getReader();
         let received = 0;
         const chunks = [];
@@ -198,15 +171,11 @@
           chunks.push(value);
           received += value.byteLength;
 
-          if (total) {
-            const pct = Math.floor((received / total) * 100);
-            st.progressText = `${pct}%`;
-          } else {
-            st.progressText = `${(received / (1024*1024)).toFixed(1)} MB`;
-          }
+          st.progressText = total
+            ? `${Math.floor((received / total) * 100)}%`
+            : `${(received / (1024*1024)).toFixed(1)} MB`;
 
-          // only update this one row, throttled
-          markDirty(modelId);
+          refreshMeta(modelId);
         }
 
         const blob = new Blob(chunks, { type: "model/gltf-binary" });
@@ -215,77 +184,68 @@
         st.status = "done";
         st.progressText = "";
         st.blobUrl = blobUrl;
+        refreshMeta(modelId);
 
-        markDirty(modelId);
         return blobUrl;
-
       } catch (err) {
         if (err.name === "AbortError") {
-          // Paused by user selecting another model
           st.status = "paused";
-          markDirty(modelId);
+          refreshMeta(modelId);
           throw err;
         }
         st.status = "error";
         st.progressText = "";
-        markDirty(modelId);
+        refreshMeta(modelId);
         throw err;
       }
     }
 
-    // --- Viewer select ---
     async function showModel(modelId) {
-      const st = state.get(modelId);
+      setActive(modelId); // ONLY user/viewer changes active selection
 
-      // If already downloaded, instant switch
+      const st = state.get(modelId);
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
-        setActive(modelId);
         return;
       }
 
-      // Otherwise download (priority)
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
         mv.src = blobUrl;
-        setActive(modelId);
       } catch (e) {
-        // Abort is expected when user clicks elsewhere; ignore
+        // ignore abort
       }
     }
 
-    // --- User click behavior: pause current, prioritize clicked ---
     function onUserSelect(modelId) {
-      showModel(modelId).then(() => {
-        // after prioritizing clicked, resume background preload
-        resumePreload();
-      });
+      pausePreloadForAWhile(); // this is the key: stop preload from overriding user
+      showModel(modelId);
     }
 
-    // --- Preload sequentially (01 -> 11) ---
     async function resumePreload() {
+      if (!preloadEnabled) return;
+
+      // If user model is currently downloading, do nothing
+      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+
       for (const id of preloadQueue) {
+        if (!preloadEnabled) return;
+
         const st = state.get(id);
         if (st.status === "done") continue;
 
-        // If user clicked something else and it's currently downloading, stop background.
-        if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-
+        // IMPORTANT: preload must NOT change active selection
         try {
           await downloadToBlobUrl(id);
         } catch (e) {
           if (e.name === "AbortError") return;
-          // On error, skip it and continue to next
         }
       }
     }
 
-    // --- Boot ---
     (function init() {
-      buildListOnce(MODELS[0].id);
-
-      // Start by showing model 01 (and it will also download it if not cached)
-      showModel(MODELS[0].id).then(() => resumePreload());
+      buildListOnce();
+      showModel(selectedId).then(() => resumePreload());
     })();
   </script>
 </body>
