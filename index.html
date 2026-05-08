@@ -4,23 +4,27 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>3D Fiber Dissection Anatomy</title>
+
+  <!-- Kill favicon.ico request -->
+  <link rel="icon" href="data:," />
+
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
-    .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
+    .sidebar { width:380px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
     .row {
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
       border-radius:10px; background:#fff; cursor:pointer; user-select:none;
-      gap:10px;
+      gap:12px;
     }
     .row.active { border-color:#111; }
     .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex: 0 0 auto; }
-    .tick { color:#0a8a0a; font-weight:700; }
+    .tick { color:#0a8a0a; font-weight:800; }
     .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-    model-viewer { width:calc(100vw - 360px); height:100vh; }
+    model-viewer { width:calc(100vw - 380px); height:100vh; }
   </style>
 </head>
 <body>
@@ -29,8 +33,7 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
       <div class="small">
-        Auto-preloads 01 → 11.<br>
-        Clicking a model prioritizes it (current download is paused).
+        Auto-downloads 01 → 11. Clicking a model prioritizes it (current download is aborted & marked paused).
       </div>
     </div>
 
@@ -38,213 +41,199 @@
       camera-controls
       interaction-prompt="none"
       exposure="1"
-      shadow-intensity="1">
+      shadow-intensity="1"
+      loading="eager">
     </model-viewer>
   </div>
 
   <script>
-    // 1) Put your models here (name + URL)
     const MODELS = [
-      { id: "01_Veselled", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb" },
-      { id: "02_Veselless", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb" },
-      { id: "03_U_Fibers", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers.glb" },
-      { id: "04_Superficial_SLF", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF.glb" },
-      { id: "05_Superficial_Arcuate", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate.glb" },
-      { id: "06_Arcuate_SLF", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Arcuate_SLF.glb" },
-      { id: "07_Extreme_Capsule", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule.glb" },
-      { id: "08_Claustrum", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/08_Claustrum.glb" },
-      { id: "09_Putamen_External_Capsule", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule.glb" },
-      { id: "10_Internal_Capsule_Perforators", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Internal_Capsule_Perforators.glb" },
-      { id: "11_Anterior_Comissure", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb" },
+      ["01_Veselled","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb"],
+      ["02_Veselless","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb"],
+      ["03_U_Fibers","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers.glb"],
+      ["04_Superficial_SLF","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF.glb"],
+      ["05_Superficial_Arcuate","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate.glb"],
+      ["06_Arcuate_SLF","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Arcuate_SLF.glb"],
+      ["07_Extreme_Capsule","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule.glb"],
+      ["08_Claustrum","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/08_Claustrum.glb"],
+      ["09_Putamen_External_Capsule","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule.glb"],
+      ["10_Internal_Capsule_Perforators","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Internal_Capsule_Perforators.glb"],
+      ["11_Anterior_Comissure","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb"],
     ];
 
-    const mv = document.getElementById('mv');
-    const list = document.getElementById('list');
+    const mv = document.getElementById("mv");
+    const list = document.getElementById("list");
 
-    // Cache: model id -> { status, progressText, blobUrl }
-    const state = new Map();
-    MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
+    // State per model
+    const state = new Map(); // id -> {status, pct, mb, blobUrl}
+    for (const [id] of MODELS) state.set(id, { status:"idle", pct:null, mb:0, blobUrl:null });
 
-    // Abort controller for the *current* download (so we can pause it)
-    let currentController = null;
-    let currentDownloadingId = null;
+    // Download manager
+    let activeId = MODELS[0][0];
+    let controller = null;
+    let downloadingId = null;
 
-    // Preload queue: start from 01 to last
-    const preloadQueue = MODELS.map(m => m.id);
+    // Queue of ids to download (in order)
+    let queue = MODELS.map(([id]) => id);
 
-    // --- UI building ---
-    function renderList(activeId = null) {
+    function metaText(st){
+      if (st.status === "done") return `<span class="tick">✓</span>`;
+      if (st.status === "paused") {
+        if (st.pct != null) return `paused (${st.pct}%)`;
+        if (st.mb > 0) return `paused (${st.mb.toFixed(1)}MB)`;
+        return "paused";
+      }
+      if (st.status === "loading") {
+        if (st.pct != null) return `${st.pct}%`;
+        if (st.mb > 0) return `${st.mb.toFixed(1)}MB`;
+        return "loading…";
+      }
+      if (st.status === "error") return "error";
+      return "";
+    }
+
+    function render(){
       list.innerHTML = "";
-      for (const m of MODELS) {
-        const st = state.get(m.id);
+      for (const [id] of MODELS) {
+        const st = state.get(id);
 
-        const row = document.createElement('div');
-        row.className = "row" + (m.id === activeId ? " active" : "");
-        row.dataset.id = m.id;
+        const row = document.createElement("div");
+        row.className = "row" + (id === activeId ? " active" : "");
+        row.onclick = () => selectModel(id);
 
-        const name = document.createElement('div');
+        const name = document.createElement("div");
         name.className = "name";
-        name.textContent = m.id;
+        name.textContent = id;
 
-        const meta = document.createElement('div');
+        const meta = document.createElement("div");
         meta.className = "meta";
-
-        // Right-side status
-        if (st.status === "done") {
-          meta.innerHTML = `<span class="tick">✓</span>`;
-        } else if (st.status === "loading") {
-          meta.textContent = st.progressText || "loading…";
-        } else if (st.status === "paused") {
-          meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
-        } else if (st.status === "error") {
-          meta.textContent = "error";
-        } else {
-          meta.textContent = "";
-        }
+        meta.innerHTML = metaText(st);
 
         row.appendChild(name);
         row.appendChild(meta);
-
-        row.addEventListener('click', () => onUserSelect(m.id));
         list.appendChild(row);
       }
     }
 
-    // --- Download with progress + abort ---
-    async function downloadToBlobUrl(modelId) {
-      const model = MODELS.find(x => x.id === modelId);
-      const st = state.get(modelId);
+    function findUrl(id){
+      return MODELS.find(x => x[0] === id)[1];
+    }
 
-      // Already downloaded
+    async function download(id){
+      const st = state.get(id);
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
 
-      // Mark loading
-      st.status = "loading";
-      st.progressText = "";
-      renderList(modelId);
-
-      // Abort previous active download
-      if (currentController) {
-        currentController.abort();
-        if (currentDownloadingId && currentDownloadingId !== modelId) {
-          const prev = state.get(currentDownloadingId);
+      // Abort current download if any
+      if (controller) {
+        controller.abort();
+        if (downloadingId && downloadingId !== id) {
+          const prev = state.get(downloadingId);
           if (prev && prev.status === "loading") prev.status = "paused";
         }
       }
 
-      currentController = new AbortController();
-      currentDownloadingId = modelId;
+      controller = new AbortController();
+      downloadingId = id;
 
-      try {
-        const res = await fetch(model.url, { signal: currentController.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      st.status = "loading";
+      st.pct = null;
+      st.mb = 0;
+      render();
 
-        const total = Number(res.headers.get("Content-Length")) || null;
+      const url = findUrl(id);
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        // Stream reader (lets us show progress)
-        const reader = res.body.getReader();
-        let received = 0;
-        const chunks = [];
+      const total = Number(res.headers.get("Content-Length")) || null;
+      const reader = res.body.getReader();
+      let received = 0;
+      const chunks = [];
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.byteLength;
 
-          chunks.push(value);
-          received += value.byteLength;
-
-          if (total) {
-            const pct = Math.floor((received / total) * 100);
-            st.progressText = `${pct}%`;
-          } else {
-            // Fallback if server doesn't provide Content-Length
-            st.progressText = `${(received / (1024*1024)).toFixed(1)} MB`;
-          }
-          renderList(modelId);
-        }
-
-        const blob = new Blob(chunks, { type: "model/gltf-binary" });
-        const blobUrl = URL.createObjectURL(blob);
-
-        st.status = "done";
-        st.progressText = "";
-        st.blobUrl = blobUrl;
-        renderList(modelId);
-
-        return blobUrl;
-      } catch (err) {
-        if (err.name === "AbortError") {
-          // Paused by user selecting another model
-          st.status = "paused";
-          renderList(modelId);
-          throw err;
-        }
-        st.status = "error";
-        st.progressText = "";
-        renderList(modelId);
-        throw err;
+        st.mb = received / (1024*1024);
+        if (total) st.pct = Math.floor((received / total) * 100);
+        render();
       }
+
+      const blob = new Blob(chunks, { type:"model/gltf-binary" });
+      const blobUrl = URL.createObjectURL(blob);
+
+      st.status = "done";
+      st.pct = 100;
+      st.blobUrl = blobUrl;
+      render();
+
+      return blobUrl;
     }
 
-    // --- Viewer select ---
-    async function showModel(modelId) {
-      const st = state.get(modelId);
+    async function show(id){
+      const st = state.get(id);
+      activeId = id;
+      render();
 
-      // If already downloaded, instant switch
+      // If already downloaded, instant
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
-        renderList(modelId);
         return;
       }
 
-      // Otherwise download (priority)
       try {
-        const blobUrl = await downloadToBlobUrl(modelId);
+        const blobUrl = await download(id);
         mv.src = blobUrl;
       } catch (e) {
-        // Abort is expected when user clicks elsewhere; ignore
+        if (e.name === "AbortError") return; // expected
+        state.get(id).status = "error";
+        render();
       }
     }
 
-    // --- User click behavior: pause current, prioritize clicked ---
-    function onUserSelect(modelId) {
-      showModel(modelId).then(() => {
-        // after prioritizing clicked, resume background preload
-        resumePreload();
-      });
+    function prioritizeInQueue(id){
+      // Put id at front of queue, keep order of others
+      queue = [id, ...queue.filter(x => x !== id)];
     }
 
-    // --- Preload sequentially (01 -> 11) ---
-    async function resumePreload() {
-      // If something is actively downloading due to user action, don’t fight it.
-      // We'll just start/continue when idle.
-      for (const id of preloadQueue) {
-        const st = state.get(id);
-        if (st.status === "done") continue;
-
-        // If user clicked something else and it's currently downloading, stop background.
-        if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+    async function pumpQueue(){
+      // Only one download at a time, sequential
+      while (true) {
+        // next item not done
+        const next = queue.find(x => state.get(x).status !== "done");
+        if (!next) return;
 
         try {
-          await downloadToBlobUrl(id);
-          // If user triggered a new download mid-way, this will abort; then we stop.
+          await download(next);
+          // don't auto-show every downloaded model; only show the active one
+          // (but the first model will be shown by init)
         } catch (e) {
-          if (e.name === "AbortError") return;
-          // On error, skip it and continue to next
+          if (e.name === "AbortError") return; // user clicked something else -> stop pump, will restart
+          state.get(next).status = "error";
+          render();
+          // continue to the next
+          queue = queue.filter(x => x !== next);
         }
       }
     }
 
-    // --- Boot ---
-    (function init() {
-      renderList(MODELS[0].id);
+    function selectModel(id){
+      prioritizeInQueue(id);
+      show(id);            // load+show clicked immediately
+      pumpQueue();         // restart background downloading in new priority order
+    }
 
-      // Start by showing model 01 (and it will also download it if not cached)
-      showModel(MODELS[0].id).then(() => resumePreload());
+    // Hide model-viewer's own top progress bar (we show progress in list)
+    // Setting "interaction-prompt" already reduces UI; this removes the bar via CSS:
+    const style = document.createElement("style");
+    style.textContent = `model-viewer::part(default-progress-bar){ display:none !important; }`;
+    document.head.appendChild(style);
 
-      // Optional: when user clicks a different button while current model is downloading,
-      // the AbortController makes it "pause" and jump to clicked one.
-    })();
+    // Init
+    render();
+    // Start with first model shown and start preloading the rest
+    selectModel(MODELS[0][0]);
   </script>
 </body>
 </html>
