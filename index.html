@@ -40,7 +40,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Fix: switching waits for camera to stop moving (prevents jump on fast clicks).
+        Fix: camera is captured immediately on click (not from a stale saved value).
       </div>
     </div>
 
@@ -99,108 +99,7 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Camera: settled snapshot + frozen per swap =====
-    let latestCamera = null; // {orbit:{theta,phi,radius}, target:{x,y,z}, fov:number}
-    let savingEnabled = true;
-    let settleRaf = 0;
-
-    // NEW: track camera motion; if user clicks during motion we wait for idle
-    let isSwitching = false;
-    let lastCameraChangeTime = 0; // ms (performance.now)
-
-    function readCamera() {
-      const orbit = mv.getCameraOrbit?.();
-      const target = mv.getCameraTarget?.();
-      const fov = mv.getFieldOfView?.();
-      if (!orbit || !target || typeof fov !== "number") return null;
-      return {
-        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
-        target: { x: target.x, y: target.y, z: target.z },
-        fov
-      };
-    }
-
-    function cloneCam(cam) {
-      if (!cam) return null;
-      return {
-        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
-        target: { x: cam.target.x, y: cam.target.y, z: cam.target.z },
-        fov: cam.fov
-      };
-    }
-
-    function applyCam(cam) {
-      if (!cam) return;
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    function scheduleSettledSnapshot() {
-      if (!savingEnabled) return;
-      if (isSwitching) return;
-      if (settleRaf) cancelAnimationFrame(settleRaf);
-      settleRaf = requestAnimationFrame(() => {
-        settleRaf = 0;
-        if (isSwitching) return;
-        const cam = readCamera();
-        if (cam) latestCamera = cam;
-      });
-    }
-
-    // IMPORTANT CHANGE:
-    // camera-change fires while the camera is moving (drag inertia, zoom animation, etc).
-    // We use it ONLY to update lastCameraChangeTime and to schedule a settled snapshot.
-    mv.addEventListener('camera-change', () => {
-      if (isSwitching) return;
-      lastCameraChangeTime = performance.now();
-      scheduleSettledSnapshot();
-    });
-
-    // Keep your original settle triggers too (these are still useful)
-    mv.addEventListener('wheel', scheduleSettledSnapshot, { passive: true });
-    mv.addEventListener('pointerup', scheduleSettledSnapshot, { passive: true });
-    mv.addEventListener('touchend', scheduleSettledSnapshot, { passive: true });
-
-    // Capture initial camera once first model loads — AFTER it settles (2 frames)
-    let initialCaptured = false;
-    mv.addEventListener('load', () => {
-      if (initialCaptured) return;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const cam = readCamera();
-          if (cam) {
-            latestCamera = cam;
-            initialCaptured = true;
-          }
-        });
-      });
-    });
-
-    // NEW: wait until camera has been idle (no camera-change events) for N ms
-    function waitForCameraIdle(idleMs = 120, maxWaitMs = 600) {
-      const start = performance.now();
-      return new Promise(resolve => {
-        const check = () => {
-          const now = performance.now();
-          const since = now - lastCameraChangeTime;
-
-          // If camera hasn't changed recently, we're good
-          if (since >= idleMs) return resolve();
-
-          // Don't hang forever
-          if (now - start >= maxWaitMs) return resolve();
-
-          setTimeout(check, 16);
-        };
-        check();
-      });
-    }
-
-    // ===== Visual: downloading border =====
+    // Downloading visual (transparent border)
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -305,7 +204,7 @@
       paintDownloading(null);
     }
 
-    // ===== Preload scheduler =====
+    // ===== Preload scheduling =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -325,7 +224,7 @@
       }, 1200);
     }
 
-    // ===== Downloader (with inFlight dedupe) =====
+    // ===== Download with inFlight dedupe =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -414,19 +313,78 @@
       return p;
     }
 
-    // ===== Show model (freeze per swap) =====
+    // ===== Camera carry (FIXED) =====
+    let latestCamera = null;     // updated continuously while user moves camera
+    let isSwitching = false;     // blocks updates during swap
+    let savingEnabled = true;
+
+    function readCamera() {
+      const orbit = mv.getCameraOrbit?.();
+      const target = mv.getCameraTarget?.();
+      const fov = mv.getFieldOfView?.();
+      if (!orbit || !target || typeof fov !== "number") return null;
+      return {
+        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov
+      };
+    }
+
+    function cloneCam(cam) {
+      if (!cam) return null;
+      return {
+        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
+        target: { x: cam.target.x, y: cam.target.y, z: cam.target.z },
+        fov: cam.fov
+      };
+    }
+
+    function applyCam(cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    // Keep latestCamera updated whenever the camera changes (while NOT switching)
+    mv.addEventListener('camera-change', () => {
+      if (!savingEnabled) return;
+      if (isSwitching) return;
+      const cam = readCamera();
+      if (cam) latestCamera = cam;
+    });
+
+    // Capture initial centered camera after first load settles (2 frames)
+    let initialCaptured = false;
+    mv.addEventListener('load', () => {
+      if (initialCaptured) return;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const cam = readCamera();
+          if (cam) {
+            latestCamera = cam;
+            initialCaptured = true;
+          }
+        });
+      });
+    });
+
+    // ===== Show model =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // ✅ FIX: if camera is still moving, wait for it to stop before freezing camera
-      await waitForCameraIdle(120, 600);
+      // ✅ KEY FIX:
+      // Capture camera immediately on click from the live viewer (not from stale latestCamera)
+      const camNow = readCamera();
+      if (camNow) latestCamera = camNow;
 
-      // Take the latest settled camera; freeze it for this swap
-      const camForThisSwap = cloneCam(latestCamera) || readCamera();
+      const camForThisSwap = cloneCam(camNow || latestCamera);
 
-      // Disable saving until swap completes
       savingEnabled = false;
       isSwitching = true;
 
@@ -434,17 +392,18 @@
       paintActive();
 
       const onLoad = () => {
-        if (token !== swapToken) return; // stale load
+        if (token !== swapToken) return;
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             applyCam(camForThisSwap);
 
-            latestCamera = cloneCam(camForThisSwap);
+            // resume capturing
             isSwitching = false;
             savingEnabled = true;
 
-            scheduleSettledSnapshot();
+            // update latestCamera to what we actually applied
+            if (camForThisSwap) latestCamera = cloneCam(camForThisSwap);
           });
         });
       };
