@@ -39,7 +39,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Zoom-out is permanently capped at the default (first load) distance.
+        Zoom-out is capped to the very first default framed view (no camera forcing).
       </div>
     </div>
 
@@ -98,30 +98,27 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Persistent zoom-out limiter (the important part) =====
+    // ===== Zoom-out cap (set once, never touched again) =====
+    let limiterSet = false;
     let baselineRadius = null;
-    let limiterReady = false;
 
-    function applyPersistentLimiter() {
-      if (!limiterReady || baselineRadius == null) return;
-      // Cap zoom-out at baselineRadius (default framed distance)
-      mv.setAttribute('max-camera-orbit', `auto auto ${baselineRadius}m`);
-      // Optional: cap zoom-in (prevents going inside the mesh too much)
-      const minR = Math.max(baselineRadius * 0.03, 0.001);
+    function setZoomOutCap(radiusM) {
+      // Cap zoom-out at the first framed radius:
+      mv.setAttribute('max-camera-orbit', `auto auto ${radiusM}m`);
+
+      // Optional: prevent zoom-in too far (comment out if you don’t want it)
+      const minR = Math.max(radiusM * 0.03, 0.001);
       mv.setAttribute('min-camera-orbit', `auto auto ${minR}m`);
     }
 
-    // Capture baseline once after the very first model is framed
-    let capturedBaseline = false;
     mv.addEventListener('load', () => {
-      if (capturedBaseline) return;
+      if (limiterSet) return;
       try {
-        const orbit = mv.getCameraOrbit?.();
-        if (orbit && typeof orbit.radius === "number") {
-          baselineRadius = orbit.radius;
-          limiterReady = true;
-          applyPersistentLimiter();
-          capturedBaseline = true;
+        const o = mv.getCameraOrbit?.();
+        if (o && typeof o.radius === "number") {
+          baselineRadius = o.radius;
+          setZoomOutCap(baselineRadius);
+          limiterSet = true;
         }
       } catch (_) {}
     });
