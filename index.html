@@ -19,7 +19,6 @@
     }
     /* Black ring = ONLY selected/viewed model */
     .row.active { border-color:#111; }
-
     /* Light/transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
@@ -81,12 +80,15 @@
     let preloadEnabled = true;
     let preloadTimer = null;
 
+    // >>> FIX: if preload tries to resume while user download is ongoing, resume again when it finishes
+    let resumeAfterUserDownload = false;
+
     const preloadQueue = MODELS.map(m => m.id);
 
     // UI built once
     const rowEls = new Map(); // id -> { row, meta }
 
-    // NEW: purely visual "currently downloading" highlight
+    // purely visual "currently downloading" highlight
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -147,6 +149,7 @@
       if (preloadTimer) clearTimeout(preloadTimer);
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
+        // Try to resume now; if a user download is still running, we'll resume when it finishes.
         resumePreload();
       }, 1200);
     }
@@ -212,16 +215,12 @@
         st.blobUrl = blobUrl;
         refreshMeta(modelId);
 
-        // If nothing else starts immediately, clear downloader highlight
-        // (next download will set it again)
         paintDownloading(null);
-
         return blobUrl;
       } catch (err) {
         if (err.name === "AbortError") {
           st.status = "paused";
           refreshMeta(modelId);
-          // keep/down-clear visual: we'll clear it because download stopped
           paintDownloading(null);
           throw err;
         }
@@ -249,6 +248,13 @@
         mv.src = blobUrl;
       } catch (e) {
         // ignore abort
+      } finally {
+        // >>> FIX: if preload was supposed to resume but couldn't because we were still downloading,
+        // resume it right after the user-selected model finishes.
+        if (preloadEnabled && resumeAfterUserDownload) {
+          resumeAfterUserDownload = false;
+          resumePreload();
+        }
       }
     }
 
@@ -260,8 +266,15 @@
     async function resumePreload() {
       if (!preloadEnabled) return;
 
-      // If anything is downloading (user click), do nothing
-      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+      // If something is downloading, we can't start preload now.
+      // >>> FIX: remember to resume again when the current download completes.
+      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
+        resumeAfterUserDownload = true;
+        return;
+      }
+
+      // We're idle: clear the flag
+      resumeAfterUserDownload = false;
 
       for (const id of preloadQueue) {
         if (!preloadEnabled) return;
