@@ -6,32 +6,31 @@
   <title>3D Fiber Dissection Anatomy</title>
   <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
     .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
-    .row {
+
+    .row{
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
       border-radius:10px; background:#fff; cursor:pointer; user-select:none;
       gap:10px;
-      transition: border-color 120ms ease, box-shadow 120ms ease;
+      transition: border-color 120ms ease;
     }
-
     /* Black border = ONLY model in view (selected) */
     .row.active { border-color:#111; }
-
     /* Transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name {
+    .name{
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
       flex: 1 1 auto;
     }
-
-    .meta {
+    .meta{
       width:24px;
       height:24px;
       display:flex;
@@ -39,21 +38,19 @@
       justify-content:center;
       flex: 0 0 24px;
     }
-
-    .status-icon {
+    .status-icon{
       width:20px;
       height:20px;
       display:block;
     }
-
-    .small {
+    .small{
       font-size:12px;
       color:#666;
       margin-top:10px;
       line-height:1.4;
     }
 
-    model-viewer {
+    model-viewer{
       width:calc(100vw - 360px);
       height:100vh;
     }
@@ -68,7 +65,8 @@
       <div class="small">
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
-        Black border = model in view. Light border = currently downloading.
+        Black border = model in view. Light border = currently downloading.<br>
+        Camera angle/zoom stays the same when switching models.
       </div>
     </div>
 
@@ -121,6 +119,28 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
+    // --- Camera memory (keep view across model switches) ---
+    let savedCamera = {
+      orbit: null,
+      target: null,
+      fov: null
+    };
+
+    function snapshotCamera() {
+      savedCamera.orbit = mv.cameraOrbit;
+      savedCamera.target = mv.cameraTarget;
+      savedCamera.fov = mv.fieldOfView;
+    }
+
+    function applySavedCamera() {
+      if (savedCamera.orbit) mv.cameraOrbit = savedCamera.orbit;
+      if (savedCamera.target) mv.cameraTarget = savedCamera.target;
+      if (savedCamera.fov) mv.fieldOfView = savedCamera.fov;
+    }
+
+    // Update camera memory whenever user moves camera
+    mv.addEventListener('camera-change', () => snapshotCamera());
+
     // Downloading visual (transparent border)
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
@@ -148,6 +168,7 @@
       return Math.max(0, Math.min(100, n));
     }
 
+    // Gray circle filling with blue arc clockwise
     function loadingIconSVG(percent) {
       const r = 7;
       const c = 2 * Math.PI * r;
@@ -170,6 +191,7 @@
       `;
     }
 
+    // Green filled circle + white tick
     function doneIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -184,6 +206,7 @@
       `;
     }
 
+    // Gray outlined circle + white inside + pause bars
     function pausedIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -212,17 +235,14 @@
         meta.innerHTML = doneIconSVG();
         return;
       }
-
       if (st.status === "paused") {
         meta.innerHTML = pausedIconSVG();
         return;
       }
-
       if (st.status === "error") {
         meta.innerHTML = errorIconSVG();
         return;
       }
-
       if (st.status === "loading") {
         const pct = parsePercent(st.progressText);
         meta.innerHTML = loadingIconSVG(pct);
@@ -364,12 +384,20 @@
       }
     }
 
-    // Viewer: ONLY here we change selectedId + black border
+    // Viewer: ONLY here we change selectedId + black border + keep camera
     async function showModel(modelId) {
+      // Save current camera right before switching
+      snapshotCamera();
+
       selectedId = modelId;
       paintActive();
 
+      // Apply camera after the new model finishes loading into the viewer
+      const applyOnce = () => applySavedCamera();
+      mv.addEventListener('load', applyOnce, { once: true });
+
       const st = state.get(modelId);
+
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
         return;
@@ -412,6 +440,10 @@
 
     (function init() {
       buildListOnce();
+
+      // Initial camera snapshot (default)
+      snapshotCamera();
+
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
