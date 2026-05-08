@@ -21,25 +21,12 @@
     .row.active { border-color:#111; }
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name {
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
-      flex: 1 1 auto;
-    }
-    .meta {
-      width:24px; height:24px;
-      display:flex; align-items:center; justify-content:center;
-      flex: 0 0 24px;
-    }
+    .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
+
+    .meta { width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
     .status-icon { width:20px; height:20px; display:block; }
 
-    .small {
-      font-size:12px;
-      color:#666;
-      margin-top:10px;
-      line-height:1.4;
-    }
+    .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
     model-viewer { width:calc(100vw - 360px); height:100vh; }
   </style>
@@ -53,7 +40,8 @@
       <div class="small">
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
-        Black border = model in view. Light border = currently downloading.
+        Black border = model in view. Light border = currently downloading.<br>
+        Camera angle + zoom + target are preserved across model switches.
       </div>
     </div>
 
@@ -87,11 +75,11 @@
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Current download (single active fetch)
+    // Single active fetch
     let currentController = null;
     let currentDownloadingId = null;
 
-    // NEW: per-model in-flight promise to prevent self-restarts
+    // Per-model in-flight promise: prevents self-restarts
     const inFlight = new Map(); // modelId -> Promise<string>
 
     // Selection (black border)
@@ -104,7 +92,7 @@
     // Resume scheduler
     let resumeRequested = false;
 
-    // NEW: prevent resumePreload re-entrancy
+    // Prevent resumePreload re-entrancy
     let preloadRunning = false;
 
     const preloadQueue = MODELS.map(m => m.id);
@@ -112,7 +100,35 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // Downloading visual (light border)
+    // ===== Camera persistence =====
+    // We store string forms because mv.cameraOrbit includes radius (zoom) and is stable.
+    let savedCamera = { orbit: null, target: null, fov: null };
+    let suppressCameraCapture = false;  // prevents capturing auto-frame changes during load/switch
+
+    function snapshotCamera() {
+      // Only snapshot if model-viewer has values
+      if (mv.cameraOrbit) savedCamera.orbit = mv.cameraOrbit;
+      if (mv.cameraTarget) savedCamera.target = mv.cameraTarget;
+      if (mv.fieldOfView) savedCamera.fov = mv.fieldOfView;
+    }
+
+    function applySavedCamera() {
+      if (savedCamera.orbit) mv.cameraOrbit = savedCamera.orbit;   // includes zoom radius
+      if (savedCamera.target) mv.cameraTarget = savedCamera.target;
+      if (savedCamera.fov) mv.fieldOfView = savedCamera.fov;
+
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    // Capture user camera moves (but ignore auto-frame/auto-adjust moments)
+    mv.addEventListener('camera-change', () => {
+      if (suppressCameraCapture) return;
+      snapshotCamera();
+    });
+
+    // ===== Visual: downloading border =====
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -130,6 +146,7 @@
       }
     }
 
+    // ===== Status Icons =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -219,6 +236,7 @@
       paintDownloading(null);
     }
 
+    // ===== Resume scheduling =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -239,7 +257,7 @@
       }, 1200);
     }
 
-    // Download with in-flight dedupe to prevent restart loops
+    // ===== Download with in-flight dedupe =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -254,7 +272,7 @@
         st.progressText = "";
         refreshMeta(modelId);
 
-        // Abort previous active download (kept)
+        // Abort previous active download (kept behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -330,11 +348,32 @@
       return p;
     }
 
+    // ===== Show model (now preserves zoom+angle+target) =====
     async function showModel(modelId) {
+      // Capture current camera BEFORE switching (this includes zoom/radius)
+      snapshotCamera();
+
       selectedId = modelId;
       paintActive();
 
+      // Prevent capturing auto-frame during this switch
+      suppressCameraCapture = true;
+
+      // After the new model loads, re-apply saved camera AFTER model-viewer's fit pass
+      const restoreCameraAfterLoad = () => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            applySavedCamera();
+            // allow camera capture again after we force our view
+            setTimeout(() => { suppressCameraCapture = false; }, 0);
+          });
+        });
+      };
+      mv.addEventListener('load', restoreCameraAfterLoad, { once: true });
+
       const st = state.get(modelId);
+
+      // If already downloaded: NO fetch / NO abort / NO restarting downloads
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
         return;
@@ -345,11 +384,12 @@
         mv.src = blobUrl;
       } catch (e) {
         // ignore abort
+        suppressCameraCapture = false;
       }
     }
 
     function onUserSelect(modelId) {
-      // If already downloaded, don't trigger pause/resume machinery
+      // If already downloaded, don't disturb preload timing
       const st = state.get(modelId);
       if (!(st.status === "done" && st.blobUrl)) {
         pausePreloadForAWhile();
@@ -359,7 +399,7 @@
 
     async function resumePreload() {
       if (!preloadEnabled) return;
-      if (preloadRunning) return;            // NEW: lock to prevent re-entrancy
+      if (preloadRunning) return;
       preloadRunning = true;
 
       try {
@@ -387,6 +427,9 @@
 
     (function init() {
       buildListOnce();
+
+      // Let model-viewer auto-frame on the first load, then we start preserving.
+      // (First snapshot will capture the initial framed view.)
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
