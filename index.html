@@ -6,6 +6,7 @@
   <title>3D Fiber Dissection Anatomy</title>
   <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
@@ -39,7 +40,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        This build ONLY caps zoom-out beyond the initial framed distance.
+        Camera snapshot is “settled” + frozen per swap (prevents previous-zoom bleed).
       </div>
     </div>
 
@@ -73,11 +74,11 @@
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Single active fetch
+    // Current download control
     let currentController = null;
     let currentDownloadingId = null;
 
-    // Per-model in-flight promise (prevents redownload loops)
+    // Prevent self-restart loops
     const inFlight = new Map(); // modelId -> Promise<string>
 
     // Selection (black border)
@@ -98,29 +99,68 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Zoom-out cap (set once; NEVER changed again) =====
-    let limiterSet = false;
-    let baselineRadius = null;
+    // ===== Camera: settled snapshot + frozen per swap =====
+    // latestCamera updates ONLY via settle events (wheel/pointerup/touchend) with rAF
+    // During swap: saving disabled; we use a local camForThisSwap snapshot.
+    let latestCamera = null; // {orbit:{theta,phi,radius}, target:{x,y,z}, fov:number}
+    let savingEnabled = true;
+    let settleRaf = 0;
 
-    function setZoomOutCap(radiusM) {
-      // cap zoom-out at first framed distance
-      mv.setAttribute('max-camera-orbit', `auto auto ${radiusM}m`);
-
-      // optional: cap zoom-in a bit (comment out if you don’t want)
-      const minR = Math.max(radiusM * 0.03, 0.001);
-      mv.setAttribute('min-camera-orbit', `auto auto ${minR}m`);
+    function readCamera() {
+      const orbit = mv.getCameraOrbit?.();
+      const target = mv.getCameraTarget?.();
+      const fov = mv.getFieldOfView?.();
+      if (!orbit || !target || typeof fov !== "number") return null;
+      return {
+        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov
+      };
     }
 
+    function cloneCam(cam) {
+      if (!cam) return null;
+      return {
+        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
+        target: { x: cam.target.x, y: cam.target.y, z: cam.target.z },
+        fov: cam.fov
+      };
+    }
+
+    function applyCam(cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    function scheduleSettledSnapshot() {
+      if (!savingEnabled) return;
+      if (settleRaf) cancelAnimationFrame(settleRaf);
+      settleRaf = requestAnimationFrame(() => {
+        settleRaf = 0;
+        const cam = readCamera();
+        if (cam) latestCamera = cam;
+      });
+    }
+
+    // Update latest camera when user finishes actions (settled moments)
+    mv.addEventListener('wheel', scheduleSettledSnapshot, { passive: true });
+    mv.addEventListener('pointerup', scheduleSettledSnapshot, { passive: true });
+    mv.addEventListener('touchend', scheduleSettledSnapshot, { passive: true });
+
+    // Also capture initial camera once first model loads (baseline)
+    let initialCaptured = false;
     mv.addEventListener('load', () => {
-      if (limiterSet) return;
-      try {
-        const orbit = mv.getCameraOrbit?.();
-        if (orbit && typeof orbit.radius === "number") {
-          baselineRadius = orbit.radius;
-          setZoomOutCap(baselineRadius);
-          limiterSet = true;
-        }
-      } catch (_) {}
+      if (initialCaptured) return;
+      const cam = readCamera();
+      if (cam) {
+        latestCamera = cam;
+        initialCaptured = true;
+      }
     });
 
     // ===== Visual: downloading border =====
@@ -240,7 +280,6 @@
     function pausePreloadForAWhile() {
       preloadEnabled = false;
       if (preloadTimer) clearTimeout(preloadTimer);
-
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
         resumeRequested = true;
@@ -337,10 +376,43 @@
       return p;
     }
 
-    // ===== Show model (NO camera forcing; just switch src) =====
+    // ===== Show model (freeze per swap) =====
+    let swapToken = 0;
+
     async function showModel(modelId) {
+      const token = ++swapToken;
+
+      // Force a settled snapshot BEFORE we start the swap (one frame later).
+      // This is the key to avoid capturing the “previous” zoom.
+      await new Promise(requestAnimationFrame);
+
+      // Take the latest settled camera; freeze it for this swap
+      const camForThisSwap = cloneCam(latestCamera) || readCamera();
+
+      // Disable saving until swap completes
+      savingEnabled = false;
+
       selectedId = modelId;
       paintActive();
+
+      const onLoad = () => {
+        if (token !== swapToken) return; // stale load
+
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            // Apply the frozen camera for THIS swap
+            applyCam(camForThisSwap);
+
+            // Make this the new latestCamera, then re-enable saving
+            latestCamera = cloneCam(camForThisSwap);
+            savingEnabled = true;
+
+            // Also schedule a settled snapshot after things stabilize
+            scheduleSettledSnapshot();
+          });
+        });
+      };
+      mv.addEventListener('load', onLoad, { once: true });
 
       const st = state.get(modelId);
       if (st.status === "done" && st.blobUrl) {
@@ -350,8 +422,11 @@
 
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
+        if (token !== swapToken) return;
         mv.src = blobUrl;
-      } catch (_) {}
+      } catch (_) {
+        if (token === swapToken) savingEnabled = true;
+      }
     }
 
     function onUserSelect(modelId) {
