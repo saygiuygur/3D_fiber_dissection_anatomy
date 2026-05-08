@@ -3,37 +3,52 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>3D Fiber Dissection Anatomy</title>
+
+  <!-- 3D viewer -->
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
   <style>
-    body { margin:0; font-family: system-ui, sans-serif; }
-    .wrap { display:flex; height:100vh; }
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    .wrap { display: flex; height: 100vh; }
     .sidebar {
-      width: 280px; border-right: 1px solid #ddd; padding: 12px;
-      overflow:auto; background:#fff;
+      width: 300px; border-right: 1px solid #ddd; padding: 12px;
+      overflow: auto; background: #fff;
     }
     .btn {
-      width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
-      border-radius:10px; background:#fff; text-align:left; cursor:pointer;
+      width: 100%;
+      padding: 10px;
+      margin: 6px 0;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      background: #fff;
+      text-align: left;
+      cursor: pointer;
     }
-    .btn.active { border-color:#111; }
-    model-viewer { width: calc(100vw - 280px); height: 100vh; }
-    .small { font-size: 12px; color:#666; margin-top:10px; }
+    .btn.active { border-color: #111; }
+    .small { font-size: 12px; color: #666; margin-top: 10px; line-height: 1.4; }
+    model-viewer { width: calc(100vw - 300px); height: 100vh; }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="sidebar">
-      <h3 style="margin:6px 0 12px;">Parts</h3>
+      <h3 style="margin: 6px 0 12px;">Parts</h3>
       <div id="list">Loading parts…</div>
+
       <div class="small">
-        Tip: This list is built from <b>material names</b> inside your GLB.
+        This list is created from <b>material names</b> inside your GLB.<br>
+        If you see only a few items (or weird names like “Material.001”), rename materials in Blender and re-export.
       </div>
     </div>
 
     <model-viewer id="mv"
       src="https://github.com/saygiuygur/3D_fiber_dissection_anatomy/releases/download/v1/Combined_Right.glb"
       camera-controls
-      interaction-prompt="none">
+      interaction-prompt="none"
+      exposure="1"
+      shadow-intensity="1">
     </model-viewer>
   </div>
 
@@ -41,36 +56,27 @@
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
 
-    // Helper: set material alpha safely
+    // Set material alpha (opacity)
     function setAlpha(material, alpha) {
       const pbr = material.pbrMetallicRoughness;
       const base = pbr.baseColorFactor; // [r,g,b,a]
       pbr.setBaseColorFactor([base[0], base[1], base[2], alpha]);
     }
 
-    // Hide/show approach commonly used in model-viewer community:
-    // hide: alphaMode BLEND + alpha 0; show: alphaMode OPAQUE + alpha 1. :contentReference[oaicite:4]{index=4}
-    function showOnlyMaterialName(targetName) {
+    // Show only one material; hide all others
+    function showOnly(targetName) {
       for (const mat of mv.model.materials) {
-        const isTarget = (mat.name === targetName);
-        try {
-          // Some versions expose setAlphaMode; if it exists, use it
-          if (typeof mat.setAlphaMode === 'function') {
-            mat.setAlphaMode(isTarget ? 'OPAQUE' : 'BLEND');
-          }
-        } catch (_) {}
-
-        setAlpha(mat, isTarget ? 1.0 : 0.0);
+        const on = (mat.name === targetName);
+        setAlpha(mat, on ? 1.0 : 0.0);
       }
     }
 
     mv.addEventListener('load', () => {
-      const names = (mv.model?.materials || [])
-        .map(m => m.name)
-        .filter(n => n && n.trim().length > 0);
+      const mats = mv.model?.materials || [];
+      const names = mats.map(m => m.name).filter(n => n && n.trim().length);
 
-      if (names.length === 0) {
-        list.textContent = 'No material names found. You need named materials in the GLB.';
+      if (!names.length) {
+        list.textContent = 'No named materials found in GLB.';
         return;
       }
 
@@ -82,13 +88,13 @@
         b.onclick = () => {
           document.querySelectorAll('.btn').forEach(x => x.classList.remove('active'));
           b.classList.add('active');
-          showOnlyMaterialName(name);
+          showOnly(name);
         };
         list.appendChild(b);
       });
 
-      // Default: show the first material only
-      showOnlyMaterialName(names[0]);
+      // default: show first item only
+      showOnly(names[0]);
     });
   </script>
 </body>
