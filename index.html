@@ -32,7 +32,7 @@
       <div class="small">
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
-        The black border follows only the model you selected.
+        Preload continues from where it left off after you stop clicking.
       </div>
     </div>
 
@@ -68,7 +68,7 @@
     let currentController = null;
     let currentDownloadingId = null;
 
-    // The user's selected model (what the border should follow)
+    // User selected model (border follows this)
     let selectedId = MODELS[0].id;
 
     // Pause auto preload while user is interacting
@@ -76,6 +76,9 @@
     let preloadTimer = null;
 
     const preloadQueue = MODELS.map(m => m.id);
+
+    // NEW: remember where preload left off
+    let preloadCursor = 0; // index into preloadQueue
 
     // UI built once
     const rowEls = new Map(); // id -> { row, meta }
@@ -128,7 +131,7 @@
       if (preloadTimer) clearTimeout(preloadTimer);
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
-        resumePreload();
+        resumePreload(); // restart after user stops clicking for a moment
       }, 1200);
     }
 
@@ -225,26 +228,56 @@
 
     function onUserSelect(modelId) {
       pausePreloadForAWhile();
+
+      // IMPORTANT: do NOT reset preloadCursor here.
+      // That’s what makes it “continue from where it left off”.
+
       showModel(modelId);
+    }
+
+    // NEW: find the next pending model starting from preloadCursor
+    function advanceCursorPastDone() {
+      while (preloadCursor < preloadQueue.length) {
+        const id = preloadQueue[preloadCursor];
+        const st = state.get(id);
+        if (st && st.status === "done") preloadCursor++;
+        else break;
+      }
     }
 
     async function resumePreload() {
       if (!preloadEnabled) return;
 
-      // If anything is downloading (user click), do nothing
+      // If anything is downloading, do nothing
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
 
-      for (const id of preloadQueue) {
-        if (!preloadEnabled) return;
+      // Skip over already-done models
+      advanceCursorPastDone();
 
+      while (preloadEnabled && preloadCursor < preloadQueue.length) {
+        const id = preloadQueue[preloadCursor];
         const st = state.get(id);
-        if (st.status === "done") continue;
 
-        // Preload ONLY downloads blobs. It never touches selectedId/border.
+        // If already done, move on
+        if (st && st.status === "done") {
+          preloadCursor++;
+          continue;
+        }
+
         try {
           await downloadToBlobUrl(id);
+
+          // Success: move cursor forward
+          preloadCursor++;
+          advanceCursorPastDone();
         } catch (e) {
-          if (e.name === "AbortError") return;
+          if (e.name === "AbortError") {
+            // We were interrupted — KEEP preloadCursor where it is
+            // so we resume from the same model next time.
+            return;
+          }
+          // Other errors: skip this one and continue
+          preloadCursor++;
         }
       }
     }
