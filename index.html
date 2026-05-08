@@ -8,38 +8,33 @@
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
-    .sidebar { width:320px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
-    .btn { width:100%; padding:10px; margin:6px 0; border:1px solid #ddd; border-radius:10px; background:#fff; text-align:left; cursor:pointer; }
-    .btn.active { border-color:#111; }
-    model-viewer { width:calc(100vw - 320px); height:100vh; }
+    .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
+    .row {
+      display:flex; align-items:center; justify-content:space-between;
+      width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
+      border-radius:10px; background:#fff; cursor:pointer; user-select:none;
+      gap:10px;
+    }
+    .row.active { border-color:#111; }
+    .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex: 0 0 auto; }
+    .tick { color:#0a8a0a; font-weight:700; }
     .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
+    model-viewer { width:calc(100vw - 360px); height:100vh; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="sidebar">
       <h3 style="margin:6px 0 12px;">Models</h3>
-
-      <button class="btn active" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb">01_Veselled</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb">02_Veselless</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers.glb">03_U_Fibers</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF.glb">04_Superficial_SLF</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate.glb">05_Superficial_Arcuate</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Arcuate_SLF.glb">06_Arcuate_SLF</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule.glb">07_Extreme_Capsule</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/08_Claustrum.glb">08_Claustrum</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule.glb">09_Putamen_External_Capsule</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Internal_Capsule_Perforators.glb">10_Internal_Capsule_Perforators</button>
-      <button class="btn" data-src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb">11_Anterior_Comissure</button>
-
+      <div id="list"></div>
       <div class="small">
-        Click a name → only that model loads.<br>
-        If you don’t see updates, hard refresh: <b>Ctrl+F5</b>.
+        Auto-preloads 01 → 11.<br>
+        Clicking a model prioritizes it (current download is paused).
       </div>
     </div>
 
     <model-viewer id="mv"
-      src="https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb"
       camera-controls
       interaction-prompt="none"
       exposure="1"
@@ -48,16 +43,208 @@
   </div>
 
   <script>
-    const mv = document.getElementById('mv');
-    const buttons = [...document.querySelectorAll('.btn')];
+    // 1) Put your models here (name + URL)
+    const MODELS = [
+      { id: "01_Veselled", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb" },
+      { id: "02_Veselless", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb" },
+      { id: "03_U_Fibers", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers.glb" },
+      { id: "04_Superficial_SLF", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF.glb" },
+      { id: "05_Superficial_Arcuate", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate.glb" },
+      { id: "06_Arcuate_SLF", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Arcuate_SLF.glb" },
+      { id: "07_Extreme_Capsule", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule.glb" },
+      { id: "08_Claustrum", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/08_Claustrum.glb" },
+      { id: "09_Putamen_External_Capsule", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule.glb" },
+      { id: "10_Internal_Capsule_Perforators", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Internal_Capsule_Perforators.glb" },
+      { id: "11_Anterior_Comissure", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb" },
+    ];
 
-    buttons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        buttons.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        mv.src = btn.dataset.src;
+    const mv = document.getElementById('mv');
+    const list = document.getElementById('list');
+
+    // Cache: model id -> { status, progressText, blobUrl }
+    const state = new Map();
+    MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
+
+    // Abort controller for the *current* download (so we can pause it)
+    let currentController = null;
+    let currentDownloadingId = null;
+
+    // Preload queue: start from 01 to last
+    const preloadQueue = MODELS.map(m => m.id);
+
+    // --- UI building ---
+    function renderList(activeId = null) {
+      list.innerHTML = "";
+      for (const m of MODELS) {
+        const st = state.get(m.id);
+
+        const row = document.createElement('div');
+        row.className = "row" + (m.id === activeId ? " active" : "");
+        row.dataset.id = m.id;
+
+        const name = document.createElement('div');
+        name.className = "name";
+        name.textContent = m.id;
+
+        const meta = document.createElement('div');
+        meta.className = "meta";
+
+        // Right-side status
+        if (st.status === "done") {
+          meta.innerHTML = `<span class="tick">✓</span>`;
+        } else if (st.status === "loading") {
+          meta.textContent = st.progressText || "loading…";
+        } else if (st.status === "paused") {
+          meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
+        } else if (st.status === "error") {
+          meta.textContent = "error";
+        } else {
+          meta.textContent = "";
+        }
+
+        row.appendChild(name);
+        row.appendChild(meta);
+
+        row.addEventListener('click', () => onUserSelect(m.id));
+        list.appendChild(row);
+      }
+    }
+
+    // --- Download with progress + abort ---
+    async function downloadToBlobUrl(modelId) {
+      const model = MODELS.find(x => x.id === modelId);
+      const st = state.get(modelId);
+
+      // Already downloaded
+      if (st.status === "done" && st.blobUrl) return st.blobUrl;
+
+      // Mark loading
+      st.status = "loading";
+      st.progressText = "";
+      renderList(modelId);
+
+      // Abort previous active download
+      if (currentController) {
+        currentController.abort();
+        if (currentDownloadingId && currentDownloadingId !== modelId) {
+          const prev = state.get(currentDownloadingId);
+          if (prev && prev.status === "loading") prev.status = "paused";
+        }
+      }
+
+      currentController = new AbortController();
+      currentDownloadingId = modelId;
+
+      try {
+        const res = await fetch(model.url, { signal: currentController.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const total = Number(res.headers.get("Content-Length")) || null;
+
+        // Stream reader (lets us show progress)
+        const reader = res.body.getReader();
+        let received = 0;
+        const chunks = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunks.push(value);
+          received += value.byteLength;
+
+          if (total) {
+            const pct = Math.floor((received / total) * 100);
+            st.progressText = `${pct}%`;
+          } else {
+            // Fallback if server doesn't provide Content-Length
+            st.progressText = `${(received / (1024*1024)).toFixed(1)} MB`;
+          }
+          renderList(modelId);
+        }
+
+        const blob = new Blob(chunks, { type: "model/gltf-binary" });
+        const blobUrl = URL.createObjectURL(blob);
+
+        st.status = "done";
+        st.progressText = "";
+        st.blobUrl = blobUrl;
+        renderList(modelId);
+
+        return blobUrl;
+      } catch (err) {
+        if (err.name === "AbortError") {
+          // Paused by user selecting another model
+          st.status = "paused";
+          renderList(modelId);
+          throw err;
+        }
+        st.status = "error";
+        st.progressText = "";
+        renderList(modelId);
+        throw err;
+      }
+    }
+
+    // --- Viewer select ---
+    async function showModel(modelId) {
+      const st = state.get(modelId);
+
+      // If already downloaded, instant switch
+      if (st.status === "done" && st.blobUrl) {
+        mv.src = st.blobUrl;
+        renderList(modelId);
+        return;
+      }
+
+      // Otherwise download (priority)
+      try {
+        const blobUrl = await downloadToBlobUrl(modelId);
+        mv.src = blobUrl;
+      } catch (e) {
+        // Abort is expected when user clicks elsewhere; ignore
+      }
+    }
+
+    // --- User click behavior: pause current, prioritize clicked ---
+    function onUserSelect(modelId) {
+      showModel(modelId).then(() => {
+        // after prioritizing clicked, resume background preload
+        resumePreload();
       });
-    });
+    }
+
+    // --- Preload sequentially (01 -> 11) ---
+    async function resumePreload() {
+      // If something is actively downloading due to user action, don’t fight it.
+      // We'll just start/continue when idle.
+      for (const id of preloadQueue) {
+        const st = state.get(id);
+        if (st.status === "done") continue;
+
+        // If user clicked something else and it's currently downloading, stop background.
+        if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+
+        try {
+          await downloadToBlobUrl(id);
+          // If user triggered a new download mid-way, this will abort; then we stop.
+        } catch (e) {
+          if (e.name === "AbortError") return;
+          // On error, skip it and continue to next
+        }
+      }
+    }
+
+    // --- Boot ---
+    (function init() {
+      renderList(MODELS[0].id);
+
+      // Start by showing model 01 (and it will also download it if not cached)
+      showModel(MODELS[0].id).then(() => resumePreload());
+
+      // Optional: when user clicks a different button while current model is downloading,
+      // the AbortController makes it "pause" and jump to clicked one.
+    })();
   </script>
 </body>
 </html>
