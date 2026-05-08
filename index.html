@@ -15,8 +15,14 @@
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
       border-radius:10px; background:#fff; cursor:pointer; user-select:none;
       gap:10px;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
     }
+    /* Black ring = ONLY selected/viewed model */
     .row.active { border-color:#111; }
+
+    /* Light/transparent border = currently downloading model (does NOT override active) */
+    .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
+
     .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex: 0 0 auto; }
     .tick { color:#0a8a0a; font-weight:700; }
@@ -32,7 +38,7 @@
       <div class="small">
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
-        Preload continues from where it left off after you stop clicking.
+        Black border = model in view. Light border = currently downloading.
       </div>
     </div>
 
@@ -68,7 +74,7 @@
     let currentController = null;
     let currentDownloadingId = null;
 
-    // User selected model (border follows this)
+    // Black border follows THIS only (model in view)
     let selectedId = MODELS[0].id;
 
     // Pause auto preload while user is interacting
@@ -77,11 +83,20 @@
 
     const preloadQueue = MODELS.map(m => m.id);
 
-    // NEW: remember where preload left off
-    let preloadCursor = 0; // index into preloadQueue
-
     // UI built once
     const rowEls = new Map(); // id -> { row, meta }
+
+    // NEW: purely visual "currently downloading" highlight
+    let downloadingVisualId = null;
+    function paintDownloading(idOrNull) {
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
+        rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      }
+      downloadingVisualId = idOrNull;
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
+        rowEls.get(downloadingVisualId).row.classList.add("downloading");
+      }
+    }
 
     function paintActive() {
       for (const m of MODELS) {
@@ -124,6 +139,7 @@
         refreshMeta(m.id);
       }
       paintActive();
+      paintDownloading(null);
     }
 
     function pausePreloadForAWhile() {
@@ -131,16 +147,19 @@
       if (preloadTimer) clearTimeout(preloadTimer);
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
-        resumePreload(); // restart after user stops clicking for a moment
+        resumePreload();
       }, 1200);
     }
 
-    // Download: never changes selectedId / never changes border
+    // Download: DOES NOT touch selectedId or active border
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
 
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
+
+      // Visual: mark current downloader with light border
+      paintDownloading(modelId);
 
       st.status = "loading";
       st.progressText = "";
@@ -193,21 +212,28 @@
         st.blobUrl = blobUrl;
         refreshMeta(modelId);
 
+        // If nothing else starts immediately, clear downloader highlight
+        // (next download will set it again)
+        paintDownloading(null);
+
         return blobUrl;
       } catch (err) {
         if (err.name === "AbortError") {
           st.status = "paused";
           refreshMeta(modelId);
+          // keep/down-clear visual: we'll clear it because download stopped
+          paintDownloading(null);
           throw err;
         }
         st.status = "error";
         st.progressText = "";
         refreshMeta(modelId);
+        paintDownloading(null);
         throw err;
       }
     }
 
-    // Viewer: ONLY here do we change selectedId + border
+    // Viewer: ONLY here we change selectedId + black border
     async function showModel(modelId) {
       selectedId = modelId;
       paintActive();
@@ -228,56 +254,25 @@
 
     function onUserSelect(modelId) {
       pausePreloadForAWhile();
-
-      // IMPORTANT: do NOT reset preloadCursor here.
-      // That’s what makes it “continue from where it left off”.
-
       showModel(modelId);
-    }
-
-    // NEW: find the next pending model starting from preloadCursor
-    function advanceCursorPastDone() {
-      while (preloadCursor < preloadQueue.length) {
-        const id = preloadQueue[preloadCursor];
-        const st = state.get(id);
-        if (st && st.status === "done") preloadCursor++;
-        else break;
-      }
     }
 
     async function resumePreload() {
       if (!preloadEnabled) return;
 
-      // If anything is downloading, do nothing
+      // If anything is downloading (user click), do nothing
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
 
-      // Skip over already-done models
-      advanceCursorPastDone();
+      for (const id of preloadQueue) {
+        if (!preloadEnabled) return;
 
-      while (preloadEnabled && preloadCursor < preloadQueue.length) {
-        const id = preloadQueue[preloadCursor];
         const st = state.get(id);
-
-        // If already done, move on
-        if (st && st.status === "done") {
-          preloadCursor++;
-          continue;
-        }
+        if (st.status === "done") continue;
 
         try {
           await downloadToBlobUrl(id);
-
-          // Success: move cursor forward
-          preloadCursor++;
-          advanceCursorPastDone();
         } catch (e) {
-          if (e.name === "AbortError") {
-            // We were interrupted — KEEP preloadCursor where it is
-            // so we resume from the same model next time.
-            return;
-          }
-          // Other errors: skip this one and continue
-          preloadCursor++;
+          if (e.name === "AbortError") return;
         }
       }
     }
