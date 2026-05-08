@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <style>
+    body { margin:0; font-family: system-ui, sans-serif; }
+    .wrap { display:flex; height:100vh; }
+    .sidebar {
+      width: 280px; border-right: 1px solid #ddd; padding: 12px;
+      overflow:auto; background:#fff;
+    }
+    .btn {
+      width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
+      border-radius:10px; background:#fff; text-align:left; cursor:pointer;
+    }
+    .btn.active { border-color:#111; }
+    model-viewer { width: calc(100vw - 280px); height: 100vh; }
+    .small { font-size: 12px; color:#666; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="sidebar">
+      <h3 style="margin:6px 0 12px;">Parts</h3>
+      <div id="list">Loading parts…</div>
+      <div class="small">
+        Tip: This list is built from <b>material names</b> inside your GLB.
+      </div>
+    </div>
+
+    <model-viewer id="mv"
+      src="https://github.com/saygiuygur/3D_fiber_dissection_anatomy/releases/tag/v1"
+      camera-controls
+      interaction-prompt="none">
+    </model-viewer>
+  </div>
+
+  <script type="module">
+    const mv = document.getElementById('mv');
+    const list = document.getElementById('list');
+
+    // Helper: set material alpha safely
+    function setAlpha(material, alpha) {
+      const pbr = material.pbrMetallicRoughness;
+      const base = pbr.baseColorFactor; // [r,g,b,a]
+      pbr.setBaseColorFactor([base[0], base[1], base[2], alpha]);
+    }
+
+    // Hide/show approach commonly used in model-viewer community:
+    // hide: alphaMode BLEND + alpha 0; show: alphaMode OPAQUE + alpha 1. :contentReference[oaicite:4]{index=4}
+    function showOnlyMaterialName(targetName) {
+      for (const mat of mv.model.materials) {
+        const isTarget = (mat.name === targetName);
+        try {
+          // Some versions expose setAlphaMode; if it exists, use it
+          if (typeof mat.setAlphaMode === 'function') {
+            mat.setAlphaMode(isTarget ? 'OPAQUE' : 'BLEND');
+          }
+        } catch (_) {}
+
+        setAlpha(mat, isTarget ? 1.0 : 0.0);
+      }
+    }
+
+    mv.addEventListener('load', () => {
+      const names = (mv.model?.materials || [])
+        .map(m => m.name)
+        .filter(n => n && n.trim().length > 0);
+
+      if (names.length === 0) {
+        list.textContent = 'No material names found. You need named materials in the GLB.';
+        return;
+      }
+
+      list.innerHTML = '';
+      names.forEach((name, i) => {
+        const b = document.createElement('button');
+        b.className = 'btn' + (i === 0 ? ' active' : '');
+        b.textContent = name;
+        b.onclick = () => {
+          document.querySelectorAll('.btn').forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          showOnlyMaterialName(name);
+        };
+        list.appendChild(b);
+      });
+
+      // Default: show the first material only
+      showOnlyMaterialName(names[0]);
+    });
+  </script>
+</body>
+</html>
