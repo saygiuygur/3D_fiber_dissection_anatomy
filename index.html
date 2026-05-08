@@ -5,36 +5,44 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>3D Fiber Dissection Anatomy</title>
 
-  <!-- Kill favicon.ico request -->
+  <!-- prevent favicon.ico noise -->
   <link rel="icon" href="data:," />
 
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
-    .sidebar { width:380px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
+    .sidebar { width:420px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
+    .topline { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+    .hint { font-size:12px; color:#666; line-height:1.4; margin-top:6px; }
     .row {
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
-      border-radius:10px; background:#fff; cursor:pointer; user-select:none;
-      gap:12px;
+      border-radius:10px; background:#fff; cursor:pointer; user-select:none; gap:12px;
     }
     .row.active { border-color:#111; }
     .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex: 0 0 auto; }
-    .tick { color:#0a8a0a; font-weight:800; }
-    .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-    model-viewer { width:calc(100vw - 380px); height:100vh; }
+    .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+    .tick { color:#0a8a0a; font-weight:900; }
+    .tag { font-size:11px; padding:2px 6px; border:1px solid #ddd; border-radius:999px; color:#444; }
+    model-viewer { width:calc(100vw - 420px); height:100vh; }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="sidebar">
-      <h3 style="margin:6px 0 12px;">Models</h3>
-      <div id="list"></div>
-      <div class="small">
-        Auto-downloads 01 → 11. Clicking a model prioritizes it (current download is aborted & marked paused).
+      <div class="topline">
+        <h3 style="margin:6px 0;">Models</h3>
+        <span id="now" class="tag">idle</span>
       </div>
+      <div class="hint">
+        Auto-preloads 01 → 11 in the background.<br>
+        You can click anytime — your selected model always wins (background will NOT override it).
+      </div>
+
+      <div id="list" style="margin-top:10px;"></div>
     </div>
 
     <model-viewer id="mv"
@@ -47,6 +55,7 @@
   </div>
 
   <script>
+    // ====== CONFIG: your models ======
     const MODELS = [
       ["01_Veselled","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb"],
       ["02_Veselless","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb"],
@@ -61,45 +70,56 @@
       ["11_Anterior_Comissure","https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb"],
     ];
 
+    // ====== UI refs ======
     const mv = document.getElementById("mv");
     const list = document.getElementById("list");
+    const now = document.getElementById("now");
 
-    // State per model
-    const state = new Map(); // id -> {status, pct, mb, blobUrl}
-    for (const [id] of MODELS) state.set(id, { status:"idle", pct:null, mb:0, blobUrl:null });
+    // Hide model-viewer's built-in top progress bar (we show our own per-item progress)
+    const style = document.createElement("style");
+    style.textContent = `model-viewer::part(default-progress-bar){ display:none !important; }`;
+    document.head.appendChild(style);
 
-    // Download manager
-    let activeId = MODELS[0][0];
+    // ====== State ======
+    // status: idle | queued | loading | paused | done | error
+    const state = new Map();
+    for (const [id] of MODELS) state.set(id, { status:"queued", pct:null, mb:0, blobUrl:null });
+
+    // What the user wants to see (viewer should ALWAYS follow this)
+    let selectedId = MODELS[0][0];
+
+    // One active fetch at a time
     let controller = null;
     let downloadingId = null;
 
-    // Queue of ids to download (in order)
+    // Background queue in order
     let queue = MODELS.map(([id]) => id);
 
-    function metaText(st){
+    function urlOf(id){ return MODELS.find(x => x[0] === id)[1]; }
+
+    function metaText(id){
+      const st = state.get(id);
       if (st.status === "done") return `<span class="tick">✓</span>`;
+      if (st.status === "error") return `error`;
       if (st.status === "paused") {
         if (st.pct != null) return `paused (${st.pct}%)`;
         if (st.mb > 0) return `paused (${st.mb.toFixed(1)}MB)`;
-        return "paused";
+        return `paused`;
       }
       if (st.status === "loading") {
         if (st.pct != null) return `${st.pct}%`;
         if (st.mb > 0) return `${st.mb.toFixed(1)}MB`;
-        return "loading…";
+        return `loading…`;
       }
-      if (st.status === "error") return "error";
-      return "";
+      return ""; // idle/queued
     }
 
     function render(){
       list.innerHTML = "";
       for (const [id] of MODELS) {
-        const st = state.get(id);
-
         const row = document.createElement("div");
-        row.className = "row" + (id === activeId ? " active" : "");
-        row.onclick = () => selectModel(id);
+        row.className = "row" + (id === selectedId ? " active" : "");
+        row.onclick = () => onUserSelect(id);
 
         const name = document.createElement("div");
         name.className = "name";
@@ -107,56 +127,66 @@
 
         const meta = document.createElement("div");
         meta.className = "meta";
-        meta.innerHTML = metaText(st);
+        meta.innerHTML = metaText(id);
 
         row.appendChild(name);
         row.appendChild(meta);
         list.appendChild(row);
       }
+
+      if (downloadingId) {
+        now.textContent = `downloading: ${downloadingId}`;
+      } else {
+        now.textContent = `idle`;
+      }
     }
 
-    function findUrl(id){
-      return MODELS.find(x => x[0] === id)[1];
-    }
-
-    async function download(id){
-      const st = state.get(id);
-      if (st.status === "done" && st.blobUrl) return st.blobUrl;
-
-      // Abort current download if any
+    function abortCurrentAndMarkPaused(){
       if (controller) {
         controller.abort();
-        if (downloadingId && downloadingId !== id) {
+        if (downloadingId) {
           const prev = state.get(downloadingId);
           if (prev && prev.status === "loading") prev.status = "paused";
         }
       }
+    }
+
+    async function download(id){
+      const st = state.get(id);
+
+      // already cached
+      if (st.status === "done" && st.blobUrl) return st.blobUrl;
+
+      // Abort any current download (this is what creates the "pause" effect)
+      abortCurrentAndMarkPaused();
 
       controller = new AbortController();
       downloadingId = id;
 
       st.status = "loading";
       st.pct = null;
-      st.mb = 0;
+      st.mb = st.mb || 0;
       render();
 
-      const url = findUrl(id);
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(urlOf(id), { signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const total = Number(res.headers.get("Content-Length")) || null;
       const reader = res.body.getReader();
+
       let received = 0;
       const chunks = [];
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+
         chunks.push(value);
         received += value.byteLength;
 
         st.mb = received / (1024*1024);
         if (total) st.pct = Math.floor((received / total) * 100);
+
         render();
       }
 
@@ -166,74 +196,97 @@
       st.status = "done";
       st.pct = 100;
       st.blobUrl = blobUrl;
-      render();
 
+      downloadingId = null;
+      controller = null;
+
+      render();
       return blobUrl;
     }
 
-    async function show(id){
+    async function showSelected(){
+      const id = selectedId;
       const st = state.get(id);
-      activeId = id;
-      render();
 
       // If already downloaded, instant
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
+        render();
         return;
       }
 
       try {
         const blobUrl = await download(id);
-        mv.src = blobUrl;
+
+        // Only switch if user hasn't changed selection mid-download
+        if (selectedId === id) {
+          mv.src = blobUrl;
+        }
       } catch (e) {
-        if (e.name === "AbortError") return; // expected
+        if (e.name === "AbortError") return; // expected when user clicks something else
         state.get(id).status = "error";
+        downloadingId = null;
+        controller = null;
         render();
       }
     }
 
-    function prioritizeInQueue(id){
-      // Put id at front of queue, keep order of others
+    function moveToFrontOfQueue(id){
       queue = [id, ...queue.filter(x => x !== id)];
     }
 
-    async function pumpQueue(){
-      // Only one download at a time, sequential
+    async function pumpBackground(){
+      // Background downloads in order, but NEVER overrides selected model in the viewer.
       while (true) {
-        // next item not done
-        const next = queue.find(x => state.get(x).status !== "done");
-        if (!next) return;
+        // If something is downloading and it's the selected model, wait (don't fight it)
+        if (downloadingId && downloadingId === selectedId) return;
+
+        // Pick next not done, prefer ones that aren't the selected model
+        let next = queue.find(x => x !== selectedId && state.get(x).status !== "done" && state.get(x).status !== "error");
+        if (!next) {
+          next = queue.find(x => state.get(x).status !== "done" && state.get(x).status !== "error");
+        }
+        if (!next) return; // all done or errored
+
+        // If user selected something not done, do that first (priority)
+        if (state.get(selectedId).status !== "done") {
+          return; // user selection will drive download via showSelected()
+        }
 
         try {
+          // download next in background (does NOT change mv.src)
           await download(next);
-          // don't auto-show every downloaded model; only show the active one
-          // (but the first model will be shown by init)
+          // loop continues to next
         } catch (e) {
-          if (e.name === "AbortError") return; // user clicked something else -> stop pump, will restart
+          if (e.name === "AbortError") return; // user interaction
           state.get(next).status = "error";
+          downloadingId = null;
+          controller = null;
           render();
-          // continue to the next
-          queue = queue.filter(x => x !== next);
+          // continue
         }
       }
     }
 
-    function selectModel(id){
-      prioritizeInQueue(id);
-      show(id);            // load+show clicked immediately
-      pumpQueue();         // restart background downloading in new priority order
+    function onUserSelect(id){
+      selectedId = id;
+      moveToFrontOfQueue(id);
+      render();
+
+      // Always prioritize user selection
+      showSelected().then(() => {
+        // After selected is done (or already done), continue background loading
+        pumpBackground();
+      });
     }
 
-    // Hide model-viewer's own top progress bar (we show progress in list)
-    // Setting "interaction-prompt" already reduces UI; this removes the bar via CSS:
-    const style = document.createElement("style");
-    style.textContent = `model-viewer::part(default-progress-bar){ display:none !important; }`;
-    document.head.appendChild(style);
-
-    // Init
+    // ====== init ======
     render();
-    // Start with first model shown and start preloading the rest
-    selectModel(MODELS[0][0]);
+    // Start by selecting the first model
+    onUserSelect(MODELS[0][0]);
+
+    // When the first one becomes done, background will continue through the rest.
+    // Also, if the user clicks any time, their choice always wins.
   </script>
 </body>
 </html>
