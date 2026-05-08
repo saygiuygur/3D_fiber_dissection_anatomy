@@ -17,9 +17,11 @@
       gap:10px;
       transition: border-color 120ms ease, box-shadow 120ms ease;
     }
-    /* Black ring = ONLY selected/viewed model */
+
+    /* Black border = ONLY model in view (selected) */
     .row.active { border-color:#111; }
-    /* Light/transparent border = currently downloading model (does NOT override active) */
+
+    /* Transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
     .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -29,6 +31,7 @@
     model-viewer { width:calc(100vw - 360px); height:100vh; }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="sidebar">
@@ -67,28 +70,30 @@
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
 
+    // Model state
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
+    // Current fetch control
     let currentController = null;
     let currentDownloadingId = null;
 
-    // Black border follows THIS only (model in view)
+    // Model in view (border follows this only)
     let selectedId = MODELS[0].id;
 
-    // Pause auto preload while user is interacting
+    // Preload pause logic
     let preloadEnabled = true;
     let preloadTimer = null;
 
-    // >>> FIX: if preload tries to resume while user download is ongoing, resume again when it finishes
-    let resumeAfterUserDownload = false;
+    // >>> RESUME SCHEDULER (fixes "needs extra click to continue")
+    let resumeRequested = false;
 
     const preloadQueue = MODELS.map(m => m.id);
 
-    // UI built once
+    // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // purely visual "currently downloading" highlight
+    // Downloading visual (transparent border)
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -144,24 +149,36 @@
       paintDownloading(null);
     }
 
+    // ---- Resume scheduler helpers ----
+    function maybeResumePreload() {
+      if (!preloadEnabled) return;
+      if (!resumeRequested) return;
+
+      // If still downloading, try again when download finishes.
+      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+
+      resumeRequested = false;
+      resumePreload();
+    }
+
     function pausePreloadForAWhile() {
       preloadEnabled = false;
       if (preloadTimer) clearTimeout(preloadTimer);
+
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
-        // Try to resume now; if a user download is still running, we'll resume when it finishes.
-        resumePreload();
+        resumeRequested = true;   // request a resume
+        maybeResumePreload();     // resume now, or right after current download ends
       }, 1200);
     }
 
-    // Download: DOES NOT touch selectedId or active border
+    // Download (does NOT change selectedId/active border)
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
 
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
 
-      // Visual: mark current downloader with light border
       paintDownloading(modelId);
 
       st.status = "loading";
@@ -216,19 +233,36 @@
         refreshMeta(modelId);
 
         paintDownloading(null);
+
+        // >>> IMPORTANT: if resume was requested while we were downloading, resume now
+        maybeResumePreload();
+
         return blobUrl;
+
       } catch (err) {
+        paintDownloading(null);
+
         if (err.name === "AbortError") {
           st.status = "paused";
           refreshMeta(modelId);
-          paintDownloading(null);
+
+          // >>> if resume is requested, we may now be idle; try resuming
+          maybeResumePreload();
+
           throw err;
         }
+
         st.status = "error";
         st.progressText = "";
         refreshMeta(modelId);
-        paintDownloading(null);
+
+        // >>> same here
+        maybeResumePreload();
+
         throw err;
+      } finally {
+        // If this request ended, we might be idle now.
+        // (But don't clear currentDownloadingId here; it may already point to a newer fetch.)
       }
     }
 
@@ -248,13 +282,6 @@
         mv.src = blobUrl;
       } catch (e) {
         // ignore abort
-      } finally {
-        // >>> FIX: if preload was supposed to resume but couldn't because we were still downloading,
-        // resume it right after the user-selected model finishes.
-        if (preloadEnabled && resumeAfterUserDownload) {
-          resumeAfterUserDownload = false;
-          resumePreload();
-        }
       }
     }
 
@@ -266,16 +293,13 @@
     async function resumePreload() {
       if (!preloadEnabled) return;
 
-      // If something is downloading, we can't start preload now.
-      // >>> FIX: remember to resume again when the current download completes.
+      // If something is downloading, don't start preload now.
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
-        resumeAfterUserDownload = true;
+        resumeRequested = true;
         return;
       }
 
-      // We're idle: clear the flag
-      resumeAfterUserDownload = false;
-
+      // We are idle: run sequentially.
       for (const id of preloadQueue) {
         if (!preloadEnabled) return;
 
@@ -292,7 +316,11 @@
 
     (function init() {
       buildListOnce();
-      showModel(selectedId).then(() => resumePreload());
+      showModel(selectedId).then(() => {
+        // initial preload
+        resumeRequested = true;
+        maybeResumePreload();
+      });
     })();
   </script>
 </body>
