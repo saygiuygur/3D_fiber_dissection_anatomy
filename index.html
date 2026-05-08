@@ -24,38 +24,38 @@
     /* Transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .meta {
-      font-size:12px; color:#666; display:flex; align-items:center; justify-content:center;
-      min-width:24px; min-height:24px; flex: 0 0 24px;
+    .name {
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      flex: 1 1 auto;
     }
-    .tick { color:#0a8a0a; font-weight:700; font-size:16px; line-height:1; }
-    .error-mark { color:#c62828; font-weight:700; font-size:16px; line-height:1; }
 
-    .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-    model-viewer { width:calc(100vw - 360px); height:100vh; }
+    .meta {
+      width:24px;
+      height:24px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex: 0 0 24px;
+    }
 
-    .progress-ring {
+    .status-icon {
       width:20px;
       height:20px;
       display:block;
     }
-    .progress-ring .bg {
-      fill: none;
-      stroke: #d9d9d9;
-      stroke-width: 2.5;
+
+    .small {
+      font-size:12px;
+      color:#666;
+      margin-top:10px;
+      line-height:1.4;
     }
-    .progress-ring .fg {
-      fill: none;
-      stroke: #1e88e5;
-      stroke-width: 2.5;
-      stroke-linecap: round;
-      transform: rotate(-90deg);
-      transform-origin: 10px 10px;
-      transition: stroke-dashoffset 120ms linear, opacity 120ms linear;
-    }
-    .progress-ring.paused .fg {
-      opacity: 0.45;
+
+    model-viewer {
+      width:calc(100vw - 360px);
+      height:100vh;
     }
   </style>
 </head>
@@ -140,24 +140,66 @@
     }
 
     function parsePercent(progressText) {
-      if (!progressText) return null;
+      if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
-      if (!match) return null;
+      if (!match) return 0;
       const n = Number(match[1]);
-      if (Number.isNaN(n)) return null;
+      if (Number.isNaN(n)) return 0;
       return Math.max(0, Math.min(100, n));
     }
 
-    function progressRingSVG(percent, paused = false, titleText = "") {
+    function loadingIconSVG(percent) {
       const r = 7;
       const c = 2 * Math.PI * r;
       const offset = c * (1 - percent / 100);
+
       return `
-        <svg class="progress-ring ${paused ? 'paused' : ''}" viewBox="0 0 20 20" aria-hidden="true" title="${titleText}">
-          <circle class="bg" cx="10" cy="10" r="${r}"></circle>
-          <circle class="fg" cx="10" cy="10" r="${r}"
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
+          <circle
+            cx="10" cy="10" r="${r}"
+            fill="none"
+            stroke="#1e88e5"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            transform="rotate(-90 10 10)"
             stroke-dasharray="${c}"
-            stroke-dashoffset="${offset}"></circle>
+            stroke-dashoffset="${offset}">
+          </circle>
+        </svg>
+      `;
+    }
+
+    function doneIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#2e7d32"></circle>
+          <path d="M6 10.2 L8.6 12.8 L14 7.4"
+                fill="none"
+                stroke="#ffffff"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+        </svg>
+      `;
+    }
+
+    function pausedIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#e0e0e0"></circle>
+          <rect x="7" y="6" width="2.3" height="8" rx="0.8" fill="#757575"></rect>
+          <rect x="10.7" y="6" width="2.3" height="8" rx="0.8" fill="#757575"></rect>
+        </svg>
+      `;
+    }
+
+    function errorIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#c62828"></circle>
+          <rect x="9.1" y="5.2" width="1.8" height="6.8" rx="0.9" fill="#ffffff"></rect>
+          <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
         </svg>
       `;
     }
@@ -167,33 +209,27 @@
       const meta = rowEls.get(id).meta;
 
       if (st.status === "done") {
-        meta.innerHTML = `<span class="tick">✓</span>`;
+        meta.innerHTML = doneIconSVG();
+        return;
+      }
+
+      if (st.status === "paused") {
+        meta.innerHTML = pausedIconSVG();
         return;
       }
 
       if (st.status === "error") {
-        meta.innerHTML = `<span class="error-mark">!</span>`;
+        meta.innerHTML = errorIconSVG();
         return;
       }
 
-      if (st.status === "loading" || st.status === "paused") {
+      if (st.status === "loading") {
         const pct = parsePercent(st.progressText);
-        if (pct !== null) {
-          meta.innerHTML = progressRingSVG(
-            pct,
-            st.status === "paused",
-            st.status === "paused" ? `Paused at ${pct}%` : `${pct}%`
-          );
-        } else {
-          // fallback if server doesn't give percentage
-          meta.textContent = st.status === "paused" ? "⏸" : "…";
-          meta.title = st.progressText || "";
-        }
+        meta.innerHTML = loadingIconSVG(pct);
         return;
       }
 
-      meta.textContent = "";
-      meta.title = "";
+      meta.innerHTML = "";
     }
 
     function buildListOnce() {
