@@ -69,7 +69,8 @@
       <div class="small">
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
-        Black border = model in view. Light border = currently downloading.
+        Black border = model in view. Light border = currently downloading.<br>
+        Auto-frame happens only once (first model). After that, camera stays the same across models.
       </div>
     </div>
 
@@ -114,13 +115,62 @@
     let preloadEnabled = true;
     let preloadTimer = null;
 
-    // Resume scheduler (this was the key fix that made it continue without extra clicks)
+    // Resume scheduler (key fix that made it continue without extra clicks)
     let resumeRequested = false;
 
     const preloadQueue = MODELS.map(m => m.id);
 
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
+
+    // ===== Camera: auto-frame once, then persist orbit+target+zoom =====
+    let autoFrameDone = false; // becomes true after first model load
+    let savedCamera = {
+      orbit: null,   // {theta, phi, radius}
+      target: null,  // {x,y,z}
+      fov: null      // number (deg)
+    };
+
+    function snapshotCamera() {
+      try {
+        if (typeof mv.getCameraOrbit === "function") savedCamera.orbit = mv.getCameraOrbit();
+        if (typeof mv.getCameraTarget === "function") savedCamera.target = mv.getCameraTarget();
+        if (typeof mv.getFieldOfView === "function") savedCamera.fov = mv.getFieldOfView();
+      } catch (_) {}
+    }
+
+    function applySavedCamera() {
+      try {
+        if (savedCamera.orbit) {
+          const o = savedCamera.orbit;
+          mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${o.radius}m`; // radius = zoom distance
+        }
+        if (savedCamera.target) {
+          const t = savedCamera.target;
+          mv.cameraTarget = `${t.x}m ${t.y}m ${t.z}m`;
+        }
+        if (savedCamera.fov != null) {
+          mv.fieldOfView = `${savedCamera.fov}deg`;
+        }
+        if (typeof mv.jumpCameraToGoal === "function") {
+          try { mv.jumpCameraToGoal(); } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    // After the FIRST model is loaded, we capture the auto-framed camera once and start persisting changes.
+    mv.addEventListener('load', () => {
+      if (!autoFrameDone) {
+        autoFrameDone = true;
+        snapshotCamera(); // this captures the initial auto-frame result
+      }
+    });
+
+    // From then on, keep updating saved camera as the user moves around.
+    mv.addEventListener('camera-change', () => {
+      if (!autoFrameDone) return; // ignore camera changes during initial auto-frame
+      snapshotCamera();
+    });
 
     // Downloading visual (transparent border)
     let downloadingVisualId = null;
@@ -353,9 +403,25 @@
     }
 
     // Viewer: ONLY here we change selectedId + black border
+    // Auto-frame only first time; afterwards, restore saved camera after each load.
     async function showModel(modelId) {
+      // Only snapshot camera after the initial auto-frame is done
+      if (autoFrameDone) snapshotCamera();
+
       selectedId = modelId;
       paintActive();
+
+      // If auto-frame already done, force camera after the new model loads.
+      if (autoFrameDone) {
+        const onLoad = () => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              applySavedCamera();
+            });
+          });
+        };
+        mv.addEventListener('load', onLoad, { once: true });
+      }
 
       const st = state.get(modelId);
       if (st.status === "done" && st.blobUrl) {
