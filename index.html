@@ -39,7 +39,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Auto-frame runs only on the first model; afterwards camera zoom/angle are preserved.
+        Camera stays fixed during swap only; then free movement resumes.
       </div>
     </div>
 
@@ -98,12 +98,11 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Camera persistence (auto-frame only first time) =====
-    // We capture initial framed camera after first load.
+    // ===== Camera: clamp only during swap =====
     let haveSavedCamera = false;
     let saved = { orbit: null, target: null, fov: null };
 
-    // Only update saved camera when user actually interacts
+    // Save camera only on user interaction
     let userInteracting = false;
     let interactTimer = null;
     function markInteract() {
@@ -132,53 +131,54 @@
 
     function applySavedCameraOnce() {
       if (!haveSavedCamera) return;
-      const o = saved.orbit, t = saved.target;
-      mv.cameraOrbit = orbitToString(o);
-      mv.cameraTarget = targetToString(t);
+      mv.cameraOrbit = orbitToString(saved.orbit);
+      mv.cameraTarget = targetToString(saved.target);
       if (saved.fov != null) mv.fieldOfView = `${saved.fov}deg`;
       if (typeof mv.jumpCameraToGoal === "function") {
         try { mv.jumpCameraToGoal(); } catch (_) {}
       }
     }
 
-    // Capture initial auto-framed camera ONCE
+    // Capture initial auto-framed camera once
     let capturedInitial = false;
     mv.addEventListener('load', () => {
       if (!capturedInitial) {
         capturedInitial = true;
-        snapshotCameraNumeric(); // baseline from auto-frame
+        snapshotCameraNumeric();
       }
     });
 
-    // Update saved camera ONLY when user interacts
     mv.addEventListener('camera-change', () => {
       if (!userInteracting) return;
       snapshotCameraNumeric();
     });
 
-    // Clamp camera during model switching so auto-frame cannot override zoom
-    function clampCameraToSaved() {
+    // Clamp management (always released)
+    let clampReleaseTimer = null;
+    function clampDuringSwap() {
       if (!haveSavedCamera) return;
       const orbitStr = orbitToString(saved.orbit);
 
-      // lock orbit completely during the swap
-      mv.cameraOrbit = orbitStr;
-      mv.cameraTarget = targetToString(saved.target);
-      if (saved.fov != null) mv.fieldOfView = `${saved.fov}deg`;
+      // set camera first
+      applySavedCameraOnce();
 
-      // Clamp min/max to same orbit so framing cannot change radius/angles
+      // clamp orbit so auto-frame can't override
       mv.setAttribute('min-camera-orbit', orbitStr);
       mv.setAttribute('max-camera-orbit', orbitStr);
 
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
+      // safety: release in case load never fires
+      if (clampReleaseTimer) clearTimeout(clampReleaseTimer);
+      clampReleaseTimer = setTimeout(() => releaseClamp(), 1500);
     }
 
-    function releaseCameraClamp() {
-      // Restore normal camera controls (allow zoom/rotate again)
+    function releaseClamp() {
       mv.setAttribute('min-camera-orbit', 'auto auto auto');
       mv.setAttribute('max-camera-orbit', 'auto auto auto');
+    }
+
+    function releaseClampSoon() {
+      if (clampReleaseTimer) clearTimeout(clampReleaseTimer);
+      clampReleaseTimer = setTimeout(() => releaseClamp(), 250);
     }
 
     // ===== Visual: downloading border =====
@@ -398,32 +398,25 @@
       return p;
     }
 
-    // ===== Show model (disable auto-frame after first) =====
+    // ===== Show model =====
     async function showModel(modelId) {
-      // Snapshot right before switching (if user interacted)
-      // (camera-change handler already updates saved on interaction)
-      if (!haveSavedCamera) {
-        // If user never interacted, keep baseline from first load.
-        snapshotCameraNumeric();
-      }
+      // ensure we have baseline camera
+      if (!haveSavedCamera) snapshotCameraNumeric();
 
       selectedId = modelId;
       paintActive();
 
-      // If we have a saved camera, clamp it BEFORE swapping src so auto-frame can't reset zoom.
-      if (haveSavedCamera) clampCameraToSaved();
+      // Clamp only during swap
+      clampDuringSwap();
 
-      // After load: re-apply camera and then release clamp so you can keep zooming/rotating.
       const onLoad = () => {
-        if (haveSavedCamera) {
+        // Re-apply once after load and then release clamp shortly after.
+        requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              applySavedCameraOnce();
-              // release slightly after to ensure late fit can't run
-              setTimeout(() => releaseCameraClamp(), 150);
-            });
+            applySavedCameraOnce();
+            releaseClampSoon();
           });
-        }
+        });
       };
       mv.addEventListener('load', onLoad, { once: true });
 
@@ -436,7 +429,9 @@
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
         mv.src = blobUrl;
-      } catch (_) {}
+      } catch (_) {
+        releaseClampSoon();
+      }
     }
 
     function onUserSelect(modelId) {
