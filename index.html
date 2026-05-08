@@ -27,7 +27,7 @@
     .status-icon{ width:20px; height:20px; display:block; }
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-    model-viewer{ width:calc(100vw - 360px); height:100vh; }
+    model-viewer{ width:calc(100vw - 360px); height:100vh; background:#fff; }
   </style>
 </head>
 
@@ -40,7 +40,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Camera snapshot is “settled” + frozen per swap (prevents previous-zoom bleed).
+        Fix: switching waits for camera to stop moving (prevents jump on fast clicks).
       </div>
     </div>
 
@@ -100,11 +100,13 @@
     const rowEls = new Map(); // id -> { row, meta }
 
     // ===== Camera: settled snapshot + frozen per swap =====
-    // latestCamera updates ONLY via settle events (wheel/pointerup/touchend) with rAF
-    // During swap: saving disabled; we use a local camForThisSwap snapshot.
     let latestCamera = null; // {orbit:{theta,phi,radius}, target:{x,y,z}, fov:number}
     let savingEnabled = true;
     let settleRaf = 0;
+
+    // NEW: track camera motion; if user clicks during motion we wait for idle
+    let isSwitching = false;
+    let lastCameraChangeTime = 0; // ms (performance.now)
 
     function readCamera() {
       const orbit = mv.getCameraOrbit?.();
@@ -139,29 +141,64 @@
 
     function scheduleSettledSnapshot() {
       if (!savingEnabled) return;
+      if (isSwitching) return;
       if (settleRaf) cancelAnimationFrame(settleRaf);
       settleRaf = requestAnimationFrame(() => {
         settleRaf = 0;
+        if (isSwitching) return;
         const cam = readCamera();
         if (cam) latestCamera = cam;
       });
     }
 
-    // Update latest camera when user finishes actions (settled moments)
+    // IMPORTANT CHANGE:
+    // camera-change fires while the camera is moving (drag inertia, zoom animation, etc).
+    // We use it ONLY to update lastCameraChangeTime and to schedule a settled snapshot.
+    mv.addEventListener('camera-change', () => {
+      if (isSwitching) return;
+      lastCameraChangeTime = performance.now();
+      scheduleSettledSnapshot();
+    });
+
+    // Keep your original settle triggers too (these are still useful)
     mv.addEventListener('wheel', scheduleSettledSnapshot, { passive: true });
     mv.addEventListener('pointerup', scheduleSettledSnapshot, { passive: true });
     mv.addEventListener('touchend', scheduleSettledSnapshot, { passive: true });
 
-    // Also capture initial camera once first model loads (baseline)
+    // Capture initial camera once first model loads — AFTER it settles (2 frames)
     let initialCaptured = false;
     mv.addEventListener('load', () => {
       if (initialCaptured) return;
-      const cam = readCamera();
-      if (cam) {
-        latestCamera = cam;
-        initialCaptured = true;
-      }
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const cam = readCamera();
+          if (cam) {
+            latestCamera = cam;
+            initialCaptured = true;
+          }
+        });
+      });
     });
+
+    // NEW: wait until camera has been idle (no camera-change events) for N ms
+    function waitForCameraIdle(idleMs = 120, maxWaitMs = 600) {
+      const start = performance.now();
+      return new Promise(resolve => {
+        const check = () => {
+          const now = performance.now();
+          const since = now - lastCameraChangeTime;
+
+          // If camera hasn't changed recently, we're good
+          if (since >= idleMs) return resolve();
+
+          // Don't hang forever
+          if (now - start >= maxWaitMs) return resolve();
+
+          setTimeout(check, 16);
+        };
+        check();
+      });
+    }
 
     // ===== Visual: downloading border =====
     let downloadingVisualId = null;
@@ -273,6 +310,7 @@
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+
       resumeRequested = false;
       resumePreload();
     }
@@ -382,15 +420,15 @@
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // Force a settled snapshot BEFORE we start the swap (one frame later).
-      // This is the key to avoid capturing the “previous” zoom.
-      await new Promise(requestAnimationFrame);
+      // ✅ FIX: if camera is still moving, wait for it to stop before freezing camera
+      await waitForCameraIdle(120, 600);
 
       // Take the latest settled camera; freeze it for this swap
       const camForThisSwap = cloneCam(latestCamera) || readCamera();
 
       // Disable saving until swap completes
       savingEnabled = false;
+      isSwitching = true;
 
       selectedId = modelId;
       paintActive();
@@ -400,14 +438,12 @@
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            // Apply the frozen camera for THIS swap
             applyCam(camForThisSwap);
 
-            // Make this the new latestCamera, then re-enable saving
             latestCamera = cloneCam(camForThisSwap);
+            isSwitching = false;
             savingEnabled = true;
 
-            // Also schedule a settled snapshot after things stabilize
             scheduleSettledSnapshot();
           });
         });
@@ -425,7 +461,10 @@
         if (token !== swapToken) return;
         mv.src = blobUrl;
       } catch (_) {
-        if (token === swapToken) savingEnabled = true;
+        if (token === swapToken) {
+          isSwitching = false;
+          savingEnabled = true;
+        }
       }
     }
 
