@@ -39,7 +39,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Camera stays fixed during swap only; then free movement resumes.
+        Camera is preserved across swaps (no far-zoom jumps).
       </div>
     </div>
 
@@ -98,23 +98,16 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Camera: clamp only during swap =====
+    // ===== Camera: clamp only during swap, but ALWAYS snapshot on switch =====
     let haveSavedCamera = false;
     let saved = { orbit: null, target: null, fov: null };
 
-    // Save camera only on user interaction
-    let userInteracting = false;
-    let interactTimer = null;
-    function markInteract() {
-      userInteracting = true;
-      if (interactTimer) clearTimeout(interactTimer);
-      interactTimer = setTimeout(() => { userInteracting = false; }, 220);
-    }
-    mv.addEventListener('pointerdown', markInteract, { passive: true });
-    mv.addEventListener('wheel', markInteract, { passive: true });
-    mv.addEventListener('touchstart', markInteract, { passive: true });
+    // Block capturing during the swap window (so we don’t save auto-fit)
+    let captureBlocked = false;
+    let unblockTimer = null;
 
     function snapshotCameraNumeric() {
+      if (captureBlocked) return;
       try {
         const o = mv.getCameraOrbit?.();
         const t = mv.getCameraTarget?.();
@@ -144,29 +137,35 @@
     mv.addEventListener('load', () => {
       if (!capturedInitial) {
         capturedInitial = true;
+        // baseline
+        const oldBlock = captureBlocked;
+        captureBlocked = false;
         snapshotCameraNumeric();
+        captureBlocked = oldBlock;
       }
     });
 
-    mv.addEventListener('camera-change', () => {
-      if (!userInteracting) return;
-      snapshotCameraNumeric();
-    });
+    // Update camera continuously (user-driven). No “userInteracting” window needed now.
+    // The only protection we need is captureBlocked during swaps.
+    mv.addEventListener('camera-change', () => snapshotCameraNumeric());
 
-    // Clamp management (always released)
+    // Clamp management
     let clampReleaseTimer = null;
+
     function clampDuringSwap() {
       if (!haveSavedCamera) return;
-      const orbitStr = orbitToString(saved.orbit);
 
-      // set camera first
+      // block capture during the critical swap window
+      captureBlocked = true;
+      if (unblockTimer) clearTimeout(unblockTimer);
+
+      // set camera + clamp
       applySavedCameraOnce();
-
-      // clamp orbit so auto-frame can't override
+      const orbitStr = orbitToString(saved.orbit);
       mv.setAttribute('min-camera-orbit', orbitStr);
       mv.setAttribute('max-camera-orbit', orbitStr);
 
-      // safety: release in case load never fires
+      // safety release if load never fires
       if (clampReleaseTimer) clearTimeout(clampReleaseTimer);
       clampReleaseTimer = setTimeout(() => releaseClamp(), 1500);
     }
@@ -174,11 +173,15 @@
     function releaseClamp() {
       mv.setAttribute('min-camera-orbit', 'auto auto auto');
       mv.setAttribute('max-camera-orbit', 'auto auto auto');
+
+      // unblock capture shortly after release (so we can save user moves again)
+      if (unblockTimer) clearTimeout(unblockTimer);
+      unblockTimer = setTimeout(() => { captureBlocked = false; }, 60);
     }
 
     function releaseClampSoon() {
       if (clampReleaseTimer) clearTimeout(clampReleaseTimer);
-      clampReleaseTimer = setTimeout(() => releaseClamp(), 250);
+      clampReleaseTimer = setTimeout(() => releaseClamp(), 180);
     }
 
     // ===== Visual: downloading border =====
@@ -400,8 +403,11 @@
 
     // ===== Show model =====
     async function showModel(modelId) {
-      // ensure we have baseline camera
-      if (!haveSavedCamera) snapshotCameraNumeric();
+      // IMPORTANT FIX: always snapshot right before swapping (this captures far zoom too)
+      const oldBlock = captureBlocked;
+      captureBlocked = false;
+      snapshotCameraNumeric();
+      captureBlocked = oldBlock;
 
       selectedId = modelId;
       paintActive();
@@ -410,7 +416,6 @@
       clampDuringSwap();
 
       const onLoad = () => {
-        // Re-apply once after load and then release clamp shortly after.
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             applySavedCameraOnce();
