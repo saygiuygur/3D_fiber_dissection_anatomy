@@ -39,7 +39,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Camera carries across models + zoom-out is capped to prevent the “jump bug”.
+        This build ONLY caps zoom-out beyond the initial framed distance.
       </div>
     </div>
 
@@ -77,7 +77,7 @@
     let currentController = null;
     let currentDownloadingId = null;
 
-    // Per-model in-flight promise: prevents self-restarts
+    // Per-model in-flight promise (prevents redownload loops)
     const inFlight = new Map(); // modelId -> Promise<string>
 
     // Selection (black border)
@@ -97,6 +97,31 @@
 
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
+
+    // ===== Zoom-out cap (set once; NEVER changed again) =====
+    let limiterSet = false;
+    let baselineRadius = null;
+
+    function setZoomOutCap(radiusM) {
+      // cap zoom-out at first framed distance
+      mv.setAttribute('max-camera-orbit', `auto auto ${radiusM}m`);
+
+      // optional: cap zoom-in a bit (comment out if you don’t want)
+      const minR = Math.max(radiusM * 0.03, 0.001);
+      mv.setAttribute('min-camera-orbit', `auto auto ${minR}m`);
+    }
+
+    mv.addEventListener('load', () => {
+      if (limiterSet) return;
+      try {
+        const orbit = mv.getCameraOrbit?.();
+        if (orbit && typeof orbit.radius === "number") {
+          baselineRadius = orbit.radius;
+          setZoomOutCap(baselineRadius);
+          limiterSet = true;
+        }
+      } catch (_) {}
+    });
 
     // ===== Visual: downloading border =====
     let downloadingVisualId = null;
@@ -203,68 +228,6 @@
       paintDownloading(null);
     }
 
-    // ===== Camera carry + zoom-out bug prevention =====
-    let savedCam = { orbit: null, target: null, fov: null };
-    let baselineRadius = null;
-    let limiterSet = false;
-
-    // Set max zoom-out to baseline * factor (use 1.0 to forbid beyond default)
-    const MAX_OUT_FACTOR = 1.0;   // change to 1.1 if you want 10% more than default
-
-    function setMaxZoomOut() {
-      if (!baselineRadius) return;
-      mv.setAttribute('max-camera-orbit', `auto auto ${(baselineRadius * MAX_OUT_FACTOR)}m`);
-      // optional: a gentle min to avoid going "inside"
-      const minR = Math.max(baselineRadius * 0.03, 0.001);
-      mv.setAttribute('min-camera-orbit', `auto auto ${minR}m`);
-    }
-
-    function snapshotNow() {
-      // capture current camera right now (angle + zoom + target)
-      try {
-        const o = mv.getCameraOrbit?.();
-        const t = mv.getCameraTarget?.();
-        const f = mv.getFieldOfView?.();
-        if (o) savedCam.orbit = o;
-        if (t) savedCam.target = t;
-        if (typeof f === "number") savedCam.fov = f;
-
-        // enforce max-out cap in the saved camera too
-        if (baselineRadius && savedCam.orbit && savedCam.orbit.radius > baselineRadius * MAX_OUT_FACTOR) {
-          savedCam.orbit.radius = baselineRadius * MAX_OUT_FACTOR;
-        }
-      } catch (_) {}
-    }
-
-    function applySavedCam() {
-      if (!savedCam.orbit || !savedCam.target) return;
-      const o = savedCam.orbit, t = savedCam.target;
-      mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${o.radius}m`;
-      mv.cameraTarget = `${t.x}m ${t.y}m ${t.z}m`;
-      if (savedCam.fov != null) mv.fieldOfView = `${savedCam.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    // Capture baseline radius ONCE from the first auto-framed load, then set max zoom-out permanently.
-    mv.addEventListener('load', () => {
-      if (limiterSet) return;
-      try {
-        const o = mv.getCameraOrbit?.();
-        if (o && typeof o.radius === "number") {
-          baselineRadius = o.radius;
-          // Initialize saved camera to the framed view too
-          savedCam.orbit = o;
-          savedCam.target = mv.getCameraTarget?.() ?? savedCam.target;
-          savedCam.fov = mv.getFieldOfView?.() ?? savedCam.fov;
-
-          setMaxZoomOut();
-          limiterSet = true;
-        }
-      } catch (_) {}
-    });
-
     // ===== Preload scheduler =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
@@ -277,6 +240,7 @@
     function pausePreloadForAWhile() {
       preloadEnabled = false;
       if (preloadTimer) clearTimeout(preloadTimer);
+
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
         resumeRequested = true;
@@ -373,27 +337,10 @@
       return p;
     }
 
-    // ===== Show model (camera carry) =====
+    // ===== Show model (NO camera forcing; just switch src) =====
     async function showModel(modelId) {
-      // Save camera at click time (angle + zoom + target)
-      snapshotNow();
-
       selectedId = modelId;
       paintActive();
-
-      // Always keep the max zoom-out cap active
-      if (limiterSet) setMaxZoomOut();
-
-      // After the new model loads, re-apply camera.
-      // Use 2x rAF to run after model-viewer's internal “fit” pass.
-      const onLoad = () => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            applySavedCam();
-          });
-        });
-      };
-      mv.addEventListener('load', onLoad, { once: true });
 
       const st = state.get(modelId);
       if (st.status === "done" && st.blobUrl) {
