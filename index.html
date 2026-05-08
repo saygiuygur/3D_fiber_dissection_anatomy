@@ -6,31 +6,32 @@
   <title>3D Fiber Dissection Anatomy</title>
   <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
     .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
-
-    .row{
+    .row {
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
       border-radius:10px; background:#fff; cursor:pointer; user-select:none;
       gap:10px;
       transition: border-color 120ms ease;
     }
+
     /* Black border = ONLY model in view (selected) */
     .row.active { border-color:#111; }
+
     /* Transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name{
+    .name {
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
       flex: 1 1 auto;
     }
-    .meta{
+
+    .meta {
       width:24px;
       height:24px;
       display:flex;
@@ -38,19 +39,21 @@
       justify-content:center;
       flex: 0 0 24px;
     }
-    .status-icon{
+
+    .status-icon {
       width:20px;
       height:20px;
       display:block;
     }
-    .small{
+
+    .small {
       font-size:12px;
       color:#666;
       margin-top:10px;
       line-height:1.4;
     }
 
-    model-viewer{
+    model-viewer {
       width:calc(100vw - 360px);
       height:100vh;
     }
@@ -66,7 +69,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Camera angle/zoom stays the same when switching models.
+        Camera angle + zoom + target are preserved across model switches.
       </div>
     </div>
 
@@ -119,27 +122,37 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // --- Camera memory (keep view across model switches) ---
-    let savedCamera = {
-      orbit: null,
-      target: null,
-      fov: null
-    };
+    // ===== Camera memory (angle + zoom + target + fov) =====
+    // cameraOrbit contains zoom via radius, but we also store fieldOfView to be safe.
+    let savedCamera = { orbit: null, target: null, fov: null };
+    let cameraReady = false;
 
     function snapshotCamera() {
-      savedCamera.orbit = mv.cameraOrbit;
-      savedCamera.target = mv.cameraTarget;
-      savedCamera.fov = mv.fieldOfView;
+      // mv.cameraOrbit / cameraTarget / fieldOfView are strings like "45deg 75deg 2.5m"
+      // We store them as-is and reapply after load.
+      if (mv.cameraOrbit) savedCamera.orbit = mv.cameraOrbit;
+      if (mv.cameraTarget) savedCamera.target = mv.cameraTarget;
+      if (mv.fieldOfView) savedCamera.fov = mv.fieldOfView;
     }
 
     function applySavedCamera() {
       if (savedCamera.orbit) mv.cameraOrbit = savedCamera.orbit;
       if (savedCamera.target) mv.cameraTarget = savedCamera.target;
       if (savedCamera.fov) mv.fieldOfView = savedCamera.fov;
+
+      // Ensure the goal camera values are actually applied immediately if supported.
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
     }
 
-    // Update camera memory whenever user moves camera
-    mv.addEventListener('camera-change', () => snapshotCamera());
+    // Update camera memory whenever user moves camera (once model is ready)
+    mv.addEventListener('camera-change', () => {
+      if (!cameraReady) return;
+      snapshotCamera();
+    });
+
+    // ===== Visuals =====
 
     // Downloading visual (transparent border)
     let downloadingVisualId = null;
@@ -173,7 +186,6 @@
       const r = 7;
       const c = 2 * Math.PI * r;
       const offset = c * (1 - percent / 100);
-
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
@@ -231,24 +243,14 @@
       const st = state.get(id);
       const meta = rowEls.get(id).meta;
 
-      if (st.status === "done") {
-        meta.innerHTML = doneIconSVG();
-        return;
-      }
-      if (st.status === "paused") {
-        meta.innerHTML = pausedIconSVG();
-        return;
-      }
-      if (st.status === "error") {
-        meta.innerHTML = errorIconSVG();
-        return;
-      }
+      if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
+      if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
+      if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
       if (st.status === "loading") {
         const pct = parsePercent(st.progressText);
         meta.innerHTML = loadingIconSVG(pct);
         return;
       }
-
       meta.innerHTML = "";
     }
 
@@ -283,9 +285,7 @@
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
-
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-
       resumeRequested = false;
       resumePreload();
     }
@@ -314,7 +314,7 @@
       st.progressText = "";
       refreshMeta(modelId);
 
-      // Abort previous active download
+      // Abort previous active download (this is what causes mid-way restart; we keep it as you decided)
       if (currentController) {
         currentController.abort();
         if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -334,7 +334,6 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const total = Number(res.headers.get("Content-Length")) || null;
-
         const reader = res.body.getReader();
         let received = 0;
         const chunks = [];
@@ -384,20 +383,29 @@
       }
     }
 
-    // Viewer: ONLY here we change selectedId + black border + keep camera
+    // Viewer: ONLY here we change selectedId + black border + keep camera (angle + zoom + target)
     async function showModel(modelId) {
-      // Save current camera right before switching
+      // Snapshot camera just before switching (captures current zoom/radius too)
+      // If cameraReady is false, this is still fine (it stores the default orbit once available)
       snapshotCamera();
 
       selectedId = modelId;
       paintActive();
 
-      // Apply camera after the new model finishes loading into the viewer
-      const applyOnce = () => applySavedCamera();
-      mv.addEventListener('load', applyOnce, { once: true });
-
       const st = state.get(modelId);
 
+      // Apply camera AFTER the new model is loaded and model-viewer has set its internal framing.
+      const applyAfterLoad = () => {
+        // Important: apply in the next tick to avoid model-viewer's own post-load camera adjustment
+        setTimeout(() => {
+          applySavedCamera();
+          cameraReady = true; // after first successful load, start tracking camera-change
+        }, 0);
+      };
+      mv.addEventListener('load', applyAfterLoad, { once: true });
+
+      // IMPORTANT: setting mv.src should happen only once per switch to avoid restarting downloads.
+      // We only assign src after we have the blobUrl (or cached blobUrl).
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
         return;
@@ -441,7 +449,7 @@
     (function init() {
       buildListOnce();
 
-      // Initial camera snapshot (default)
+      // Initial snapshot (will be updated after first load)
       snapshotCamera();
 
       showModel(selectedId).then(() => {
