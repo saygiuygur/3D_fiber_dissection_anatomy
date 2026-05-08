@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>3D Fiber Dissection Anatomy</title>
+  <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
@@ -43,7 +44,7 @@
   </div>
 
   <script>
-    // 1) Put your models here (name + URL)
+    // Models (name + URL)
     const MODELS = [
       { id: "01_Veselled", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb" },
       { id: "02_Veselless", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb" },
@@ -72,15 +73,62 @@
     // Preload queue: start from 01 to last
     const preloadQueue = MODELS.map(m => m.id);
 
-    // --- UI building ---
-    function renderList(activeId = null) {
+    // ---- FIX #1: build sidebar ONCE and update in place ----
+    const rowEls = new Map(); // id -> { row, meta }
+    let activeId = null;
+
+    function setActive(id) {
+      activeId = id;
+      for (const m of MODELS) {
+        const el = rowEls.get(m.id);
+        if (el) el.row.classList.toggle("active", m.id === id);
+      }
+    }
+
+    // Throttle UI updates to once per animation frame
+    const dirty = new Set();
+    let rafPending = false;
+
+    function markDirty(id) {
+      dirty.add(id);
+      scheduleFlush();
+    }
+    function scheduleFlush() {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        flushDirty();
+      });
+    }
+    function flushDirty() {
+      for (const id of dirty) refreshMeta(id);
+      dirty.clear();
+    }
+
+    function refreshMeta(id) {
+      const st = state.get(id);
+      const el = rowEls.get(id);
+      if (!el) return;
+
+      if (st.status === "done") {
+        el.meta.innerHTML = `<span class="tick">✓</span>`;
+      } else if (st.status === "loading") {
+        el.meta.textContent = st.progressText || "loading…";
+      } else if (st.status === "paused") {
+        el.meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
+      } else if (st.status === "error") {
+        el.meta.textContent = "error";
+      } else {
+        el.meta.textContent = "";
+      }
+    }
+
+    function buildListOnce(initialActiveId) {
       list.innerHTML = "";
       for (const m of MODELS) {
-        const st = state.get(m.id);
-
         const row = document.createElement('div');
-        row.className = "row" + (m.id === activeId ? " active" : "");
-        row.dataset.id = m.id;
+        row.className = "row";
 
         const name = document.createElement('div');
         name.className = "name";
@@ -88,26 +136,19 @@
 
         const meta = document.createElement('div');
         meta.className = "meta";
-
-        // Right-side status
-        if (st.status === "done") {
-          meta.innerHTML = `<span class="tick">✓</span>`;
-        } else if (st.status === "loading") {
-          meta.textContent = st.progressText || "loading…";
-        } else if (st.status === "paused") {
-          meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
-        } else if (st.status === "error") {
-          meta.textContent = "error";
-        } else {
-          meta.textContent = "";
-        }
+        meta.textContent = "";
 
         row.appendChild(name);
         row.appendChild(meta);
-
         row.addEventListener('click', () => onUserSelect(m.id));
+
         list.appendChild(row);
+        rowEls.set(m.id, { row, meta });
+
+        // initial paint for this item
+        refreshMeta(m.id);
       }
+      setActive(initialActiveId);
     }
 
     // --- Download with progress + abort ---
@@ -121,14 +162,18 @@
       // Mark loading
       st.status = "loading";
       st.progressText = "";
-      renderList(modelId);
+      setActive(modelId);
+      markDirty(modelId);
 
       // Abort previous active download
       if (currentController) {
         currentController.abort();
         if (currentDownloadingId && currentDownloadingId !== modelId) {
           const prev = state.get(currentDownloadingId);
-          if (prev && prev.status === "loading") prev.status = "paused";
+          if (prev && prev.status === "loading") {
+            prev.status = "paused";
+            markDirty(currentDownloadingId);
+          }
         }
       }
 
@@ -157,10 +202,11 @@
             const pct = Math.floor((received / total) * 100);
             st.progressText = `${pct}%`;
           } else {
-            // Fallback if server doesn't provide Content-Length
             st.progressText = `${(received / (1024*1024)).toFixed(1)} MB`;
           }
-          renderList(modelId);
+
+          // only update this one row, throttled
+          markDirty(modelId);
         }
 
         const blob = new Blob(chunks, { type: "model/gltf-binary" });
@@ -169,19 +215,20 @@
         st.status = "done";
         st.progressText = "";
         st.blobUrl = blobUrl;
-        renderList(modelId);
 
+        markDirty(modelId);
         return blobUrl;
+
       } catch (err) {
         if (err.name === "AbortError") {
           // Paused by user selecting another model
           st.status = "paused";
-          renderList(modelId);
+          markDirty(modelId);
           throw err;
         }
         st.status = "error";
         st.progressText = "";
-        renderList(modelId);
+        markDirty(modelId);
         throw err;
       }
     }
@@ -193,7 +240,7 @@
       // If already downloaded, instant switch
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
-        renderList(modelId);
+        setActive(modelId);
         return;
       }
 
@@ -201,6 +248,7 @@
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
         mv.src = blobUrl;
+        setActive(modelId);
       } catch (e) {
         // Abort is expected when user clicks elsewhere; ignore
       }
@@ -216,8 +264,6 @@
 
     // --- Preload sequentially (01 -> 11) ---
     async function resumePreload() {
-      // If something is actively downloading due to user action, don’t fight it.
-      // We'll just start/continue when idle.
       for (const id of preloadQueue) {
         const st = state.get(id);
         if (st.status === "done") continue;
@@ -227,7 +273,6 @@
 
         try {
           await downloadToBlobUrl(id);
-          // If user triggered a new download mid-way, this will abort; then we stop.
         } catch (e) {
           if (e.name === "AbortError") return;
           // On error, skip it and continue to next
@@ -237,13 +282,10 @@
 
     // --- Boot ---
     (function init() {
-      renderList(MODELS[0].id);
+      buildListOnce(MODELS[0].id);
 
       // Start by showing model 01 (and it will also download it if not cached)
       showModel(MODELS[0].id).then(() => resumePreload());
-
-      // Optional: when user clicks a different button while current model is downloading,
-      // the AbortController makes it "pause" and jump to clicked one.
     })();
   </script>
 </body>
