@@ -11,7 +11,7 @@
     .wrap { display:flex; height:100vh; }
     .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
 
-    .row {
+    .row{
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
       border-radius:10px; background:#fff; cursor:pointer; user-select:none;
@@ -21,14 +21,12 @@
     .row.active { border-color:#111; }
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
+    .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
+    .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
+    .status-icon{ width:20px; height:20px; display:block; }
 
-    .meta { width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
-    .status-icon { width:20px; height:20px; display:block; }
-
-    .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-
-    model-viewer { width:calc(100vw - 360px); height:100vh; }
+    .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
+    model-viewer{ width:calc(100vw - 360px); height:100vh; }
   </style>
 </head>
 
@@ -100,35 +98,59 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Camera persistence =====
-    // We store string forms because mv.cameraOrbit includes radius (zoom) and is stable.
+    // ========= CAMERA (robust zoom persistence) =========
+    // Store numeric values so radius (zoom) is truly preserved.
     let savedCamera = { orbit: null, target: null, fov: null };
-    let suppressCameraCapture = false;  // prevents capturing auto-frame changes during load/switch
 
-    function snapshotCamera() {
-      // Only snapshot if model-viewer has values
-      if (mv.cameraOrbit) savedCamera.orbit = mv.cameraOrbit;
-      if (mv.cameraTarget) savedCamera.target = mv.cameraTarget;
-      if (mv.fieldOfView) savedCamera.fov = mv.fieldOfView;
+    // Only save camera when user actually interacts, not during auto-frame/load animations.
+    let userInteracting = false;
+    let userInteractTimer = null;
+
+    function markUserInteracting() {
+      userInteracting = true;
+      if (userInteractTimer) clearTimeout(userInteractTimer);
+      userInteractTimer = setTimeout(() => { userInteracting = false; }, 180);
     }
 
-    function applySavedCamera() {
-      if (savedCamera.orbit) mv.cameraOrbit = savedCamera.orbit;   // includes zoom radius
-      if (savedCamera.target) mv.cameraTarget = savedCamera.target;
-      if (savedCamera.fov) mv.fieldOfView = savedCamera.fov;
+    // Mark interaction on actual user inputs
+    mv.addEventListener('pointerdown', markUserInteracting, { passive: true });
+    mv.addEventListener('wheel', markUserInteracting, { passive: true });
+    mv.addEventListener('touchstart', markUserInteracting, { passive: true });
 
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
+    function snapshotCameraNumeric() {
+      try {
+        if (typeof mv.getCameraOrbit === "function") savedCamera.orbit = mv.getCameraOrbit();   // {theta, phi, radius}
+        if (typeof mv.getCameraTarget === "function") savedCamera.target = mv.getCameraTarget(); // {x,y,z}
+        if (typeof mv.getFieldOfView === "function") savedCamera.fov = mv.getFieldOfView();     // number (deg)
+      } catch (_) {}
     }
 
-    // Capture user camera moves (but ignore auto-frame/auto-adjust moments)
+    function applyCameraNumeric() {
+      try {
+        if (savedCamera.orbit) {
+          const o = savedCamera.orbit;
+          mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${o.radius}m`;
+        }
+        if (savedCamera.target) {
+          const t = savedCamera.target;
+          mv.cameraTarget = `${t.x}m ${t.y}m ${t.z}m`;
+        }
+        if (savedCamera.fov != null) {
+          mv.fieldOfView = `${savedCamera.fov}deg`;
+        }
+        if (typeof mv.jumpCameraToGoal === "function") {
+          try { mv.jumpCameraToGoal(); } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    // Save camera ONLY from real user interactions
     mv.addEventListener('camera-change', () => {
-      if (suppressCameraCapture) return;
-      snapshotCamera();
+      if (!userInteracting) return;
+      snapshotCameraNumeric();
     });
 
-    // ===== Visual: downloading border =====
+    // ========= VISUALS =========
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -146,7 +168,6 @@
       }
     }
 
-    // ===== Status Icons =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -201,7 +222,6 @@
     function refreshMeta(id) {
       const st = state.get(id);
       const meta = rowEls.get(id).meta;
-
       if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
       if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
       if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
@@ -236,7 +256,7 @@
       paintDownloading(null);
     }
 
-    // ===== Resume scheduling =====
+    // ========= PRELOAD SCHEDULER =========
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -257,7 +277,7 @@
       }, 1200);
     }
 
-    // ===== Download with in-flight dedupe =====
+    // ========= DOWNLOADER (with inFlight dedupe) =========
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -272,7 +292,7 @@
         st.progressText = "";
         refreshMeta(modelId);
 
-        // Abort previous active download (kept behavior)
+        // Abort previous active download (your chosen behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -320,7 +340,6 @@
 
           paintDownloading(null);
           maybeResumePreload();
-
           return blobUrl;
 
         } catch (err) {
@@ -348,32 +367,29 @@
       return p;
     }
 
-    // ===== Show model (now preserves zoom+angle+target) =====
+    // ========= SHOW MODEL (preserve zoom) =========
     async function showModel(modelId) {
-      // Capture current camera BEFORE switching (this includes zoom/radius)
-      snapshotCamera();
+      // Save current camera BEFORE switching
+      snapshotCameraNumeric();
 
       selectedId = modelId;
       paintActive();
 
-      // Prevent capturing auto-frame during this switch
-      suppressCameraCapture = true;
-
-      // After the new model loads, re-apply saved camera AFTER model-viewer's fit pass
-      const restoreCameraAfterLoad = () => {
+      // After new model loads, re-apply camera AFTER auto-frame finishes.
+      const onLoad = () => {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            applySavedCamera();
-            // allow camera capture again after we force our view
-            setTimeout(() => { suppressCameraCapture = false; }, 0);
+            applyCameraNumeric();
+            // apply again shortly after in case model-viewer does a late fit
+            setTimeout(() => applyCameraNumeric(), 60);
           });
         });
       };
-      mv.addEventListener('load', restoreCameraAfterLoad, { once: true });
+      mv.addEventListener('load', onLoad, { once: true });
 
       const st = state.get(modelId);
 
-      // If already downloaded: NO fetch / NO abort / NO restarting downloads
+      // If already downloaded: no fetch / no abort / no restarts
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
         return;
@@ -382,9 +398,8 @@
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
         mv.src = blobUrl;
-      } catch (e) {
+      } catch (_) {
         // ignore abort
-        suppressCameraCapture = false;
       }
     }
 
@@ -428,8 +443,7 @@
     (function init() {
       buildListOnce();
 
-      // Let model-viewer auto-frame on the first load, then we start preserving.
-      // (First snapshot will capture the initial framed view.)
+      // Let first model load normally; after you start interacting, camera will be captured.
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
