@@ -98,59 +98,69 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ========= CAMERA (robust zoom persistence) =========
-    // Store numeric values so radius (zoom) is truly preserved.
+    // ===== Camera persistence (robust) =====
+    // Store strings because cameraOrbit includes radius ("zoom distance") directly.
     let savedCamera = { orbit: null, target: null, fov: null };
 
-    // Only save camera when user actually interacts, not during auto-frame/load animations.
+    // Capture user moves: mark on actual user inputs
     let userInteracting = false;
     let userInteractTimer = null;
-
     function markUserInteracting() {
       userInteracting = true;
       if (userInteractTimer) clearTimeout(userInteractTimer);
       userInteractTimer = setTimeout(() => { userInteracting = false; }, 180);
     }
-
-    // Mark interaction on actual user inputs
     mv.addEventListener('pointerdown', markUserInteracting, { passive: true });
     mv.addEventListener('wheel', markUserInteracting, { passive: true });
     mv.addEventListener('touchstart', markUserInteracting, { passive: true });
 
-    function snapshotCameraNumeric() {
-      try {
-        if (typeof mv.getCameraOrbit === "function") savedCamera.orbit = mv.getCameraOrbit();   // {theta, phi, radius}
-        if (typeof mv.getCameraTarget === "function") savedCamera.target = mv.getCameraTarget(); // {x,y,z}
-        if (typeof mv.getFieldOfView === "function") savedCamera.fov = mv.getFieldOfView();     // number (deg)
-      } catch (_) {}
+    function snapshotCamera() {
+      // Only snapshot when we actually have values
+      if (mv.cameraOrbit) savedCamera.orbit = mv.cameraOrbit;
+      if (mv.cameraTarget) savedCamera.target = mv.cameraTarget;
+      if (mv.fieldOfView) savedCamera.fov = mv.fieldOfView;
     }
 
-    function applyCameraNumeric() {
-      try {
-        if (savedCamera.orbit) {
-          const o = savedCamera.orbit;
-          mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${o.radius}m`;
-        }
-        if (savedCamera.target) {
-          const t = savedCamera.target;
-          mv.cameraTarget = `${t.x}m ${t.y}m ${t.z}m`;
-        }
-        if (savedCamera.fov != null) {
-          mv.fieldOfView = `${savedCamera.fov}deg`;
-        }
-        if (typeof mv.jumpCameraToGoal === "function") {
-          try { mv.jumpCameraToGoal(); } catch (_) {}
-        }
-      } catch (_) {}
+    function applySavedCameraOnce() {
+      if (savedCamera.orbit) mv.cameraOrbit = savedCamera.orbit;
+      if (savedCamera.target) mv.cameraTarget = savedCamera.target;
+      if (savedCamera.fov) mv.fieldOfView = savedCamera.fov;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
     }
 
-    // Save camera ONLY from real user interactions
+    // Keep saved camera updated ONLY when user is interacting (not during auto-frame)
     mv.addEventListener('camera-change', () => {
       if (!userInteracting) return;
-      snapshotCameraNumeric();
+      snapshotCamera();
     });
 
-    // ========= VISUALS =========
+    // This is the key: fight late auto-frame by re-applying camera for a short settling window.
+    function lockCameraAfterLoad() {
+      // Apply immediately on next frames, then for a short period.
+      const start = performance.now();
+      let count = 0;
+
+      const tick = () => {
+        applySavedCameraOnce();
+        count++;
+
+        // Run for ~400ms or up to ~12 iterations
+        if (performance.now() - start < 400 && count < 12) {
+          setTimeout(tick, 40);
+        }
+      };
+
+      // Start after layout/fit
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          tick();
+        });
+      });
+    }
+
+    // ===== Visual: downloading border =====
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -168,6 +178,7 @@
       }
     }
 
+    // ===== Status Icons =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -256,7 +267,7 @@
       paintDownloading(null);
     }
 
-    // ========= PRELOAD SCHEDULER =========
+    // ===== Preload scheduler =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -277,7 +288,7 @@
       }, 1200);
     }
 
-    // ========= DOWNLOADER (with inFlight dedupe) =========
+    // ===== Downloader (with inFlight dedupe) =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -292,7 +303,6 @@
         st.progressText = "";
         refreshMeta(modelId);
 
-        // Abort previous active download (your chosen behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -367,29 +377,19 @@
       return p;
     }
 
-    // ========= SHOW MODEL (preserve zoom) =========
+    // ===== Show model (preserve zoom) =====
     async function showModel(modelId) {
-      // Save current camera BEFORE switching
-      snapshotCameraNumeric();
+      // Save camera BEFORE switching (captures zoom)
+      snapshotCamera();
 
       selectedId = modelId;
       paintActive();
 
-      // After new model loads, re-apply camera AFTER auto-frame finishes.
-      const onLoad = () => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            applyCameraNumeric();
-            // apply again shortly after in case model-viewer does a late fit
-            setTimeout(() => applyCameraNumeric(), 60);
-          });
-        });
-      };
+      // Restore camera after load (and keep forcing for a short window)
+      const onLoad = () => lockCameraAfterLoad();
       mv.addEventListener('load', onLoad, { once: true });
 
       const st = state.get(modelId);
-
-      // If already downloaded: no fetch / no abort / no restarts
       if (st.status === "done" && st.blobUrl) {
         mv.src = st.blobUrl;
         return;
@@ -404,7 +404,6 @@
     }
 
     function onUserSelect(modelId) {
-      // If already downloaded, don't disturb preload timing
       const st = state.get(modelId);
       if (!(st.status === "done" && st.blobUrl)) {
         pausePreloadForAWhile();
@@ -443,7 +442,8 @@
     (function init() {
       buildListOnce();
 
-      // Let first model load normally; after you start interacting, camera will be captured.
+      // On first load, savedCamera is initially the default; once you zoom/rotate, it will capture.
+      // If you want it to capture the initial framed view too, just click/drag once.
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
