@@ -18,11 +18,7 @@
       gap:10px;
       transition: border-color 120ms ease;
     }
-
-    /* Black border = ONLY model in view (selected) */
     .row.active { border-color:#111; }
-
-    /* Transparent border = currently downloading model (does NOT override active) */
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
     .name {
@@ -103,9 +99,12 @@
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Current fetch control
+    // Current fetch control (global single-download behavior is kept)
     let currentController = null;
     let currentDownloadingId = null;
+
+    // NEW: in-flight promise per model to prevent restart loops
+    const inFlight = new Map(); // modelId -> Promise<string blobUrl>
 
     // Model in view (border follows this only)
     let selectedId = MODELS[0].id;
@@ -149,7 +148,6 @@
       return Math.max(0, Math.min(100, n));
     }
 
-    // Gray circle filling with blue arc clockwise
     function loadingIconSVG(percent) {
       const r = 7;
       const c = 2 * Math.PI * r;
@@ -170,7 +168,6 @@
       `;
     }
 
-    // Green filled circle + white tick
     function doneIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -185,7 +182,6 @@
       `;
     }
 
-    // Gray outlined circle + white inside + pause bars
     function pausedIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -247,7 +243,6 @@
       paintDownloading(null);
     }
 
-    // Resume scheduler helpers
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -269,90 +264,101 @@
       }, 1200);
     }
 
-    // Download
+    // Download (with in-flight dedupe)
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
 
+      // already downloaded
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
 
-      paintDownloading(modelId);
+      // NEW: if already downloading THIS model, return the same promise (prevents restart loop)
+      if (inFlight.has(modelId)) return inFlight.get(modelId);
 
-      st.status = "loading";
-      st.progressText = "";
-      refreshMeta(modelId);
+      const p = (async () => {
+        paintDownloading(modelId);
 
-      // Abort previous active download
-      if (currentController) {
-        currentController.abort();
-        if (currentDownloadingId && currentDownloadingId !== modelId) {
-          const prev = state.get(currentDownloadingId);
-          if (prev && prev.status === "loading") {
-            prev.status = "paused";
-            refreshMeta(currentDownloadingId);
-          }
-        }
-      }
-
-      currentController = new AbortController();
-      currentDownloadingId = modelId;
-
-      try {
-        const res = await fetch(model.url, { signal: currentController.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const total = Number(res.headers.get("Content-Length")) || null;
-
-        const reader = res.body.getReader();
-        let received = 0;
-        const chunks = [];
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          chunks.push(value);
-          received += value.byteLength;
-
-          st.progressText = total
-            ? `${Math.floor((received / total) * 100)}%`
-            : `${(received / (1024*1024)).toFixed(1)} MB`;
-
-          refreshMeta(modelId);
-        }
-
-        const blob = new Blob(chunks, { type: "model/gltf-binary" });
-        const blobUrl = URL.createObjectURL(blob);
-
-        st.status = "done";
+        st.status = "loading";
         st.progressText = "";
-        st.blobUrl = blobUrl;
         refreshMeta(modelId);
 
-        paintDownloading(null);
-        maybeResumePreload();
+        // Abort previous active download (kept behavior)
+        if (currentController) {
+          currentController.abort();
+          if (currentDownloadingId && currentDownloadingId !== modelId) {
+            const prev = state.get(currentDownloadingId);
+            if (prev && prev.status === "loading") {
+              prev.status = "paused";
+              refreshMeta(currentDownloadingId);
+            }
+          }
+        }
 
-        return blobUrl;
+        currentController = new AbortController();
+        currentDownloadingId = modelId;
 
-      } catch (err) {
-        paintDownloading(null);
+        try {
+          const res = await fetch(model.url, { signal: currentController.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        if (err.name === "AbortError") {
-          st.status = "paused";
+          const total = Number(res.headers.get("Content-Length")) || null;
+
+          const reader = res.body.getReader();
+          let received = 0;
+          const chunks = [];
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            received += value.byteLength;
+
+            st.progressText = total
+              ? `${Math.floor((received / total) * 100)}%`
+              : `${(received / (1024*1024)).toFixed(1)} MB`;
+
+            refreshMeta(modelId);
+          }
+
+          const blob = new Blob(chunks, { type: "model/gltf-binary" });
+          const blobUrl = URL.createObjectURL(blob);
+
+          st.status = "done";
+          st.progressText = "";
+          st.blobUrl = blobUrl;
+          refreshMeta(modelId);
+
+          paintDownloading(null);
+          maybeResumePreload();
+
+          return blobUrl;
+
+        } catch (err) {
+          paintDownloading(null);
+
+          if (err.name === "AbortError") {
+            st.status = "paused";
+            refreshMeta(modelId);
+            maybeResumePreload();
+            throw err;
+          }
+
+          st.status = "error";
+          st.progressText = "";
           refreshMeta(modelId);
           maybeResumePreload();
           throw err;
+        } finally {
+          // NEW: clear in-flight so future calls can start a new download if needed
+          inFlight.delete(modelId);
         }
+      })();
 
-        st.status = "error";
-        st.progressText = "";
-        refreshMeta(modelId);
-        maybeResumePreload();
-        throw err;
-      }
+      inFlight.set(modelId, p);
+      return p;
     }
 
-    // Viewer: ONLY here we change selectedId + black border
     async function showModel(modelId) {
       selectedId = modelId;
       paintActive();
@@ -372,7 +378,12 @@
     }
 
     function onUserSelect(modelId) {
-      pausePreloadForAWhile();
+      // OPTIONAL: if already downloaded, don't disturb preload timing
+      // (This reduces weird “resume loop” re-entrancy during heavy preloading)
+      const st = state.get(modelId);
+      if (!(st.status === "done" && st.blobUrl)) {
+        pausePreloadForAWhile();
+      }
       showModel(modelId);
     }
 
