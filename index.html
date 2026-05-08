@@ -18,12 +18,12 @@
     }
     .row.active { border-color:#111; }
     .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+    .meta { font-size:12px; color:#666; flex:0 0 auto; }
     .tick { color:#0a8a0a; font-weight:900; }
     .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
     model-viewer { width:calc(100vw - 420px); height:100vh; }
 
-    /* hide model-viewer's own bar; we show percent in the list */
+    /* hide model-viewer's own bar; we show progress in the list */
     model-viewer::part(default-progress-bar){ display:none !important; }
   </style>
 </head>
@@ -34,8 +34,8 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
       <div class="small">
-        Loads the selected model immediately.<br>
-        Background preloader runs sequentially (one at a time) and pauses when you click.
+        One download at a time (viewer OR background preloader).<br>
+        Clicking always works while downloading.
       </div>
     </div>
 
@@ -49,8 +49,8 @@
     </model-viewer>
   </div>
 
-  <!-- Hidden background preloader (sequential) -->
-  <model-viewer id="preloader" style="display:none" loading="eager"></model-viewer>
+  <!-- Hidden background preloader -->
+  <model-viewer id="pre" style="display:none" loading="eager"></model-viewer>
 
   <script>
     const MODELS = [
@@ -68,12 +68,10 @@
     ];
 
     const mv = document.getElementById("mv");
-    const pre = document.getElementById("preloader");
+    const pre = document.getElementById("pre");
     const list = document.getElementById("list");
 
-    // state per model
-    // loaded: finished at least once
-    // pct: last known percent (only meaningful while loading)
+    // Per model state
     // status: idle | viewing | preloading
     const S = new Map();
     for (const [id] of MODELS) S.set(id, { loaded:false, pct:null, status:"idle" });
@@ -84,28 +82,15 @@
 
     function idxOf(id){ return MODELS.findIndex(x => x[0] === id); }
     function urlOf(id){ return MODELS.find(x => x[0] === id)[1]; }
-    function idOfUrl(url){ const f = MODELS.find(x => x[1] === url); return f ? f[0] : null; }
 
-    function metaFor(id){
-      const st = S.get(id);
-
-      // ✓ if done
-      if (st.loaded) return `<span class="tick">✓</span>`;
-
-      // show percent if currently loading (either viewer or preloader)
-      if (st.status === "viewing" || st.status === "preloading") {
-        if (st.pct != null && st.pct < 100) return `${st.pct}%`;
-        return "loading…";
-      }
-      return "";
-    }
-
-    function render(){
+    // --- Build UI ONCE, store DOM refs ---
+    const rows = new Map(); // id -> {rowEl, metaEl}
+    function buildUI() {
       list.innerHTML = "";
       for (const [id] of MODELS) {
         const row = document.createElement("div");
-        row.className = "row" + (id === selectedId ? " active" : "");
-        row.onclick = () => select(id);
+        row.className = "row";
+        row.dataset.id = id;
 
         const name = document.createElement("div");
         name.className = "name";
@@ -113,46 +98,65 @@
 
         const meta = document.createElement("div");
         meta.className = "meta";
-        meta.innerHTML = metaFor(id);
 
         row.appendChild(name);
         row.appendChild(meta);
+
+        // Click always works because we never recreate these elements
+        row.addEventListener("click", () => select(id));
+
         list.appendChild(row);
+        rows.set(id, { row, meta });
       }
     }
 
-    function clearStatusesExcept(){
+    // --- Throttled UI updates (max once per frame) ---
+    let needsRender = false;
+    function requestRender() {
+      if (needsRender) return;
+      needsRender = true;
+      requestAnimationFrame(() => {
+        needsRender = false;
+        render();
+      });
+    }
+
+    function render() {
       for (const [id] of MODELS) {
         const st = S.get(id);
-        // keep loaded state, just reset transient status/pct unless currently active
-        if (id !== selectedId && id !== preloadingId) {
-          if (!st.loaded) st.pct = null;
-          st.status = "idle";
+        const { row, meta } = rows.get(id);
+
+        // active highlight
+        row.classList.toggle("active", id === selectedId);
+
+        // meta display rules
+        if (st.loaded) {
+          meta.innerHTML = `<span class="tick">✓</span>`;
+          continue;
+        }
+
+        if (st.status === "viewing" || st.status === "preloading") {
+          if (st.pct != null && st.pct < 100) meta.textContent = `${st.pct}%`;
+          else meta.textContent = "loading…";
+        } else {
+          meta.textContent = "";
         }
       }
     }
 
-    function cancelPreloader(){
+    function cancelPreloader() {
       if (preloadingId) {
-        const st = S.get(preloadingId);
-        if (st && !st.loaded) {
-          st.status = "idle";
-          // keep pct if you want, or reset:
-          // st.pct = null;
-        }
+        const pst = S.get(preloadingId);
+        if (pst && !pst.loaded) pst.status = "idle";
       }
       preloadingId = null;
-      pre.removeAttribute("src"); // cancels its current load
+      pre.removeAttribute("src"); // cancels background load
+      requestRender();
     }
 
-    function startNextPreload(fromIndex){
+    function startNextPreload(fromIndex) {
       if (!autoEnabled) return;
 
-      // don't preload while the viewer is loading something new
-      // (we let mv finish first, then continue)
-      // We'll call startNextPreload only after mv/pre load events.
-
-      // find next not loaded and not the selected
       for (let i = fromIndex; i < MODELS.length; i++) {
         const [id, url] = MODELS[i];
         const st = S.get(id);
@@ -162,25 +166,23 @@
         preloadingId = id;
         st.status = "preloading";
         st.pct = 0;
-        render();
+        requestRender();
 
         pre.src = url;
         return;
       }
-
-      // nothing left to preload
       preloadingId = null;
+      requestRender();
     }
 
-    // ===== Viewer events (selected model) =====
+    // --- Viewer events (selected model) ---
     mv.addEventListener("progress", (e) => {
       const p = Math.round((e.detail.totalProgress || 0) * 100);
       const st = S.get(selectedId);
       st.status = "viewing";
       st.pct = p;
       if (p === 100) st.loaded = true;
-      clearStatusesExcept();
-      render();
+      requestRender();
     });
 
     mv.addEventListener("load", () => {
@@ -188,20 +190,17 @@
       st.loaded = true;
       st.pct = 100;
       st.status = "idle";
-      clearStatusesExcept();
-      render();
-
-      // After selected finishes, resume sequential preloading from next index
+      requestRender();
       startNextPreload(idxOf(selectedId) + 1);
     });
 
     mv.addEventListener("error", () => {
       const st = S.get(selectedId);
       st.status = "idle";
-      render();
+      requestRender();
     });
 
-    // ===== Preloader events (background) =====
+    // --- Preloader events (background) ---
     pre.addEventListener("progress", (e) => {
       if (!preloadingId) return;
       const p = Math.round((e.detail.totalProgress || 0) * 100);
@@ -209,43 +208,37 @@
       st.status = "preloading";
       st.pct = p;
       if (p === 100) st.loaded = true;
-      clearStatusesExcept();
-      render();
+      requestRender();
     });
 
     pre.addEventListener("load", () => {
       if (!preloadingId) return;
 
-      const st = S.get(preloadingId);
+      const finished = preloadingId;
+      const st = S.get(finished);
       st.loaded = true;
       st.pct = 100;
       st.status = "idle";
 
-      const finishedIndex = idxOf(preloadingId);
+      const nextStart = idxOf(finished) + 1;
       preloadingId = null;
-
-      clearStatusesExcept();
-      render();
-
-      // continue sequential preloading (next one after this)
-      startNextPreload(finishedIndex + 1);
+      requestRender();
+      startNextPreload(nextStart);
     });
 
     pre.addEventListener("error", () => {
       if (!preloadingId) return;
-      const st = S.get(preloadingId);
-      st.status = "idle";
+      S.get(preloadingId).status = "idle";
       preloadingId = null;
-      render();
-      // try next one
+      requestRender();
       startNextPreload(0);
     });
 
-    // ===== User selection =====
-    function select(id){
+    // --- User selection ---
+    function select(id) {
       selectedId = id;
 
-      // pause/cancel background immediately so only selected loads now
+      // Stop background (so we keep ONE download at a time)
       cancelPreloader();
 
       const st = S.get(id);
@@ -253,14 +246,15 @@
         st.status = "viewing";
         st.pct = 0;
       }
-      clearStatusesExcept();
-      render();
 
-      // switching src cancels the previous mv download and starts this one
+      requestRender();
+
+      // switching src cancels previous mv download and starts this one
       mv.src = urlOf(id);
     }
 
-    // init
+    // Init
+    buildUI();
     render();
     select(MODELS[0][0]);
   </script>
