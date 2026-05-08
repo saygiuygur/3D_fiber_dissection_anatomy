@@ -39,7 +39,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        You cannot zoom out further than the default framed view.
+        Zoom-out is permanently capped at the default (first load) distance.
       </div>
     </div>
 
@@ -98,29 +98,30 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Zoom-out limiter =====
+    // ===== Persistent zoom-out limiter (the important part) =====
     let baselineRadius = null;
-    let limiterSet = false;
+    let limiterReady = false;
 
-    function setZoomOutLimiter(radiusMeters) {
-      // max-camera-orbit uses: "theta phi radius"
-      // we keep angles "auto auto" and set only radius max.
-      mv.setAttribute('max-camera-orbit', `auto auto ${radiusMeters}m`);
-
-      // optional: prevent zoom-in too far
-      const minR = Math.max(radiusMeters * 0.05, 0.001);
+    function applyPersistentLimiter() {
+      if (!limiterReady || baselineRadius == null) return;
+      // Cap zoom-out at baselineRadius (default framed distance)
+      mv.setAttribute('max-camera-orbit', `auto auto ${baselineRadius}m`);
+      // Optional: cap zoom-in (prevents going inside the mesh too much)
+      const minR = Math.max(baselineRadius * 0.03, 0.001);
       mv.setAttribute('min-camera-orbit', `auto auto ${minR}m`);
     }
 
-    // Capture baseline after first model load
+    // Capture baseline once after the very first model is framed
+    let capturedBaseline = false;
     mv.addEventListener('load', () => {
-      if (limiterSet) return;
+      if (capturedBaseline) return;
       try {
         const orbit = mv.getCameraOrbit?.();
         if (orbit && typeof orbit.radius === "number") {
           baselineRadius = orbit.radius;
-          setZoomOutLimiter(baselineRadius);
-          limiterSet = true;
+          limiterReady = true;
+          applyPersistentLimiter();
+          capturedBaseline = true;
         }
       } catch (_) {}
     });
@@ -237,7 +238,6 @@
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-
       resumeRequested = false;
       resumePreload();
     }
