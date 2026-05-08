@@ -39,7 +39,7 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Camera is preserved across swaps (no far-zoom jumps).
+        You cannot zoom out further than the default framed view.
       </div>
     </div>
 
@@ -98,91 +98,32 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // ===== Camera: clamp only during swap, but ALWAYS snapshot on switch =====
-    let haveSavedCamera = false;
-    let saved = { orbit: null, target: null, fov: null };
+    // ===== Zoom-out limiter =====
+    let baselineRadius = null;
+    let limiterSet = false;
 
-    // Block capturing during the swap window (so we don’t save auto-fit)
-    let captureBlocked = false;
-    let unblockTimer = null;
+    function setZoomOutLimiter(radiusMeters) {
+      // max-camera-orbit uses: "theta phi radius"
+      // we keep angles "auto auto" and set only radius max.
+      mv.setAttribute('max-camera-orbit', `auto auto ${radiusMeters}m`);
 
-    function snapshotCameraNumeric() {
-      if (captureBlocked) return;
-      try {
-        const o = mv.getCameraOrbit?.();
-        const t = mv.getCameraTarget?.();
-        const f = mv.getFieldOfView?.();
-        if (o) saved.orbit = o;
-        if (t) saved.target = t;
-        if (typeof f === "number") saved.fov = f;
-        if (saved.orbit && saved.target) haveSavedCamera = true;
-      } catch (_) {}
+      // optional: prevent zoom-in too far
+      const minR = Math.max(radiusMeters * 0.05, 0.001);
+      mv.setAttribute('min-camera-orbit', `auto auto ${minR}m`);
     }
 
-    function orbitToString(o) { return `${o.theta}rad ${o.phi}rad ${o.radius}m`; }
-    function targetToString(t) { return `${t.x}m ${t.y}m ${t.z}m`; }
-
-    function applySavedCameraOnce() {
-      if (!haveSavedCamera) return;
-      mv.cameraOrbit = orbitToString(saved.orbit);
-      mv.cameraTarget = targetToString(saved.target);
-      if (saved.fov != null) mv.fieldOfView = `${saved.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    // Capture initial auto-framed camera once
-    let capturedInitial = false;
+    // Capture baseline after first model load
     mv.addEventListener('load', () => {
-      if (!capturedInitial) {
-        capturedInitial = true;
-        // baseline
-        const oldBlock = captureBlocked;
-        captureBlocked = false;
-        snapshotCameraNumeric();
-        captureBlocked = oldBlock;
-      }
+      if (limiterSet) return;
+      try {
+        const orbit = mv.getCameraOrbit?.();
+        if (orbit && typeof orbit.radius === "number") {
+          baselineRadius = orbit.radius;
+          setZoomOutLimiter(baselineRadius);
+          limiterSet = true;
+        }
+      } catch (_) {}
     });
-
-    // Update camera continuously (user-driven). No “userInteracting” window needed now.
-    // The only protection we need is captureBlocked during swaps.
-    mv.addEventListener('camera-change', () => snapshotCameraNumeric());
-
-    // Clamp management
-    let clampReleaseTimer = null;
-
-    function clampDuringSwap() {
-      if (!haveSavedCamera) return;
-
-      // block capture during the critical swap window
-      captureBlocked = true;
-      if (unblockTimer) clearTimeout(unblockTimer);
-
-      // set camera + clamp
-      applySavedCameraOnce();
-      const orbitStr = orbitToString(saved.orbit);
-      mv.setAttribute('min-camera-orbit', orbitStr);
-      mv.setAttribute('max-camera-orbit', orbitStr);
-
-      // safety release if load never fires
-      if (clampReleaseTimer) clearTimeout(clampReleaseTimer);
-      clampReleaseTimer = setTimeout(() => releaseClamp(), 1500);
-    }
-
-    function releaseClamp() {
-      mv.setAttribute('min-camera-orbit', 'auto auto auto');
-      mv.setAttribute('max-camera-orbit', 'auto auto auto');
-
-      // unblock capture shortly after release (so we can save user moves again)
-      if (unblockTimer) clearTimeout(unblockTimer);
-      unblockTimer = setTimeout(() => { captureBlocked = false; }, 60);
-    }
-
-    function releaseClampSoon() {
-      if (clampReleaseTimer) clearTimeout(clampReleaseTimer);
-      clampReleaseTimer = setTimeout(() => releaseClamp(), 180);
-    }
 
     // ===== Visual: downloading border =====
     let downloadingVisualId = null;
@@ -403,27 +344,8 @@
 
     // ===== Show model =====
     async function showModel(modelId) {
-      // IMPORTANT FIX: always snapshot right before swapping (this captures far zoom too)
-      const oldBlock = captureBlocked;
-      captureBlocked = false;
-      snapshotCameraNumeric();
-      captureBlocked = oldBlock;
-
       selectedId = modelId;
       paintActive();
-
-      // Clamp only during swap
-      clampDuringSwap();
-
-      const onLoad = () => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            applySavedCameraOnce();
-            releaseClampSoon();
-          });
-        });
-      };
-      mv.addEventListener('load', onLoad, { once: true });
 
       const st = state.get(modelId);
       if (st.status === "done" && st.blobUrl) {
@@ -434,9 +356,7 @@
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
         mv.src = blobUrl;
-      } catch (_) {
-        releaseClampSoon();
-      }
+      } catch (_) {}
     }
 
     function onUserSelect(modelId) {
