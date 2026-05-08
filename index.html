@@ -25,10 +25,38 @@
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
     .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .meta { font-size:12px; color:#666; display:flex; align-items:center; gap:8px; flex: 0 0 auto; }
-    .tick { color:#0a8a0a; font-weight:700; }
+    .meta {
+      font-size:12px; color:#666; display:flex; align-items:center; justify-content:center;
+      min-width:24px; min-height:24px; flex: 0 0 24px;
+    }
+    .tick { color:#0a8a0a; font-weight:700; font-size:16px; line-height:1; }
+    .error-mark { color:#c62828; font-weight:700; font-size:16px; line-height:1; }
+
     .small { font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
     model-viewer { width:calc(100vw - 360px); height:100vh; }
+
+    .progress-ring {
+      width:20px;
+      height:20px;
+      display:block;
+    }
+    .progress-ring .bg {
+      fill: none;
+      stroke: #d9d9d9;
+      stroke-width: 2.5;
+    }
+    .progress-ring .fg {
+      fill: none;
+      stroke: #1e88e5;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      transform: rotate(-90deg);
+      transform-origin: 10px 10px;
+      transition: stroke-dashoffset 120ms linear, opacity 120ms linear;
+    }
+    .progress-ring.paused .fg {
+      opacity: 0.45;
+    }
   </style>
 </head>
 
@@ -85,7 +113,7 @@
     let preloadEnabled = true;
     let preloadTimer = null;
 
-    // >>> RESUME SCHEDULER (fixes "needs extra click to continue")
+    // Resume scheduler
     let resumeRequested = false;
 
     const preloadQueue = MODELS.map(m => m.id);
@@ -111,15 +139,61 @@
       }
     }
 
+    function parsePercent(progressText) {
+      if (!progressText) return null;
+      const match = String(progressText).match(/^(\d+)%$/);
+      if (!match) return null;
+      const n = Number(match[1]);
+      if (Number.isNaN(n)) return null;
+      return Math.max(0, Math.min(100, n));
+    }
+
+    function progressRingSVG(percent, paused = false, titleText = "") {
+      const r = 7;
+      const c = 2 * Math.PI * r;
+      const offset = c * (1 - percent / 100);
+      return `
+        <svg class="progress-ring ${paused ? 'paused' : ''}" viewBox="0 0 20 20" aria-hidden="true" title="${titleText}">
+          <circle class="bg" cx="10" cy="10" r="${r}"></circle>
+          <circle class="fg" cx="10" cy="10" r="${r}"
+            stroke-dasharray="${c}"
+            stroke-dashoffset="${offset}"></circle>
+        </svg>
+      `;
+    }
+
     function refreshMeta(id) {
       const st = state.get(id);
       const meta = rowEls.get(id).meta;
 
-      if (st.status === "done") meta.innerHTML = `<span class="tick">✓</span>`;
-      else if (st.status === "loading") meta.textContent = st.progressText || "loading…";
-      else if (st.status === "paused") meta.textContent = st.progressText ? `paused (${st.progressText})` : "paused";
-      else if (st.status === "error") meta.textContent = "error";
-      else meta.textContent = "";
+      if (st.status === "done") {
+        meta.innerHTML = `<span class="tick">✓</span>`;
+        return;
+      }
+
+      if (st.status === "error") {
+        meta.innerHTML = `<span class="error-mark">!</span>`;
+        return;
+      }
+
+      if (st.status === "loading" || st.status === "paused") {
+        const pct = parsePercent(st.progressText);
+        if (pct !== null) {
+          meta.innerHTML = progressRingSVG(
+            pct,
+            st.status === "paused",
+            st.status === "paused" ? `Paused at ${pct}%` : `${pct}%`
+          );
+        } else {
+          // fallback if server doesn't give percentage
+          meta.textContent = st.status === "paused" ? "⏸" : "…";
+          meta.title = st.progressText || "";
+        }
+        return;
+      }
+
+      meta.textContent = "";
+      meta.title = "";
     }
 
     function buildListOnce() {
@@ -149,12 +223,11 @@
       paintDownloading(null);
     }
 
-    // ---- Resume scheduler helpers ----
+    // Resume scheduler helpers
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
 
-      // If still downloading, try again when download finishes.
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
 
       resumeRequested = false;
@@ -167,12 +240,12 @@
 
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
-        resumeRequested = true;   // request a resume
-        maybeResumePreload();     // resume now, or right after current download ends
+        resumeRequested = true;
+        maybeResumePreload();
       }, 1200);
     }
 
-    // Download (does NOT change selectedId/active border)
+    // Download
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -233,8 +306,6 @@
         refreshMeta(modelId);
 
         paintDownloading(null);
-
-        // >>> IMPORTANT: if resume was requested while we were downloading, resume now
         maybeResumePreload();
 
         return blobUrl;
@@ -245,24 +316,15 @@
         if (err.name === "AbortError") {
           st.status = "paused";
           refreshMeta(modelId);
-
-          // >>> if resume is requested, we may now be idle; try resuming
           maybeResumePreload();
-
           throw err;
         }
 
         st.status = "error";
         st.progressText = "";
         refreshMeta(modelId);
-
-        // >>> same here
         maybeResumePreload();
-
         throw err;
-      } finally {
-        // If this request ended, we might be idle now.
-        // (But don't clear currentDownloadingId here; it may already point to a newer fetch.)
       }
     }
 
@@ -293,13 +355,11 @@
     async function resumePreload() {
       if (!preloadEnabled) return;
 
-      // If something is downloading, don't start preload now.
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
         resumeRequested = true;
         return;
       }
 
-      // We are idle: run sequentially.
       for (const id of preloadQueue) {
         if (!preloadEnabled) return;
 
@@ -317,7 +377,6 @@
     (function init() {
       buildListOnce();
       showModel(selectedId).then(() => {
-        // initial preload
         resumeRequested = true;
         maybeResumePreload();
       });
