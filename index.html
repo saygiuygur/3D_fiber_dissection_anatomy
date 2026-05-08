@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>3D Fiber Dissection Anatomy</title>
+  <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
@@ -30,7 +31,8 @@
       <div id="list"></div>
       <div class="small">
         Auto-preloads 01 → 11.<br>
-        Clicking a model prioritizes it (preload pauses while you interact).
+        Clicking a model prioritizes it (preload pauses while you interact).<br>
+        The black border follows only the model you selected.
       </div>
     </div>
 
@@ -66,7 +68,7 @@
     let currentController = null;
     let currentDownloadingId = null;
 
-    // IMPORTANT: user selection is separate from downloading id
+    // The user's selected model (what the border should follow)
     let selectedId = MODELS[0].id;
 
     // Pause auto preload while user is interacting
@@ -75,11 +77,10 @@
 
     const preloadQueue = MODELS.map(m => m.id);
 
-    // ---- UI: build once + update in place (keeps clicks reliable) ----
+    // UI built once
     const rowEls = new Map(); // id -> { row, meta }
 
-    function setActive(id) {
-      selectedId = id;
+    function paintActive() {
       for (const m of MODELS) {
         rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
       }
@@ -101,9 +102,11 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
+
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
+
         const meta = document.createElement('div');
         meta.className = "meta";
 
@@ -114,9 +117,10 @@
 
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
+
         refreshMeta(m.id);
       }
-      setActive(selectedId);
+      paintActive();
     }
 
     function pausePreloadForAWhile() {
@@ -124,11 +128,11 @@
       if (preloadTimer) clearTimeout(preloadTimer);
       preloadTimer = setTimeout(() => {
         preloadEnabled = true;
-        resumePreload(); // restart after user stops clicking for a moment
+        resumePreload();
       }, 1200);
     }
 
-    // ---- Download: DO NOT change active selection here ----
+    // Download: never changes selectedId / never changes border
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -137,7 +141,7 @@
 
       st.status = "loading";
       st.progressText = "";
-      refreshMeta(modelId); // update status text only
+      refreshMeta(modelId);
 
       // Abort previous active download
       if (currentController) {
@@ -200,8 +204,10 @@
       }
     }
 
+    // Viewer: ONLY here do we change selectedId + border
     async function showModel(modelId) {
-      setActive(modelId); // ONLY user/viewer changes active selection
+      selectedId = modelId;
+      paintActive();
 
       const st = state.get(modelId);
       if (st.status === "done" && st.blobUrl) {
@@ -218,14 +224,14 @@
     }
 
     function onUserSelect(modelId) {
-      pausePreloadForAWhile(); // this is the key: stop preload from overriding user
+      pausePreloadForAWhile();
       showModel(modelId);
     }
 
     async function resumePreload() {
       if (!preloadEnabled) return;
 
-      // If user model is currently downloading, do nothing
+      // If anything is downloading (user click), do nothing
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
 
       for (const id of preloadQueue) {
@@ -234,7 +240,7 @@
         const st = state.get(id);
         if (st.status === "done") continue;
 
-        // IMPORTANT: preload must NOT change active selection
+        // Preload ONLY downloads blobs. It never touches selectedId/border.
         try {
           await downloadToBlobUrl(id);
         } catch (e) {
