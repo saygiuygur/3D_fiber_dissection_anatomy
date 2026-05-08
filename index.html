@@ -27,12 +27,7 @@
     .status-icon{ width:20px; height:20px; display:block; }
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-
-    model-viewer{
-      width:calc(100vw - 360px);
-      height:100vh;
-      background:#fff;
-    }
+    model-viewer{ width:calc(100vw - 360px); height:100vh; }
   </style>
 </head>
 
@@ -45,13 +40,11 @@
         Auto-preloads 01 → 11.<br>
         Clicking a model prioritizes it (preload pauses while you interact).<br>
         Black border = model in view. Light border = currently downloading.<br>
-        Camera carries across models (angle + zoom + target) using reveal="manual".
+        Camera snapshot is “settled” + frozen per swap (prevents previous-zoom bleed).
       </div>
     </div>
 
-    <!-- IMPORTANT: reveal="manual" requires dismissPoster() to show anything -->
     <model-viewer id="mv"
-      reveal="manual"
       camera-controls
       interaction-prompt="none"
       exposure="1"
@@ -76,12 +69,6 @@
 
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
-
-    // ✅ CRITICAL FIX:
-    // With reveal="manual", always reveal after ANY successful load
-    mv.addEventListener('load', () => {
-      mv.dismissPoster?.();
-    });
 
     // Per-model state
     const state = new Map();
@@ -112,7 +99,71 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
 
-    // Downloading visual (transparent border)
+    // ===== Camera: settled snapshot + frozen per swap =====
+    // latestCamera updates ONLY via settle events (wheel/pointerup/touchend) with rAF
+    // During swap: saving disabled; we use a local camForThisSwap snapshot.
+    let latestCamera = null; // {orbit:{theta,phi,radius}, target:{x,y,z}, fov:number}
+    let savingEnabled = true;
+    let settleRaf = 0;
+
+    function readCamera() {
+      const orbit = mv.getCameraOrbit?.();
+      const target = mv.getCameraTarget?.();
+      const fov = mv.getFieldOfView?.();
+      if (!orbit || !target || typeof fov !== "number") return null;
+      return {
+        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov
+      };
+    }
+
+    function cloneCam(cam) {
+      if (!cam) return null;
+      return {
+        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
+        target: { x: cam.target.x, y: cam.target.y, z: cam.target.z },
+        fov: cam.fov
+      };
+    }
+
+    function applyCam(cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    function scheduleSettledSnapshot() {
+      if (!savingEnabled) return;
+      if (settleRaf) cancelAnimationFrame(settleRaf);
+      settleRaf = requestAnimationFrame(() => {
+        settleRaf = 0;
+        const cam = readCamera();
+        if (cam) latestCamera = cam;
+      });
+    }
+
+    // Update latest camera when user finishes actions (settled moments)
+    mv.addEventListener('wheel', scheduleSettledSnapshot, { passive: true });
+    mv.addEventListener('pointerup', scheduleSettledSnapshot, { passive: true });
+    mv.addEventListener('touchend', scheduleSettledSnapshot, { passive: true });
+
+    // Also capture initial camera once first model loads (baseline)
+    let initialCaptured = false;
+    mv.addEventListener('load', () => {
+      if (initialCaptured) return;
+      const cam = readCamera();
+      if (cam) {
+        latestCamera = cam;
+        initialCaptured = true;
+      }
+    });
+
+    // ===== Visual: downloading border =====
     let downloadingVisualId = null;
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -130,7 +181,7 @@
       }
     }
 
-    // ===== Status icons =====
+    // ===== Status Icons =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -217,12 +268,11 @@
       paintDownloading(null);
     }
 
-    // ===== Preload scheduling =====
+    // ===== Preload scheduler =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-
       resumeRequested = false;
       resumePreload();
     }
@@ -237,7 +287,7 @@
       }, 1200);
     }
 
-    // ===== Download with inFlight dedupe =====
+    // ===== Downloader (with inFlight dedupe) =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -326,73 +376,39 @@
       return p;
     }
 
-    // ===== Camera carry =====
-    // Keep last known camera, apply after model load.
-    let savedCam = null;
-
-    function readCam() {
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      const f = mv.getFieldOfView?.();
-      if (!o || !t || typeof f !== "number") return null;
-      return {
-        orbit: { theta: o.theta, phi: o.phi, radius: o.radius },
-        target: { x: t.x, y: t.y, z: t.z },
-        fov: f
-      };
-    }
-
-    function applyCam(cam) {
-      if (!cam) return;
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    // Capture initial camera once first model is loaded (so swaps work even before user moves camera)
-    let initialCamCaptured = false;
-    mv.addEventListener('load', () => {
-      if (initialCamCaptured) return;
-      const cam = readCam();
-      if (cam) {
-        savedCam = cam;
-        initialCamCaptured = true;
-      }
-    });
-
-    // Keep savedCam updated while user moves camera
-    mv.addEventListener('camera-change', () => {
-      const cam = readCam();
-      if (cam) savedCam = cam;
-    });
-
-    // ===== Show model =====
+    // ===== Show model (freeze per swap) =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // Save current camera right now
-      const camNow = readCam();
-      if (camNow) savedCam = camNow;
+      // Force a settled snapshot BEFORE we start the swap (one frame later).
+      // This is the key to avoid capturing the “previous” zoom.
+      await new Promise(requestAnimationFrame);
+
+      // Take the latest settled camera; freeze it for this swap
+      const camForThisSwap = cloneCam(latestCamera) || readCamera();
+
+      // Disable saving until swap completes
+      savingEnabled = false;
 
       selectedId = modelId;
       paintActive();
 
-      // With reveal="manual", hide while swapping
-      mv.showPoster?.();
-
       const onLoad = () => {
-        if (token !== swapToken) return;
+        if (token !== swapToken) return; // stale load
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            applyCam(savedCam);
-            // ✅ ensure it's visible even if something went wrong elsewhere
-            mv.dismissPoster?.();
+            // Apply the frozen camera for THIS swap
+            applyCam(camForThisSwap);
+
+            // Make this the new latestCamera, then re-enable saving
+            latestCamera = cloneCam(camForThisSwap);
+            savingEnabled = true;
+
+            // Also schedule a settled snapshot after things stabilize
+            scheduleSettledSnapshot();
           });
         });
       };
@@ -409,7 +425,7 @@
         if (token !== swapToken) return;
         mv.src = blobUrl;
       } catch (_) {
-        if (token === swapToken) mv.dismissPoster?.();
+        if (token === swapToken) savingEnabled = true;
       }
     }
 
