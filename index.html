@@ -37,11 +37,9 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
       <div class="small">
-        Auto-preloads 01 → 11.<br>
-        Clicking a model prioritizes it (preload pauses while you interact).<br>
-        Black border = model in view. Light border = currently downloading.<br>
-        Fixes: (1) no pre-snapshot rAF delay, (2) do NOT set latestCamera from stale camForThisSwap,
-        (3) update latestCamera from the actual viewer after apply.
+        Single viewer (no double-buffer).<br>
+        No reveal="manual".<br>
+        Camera is captured at click time and applied after load.
       </div>
     </div>
 
@@ -70,6 +68,9 @@
 
     const mv = document.getElementById('mv');
     const list = document.getElementById('list');
+
+    // Make console debugging easy
+    window.mv = mv;
 
     // Per-model state
     const state = new Map();
@@ -378,14 +379,13 @@
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // ✅ Snapshot camera IMMEDIATELY at click time
+      // Snapshot camera IMMEDIATELY at click time
       const camNow = readCamera();
       if (camNow) latestCamera = camNow;
 
       // Freeze for this swap (use camNow if available)
       const camForThisSwap = cloneCam(camNow || latestCamera);
 
-      // Disable saving until swap completes
       savingEnabled = false;
       isSwitching = true;
 
@@ -399,11 +399,10 @@
           requestAnimationFrame(() => {
             applyCam(camForThisSwap);
 
-            // ✅ After applying, set latestCamera from the REAL viewer state (not camForThisSwap)
+            // After applying, set latestCamera from the REAL viewer state
             const applied = readCamera();
             if (applied) latestCamera = applied;
 
-            // Resume capturing
             isSwitching = false;
             savingEnabled = true;
           });
