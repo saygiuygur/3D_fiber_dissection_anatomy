@@ -25,9 +25,26 @@
     .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
     .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
     .status-icon{ width:20px; height:20px; display:block; }
-
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-    model-viewer{ width:calc(100vw - 360px); height:100vh; background:#fff; }
+
+    .viewer-wrap{
+      position: relative;
+      width: calc(100vw - 360px);
+      height: 100vh;
+      background:#fff;
+      overflow:hidden;
+    }
+
+    model-viewer.viewer{
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      background:#fff;
+    }
+
+    .hiddenViewer { visibility: hidden; pointer-events: none; }
+    .shownViewer  { visibility: visible; pointer-events: auto; }
   </style>
 </head>
 
@@ -37,18 +54,20 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
       <div class="small">
-        Single viewer (no double-buffer).<br>
-        No reveal="manual".<br>
-        Camera is captured at click time and applied after load.
+        Double-buffer viewer (mvA/mvB).<br>
+        Fix implemented: if the idle viewer already has the requested src, swap immediately (no waiting for load).
       </div>
     </div>
 
-    <model-viewer id="mv"
-      camera-controls
-      interaction-prompt="none"
-      exposure="1"
-      shadow-intensity="1">
-    </model-viewer>
+    <div class="viewer-wrap">
+      <model-viewer id="mvA" class="viewer shownViewer"
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1">
+      </model-viewer>
+
+      <model-viewer id="mvB" class="viewer hiddenViewer"
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1">
+      </model-viewer>
+    </div>
   </div>
 
   <script>
@@ -66,101 +85,37 @@
       { id: "11_Anterior_Comissure", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb" },
     ];
 
-    const mv = document.getElementById('mv');
     const list = document.getElementById('list');
+    const mvA = document.getElementById('mvA');
+    const mvB = document.getElementById('mvB');
 
-    // Make console debugging easy
-    window.mv = mv;
-
-    // Per-model state
-    const state = new Map();
-    MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
-
-    // Current download control
-    let currentController = null;
-    let currentDownloadingId = null;
-
-    // Prevent self-restart loops
-    const inFlight = new Map(); // modelId -> Promise<string>
+    // Active/inactive viewer pointers
+    let activeMv = mvA;
+    let idleMv = mvB;
 
     // Selection (black border)
     let selectedId = MODELS[0].id;
 
-    // Preload pause logic
+    // Model state (download/progress/blob)
+    const state = new Map();
+    MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
+
+    // Download control
+    let currentController = null;
+    let currentDownloadingId = null;
+    const inFlight = new Map(); // modelId -> Promise<string>
+
+    // Preload scheduler
     let preloadEnabled = true;
     let preloadTimer = null;
-
-    // Resume scheduler
     let resumeRequested = false;
-
-    // Prevent resumePreload re-entrancy
     let preloadRunning = false;
-
     const preloadQueue = MODELS.map(m => m.id);
 
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
-
-    // ===== Camera: click-time capture + safe latestCamera update =====
-    let latestCamera = null; // last known good camera
-    let savingEnabled = true;
-    let isSwitching = false;
-
-    function readCamera() {
-      const orbit = mv.getCameraOrbit?.();
-      const target = mv.getCameraTarget?.();
-      const fov = mv.getFieldOfView?.();
-      if (!orbit || !target || typeof fov !== "number") return null;
-      return {
-        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
-        target: { x: target.x, y: target.y, z: target.z },
-        fov
-      };
-    }
-
-    function cloneCam(cam) {
-      if (!cam) return null;
-      return {
-        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
-        target: { x: cam.target.x, y: cam.target.y, z: cam.target.z },
-        fov: cam.fov
-      };
-    }
-
-    function applyCam(cam) {
-      if (!cam) return;
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-
-    // Keep latestCamera updated while user moves camera (but not during swap)
-    mv.addEventListener('camera-change', () => {
-      if (!savingEnabled || isSwitching) return;
-      const cam = readCamera();
-      if (cam) latestCamera = cam;
-    });
-
-    // Capture initial centered camera after first load settles (2 frames)
-    let initialCaptured = false;
-    mv.addEventListener('load', () => {
-      if (initialCaptured) return;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const cam = readCamera();
-          if (cam) {
-            latestCamera = cam;
-            initialCaptured = true;
-          }
-        });
-      });
-    });
-
-    // ===== Visual: downloading border =====
     let downloadingVisualId = null;
+
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
         rowEls.get(downloadingVisualId).row.classList.remove("downloading");
@@ -177,7 +132,6 @@
       }
     }
 
-    // ===== Status Icons =====
     function parsePercent(progressText) {
       if (!progressText) return 0;
       const match = String(progressText).match(/^(\d+)%$/);
@@ -264,12 +218,10 @@
       paintDownloading(null);
     }
 
-    // ===== Preload scheduling =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
       if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-
       resumeRequested = false;
       resumePreload();
     }
@@ -284,7 +236,6 @@
       }, 1200);
     }
 
-    // ===== Download with inFlight dedupe =====
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -298,7 +249,7 @@
         st.progressText = "";
         refreshMeta(modelId);
 
-        // Abort previous active download (your chosen behavior)
+        // Abort previous active download (chosen behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -373,69 +324,6 @@
       return p;
     }
 
-    // ===== Show model =====
-    let swapToken = 0;
-
-    async function showModel(modelId) {
-      const token = ++swapToken;
-
-      // Snapshot camera IMMEDIATELY at click time
-      const camNow = readCamera();
-      if (camNow) latestCamera = camNow;
-
-      // Freeze for this swap (use camNow if available)
-      const camForThisSwap = cloneCam(camNow || latestCamera);
-
-      savingEnabled = false;
-      isSwitching = true;
-
-      selectedId = modelId;
-      paintActive();
-
-      const onLoad = () => {
-        if (token !== swapToken) return;
-
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            applyCam(camForThisSwap);
-
-            // After applying, set latestCamera from the REAL viewer state
-            const applied = readCamera();
-            if (applied) latestCamera = applied;
-
-            isSwitching = false;
-            savingEnabled = true;
-          });
-        });
-      };
-      mv.addEventListener('load', onLoad, { once: true });
-
-      const st = state.get(modelId);
-      if (st.status === "done" && st.blobUrl) {
-        mv.src = st.blobUrl;
-        return;
-      }
-
-      try {
-        const blobUrl = await downloadToBlobUrl(modelId);
-        if (token !== swapToken) return;
-        mv.src = blobUrl;
-      } catch (_) {
-        if (token === swapToken) {
-          isSwitching = false;
-          savingEnabled = true;
-        }
-      }
-    }
-
-    function onUserSelect(modelId) {
-      const st = state.get(modelId);
-      if (!(st.status === "done" && st.blobUrl)) {
-        pausePreloadForAWhile();
-      }
-      showModel(modelId);
-    }
-
     async function resumePreload() {
       if (!preloadEnabled) return;
       if (preloadRunning) return;
@@ -462,6 +350,136 @@
       } finally {
         preloadRunning = false;
       }
+    }
+
+    // ===== Camera helpers (read/apply from ACTIVE viewer) =====
+    function readCamFrom(mv) {
+      const o = mv.getCameraOrbit?.();
+      const t = mv.getCameraTarget?.();
+      const f = mv.getFieldOfView?.();
+      if (!o || !t || typeof f !== "number") return null;
+      return {
+        orbit: { theta: o.theta, phi: o.phi, radius: o.radius },
+        target: { x: t.x, y: t.y, z: t.z },
+        fov: f
+      };
+    }
+
+    function applyCamTo(mv, cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    function swapViewersNow() {
+      activeMv.classList.remove('shownViewer');
+      activeMv.classList.add('hiddenViewer');
+      idleMv.classList.remove('hiddenViewer');
+      idleMv.classList.add('shownViewer');
+
+      const tmp = activeMv;
+      activeMv = idleMv;
+      idleMv = tmp;
+    }
+
+    // ===== Show model (double-buffer) =====
+    let swapToken = 0;
+
+    async function showModel(modelId) {
+      const token = ++swapToken;
+
+      // 1) Freeze camera EXACTLY at click time from the active viewer
+      const camForThisSwap = readCamFrom(activeMv);
+
+      selectedId = modelId;
+      paintActive();
+
+      // 2) Determine the exact target src we want to show
+      const st = state.get(modelId);
+      let targetSrc = null;
+
+      if (st.status === "done" && st.blobUrl) {
+        targetSrc = st.blobUrl;
+      } else {
+        // we will download; targetSrc will be set once download resolves
+        targetSrc = null;
+      }
+
+      // If we already have the blob and:
+      // - the idle viewer already shows it => swap immediately (the requested fix)
+      // - the active viewer already shows it => do nothing
+      if (targetSrc) {
+        const activeSrc = activeMv.src || "";
+        const idleSrc = idleMv.src || "";
+
+        if (activeSrc === targetSrc) {
+          return; // already showing
+        }
+
+        if (idleSrc === targetSrc) {
+          // ✅ NEW RULE: no load event will fire, so just swap now
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          swapViewersNow();
+          return;
+        }
+
+        // Otherwise, prepare idle and load it (old model stays visible)
+        if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+
+        const onIdleLoad = () => {
+          if (token !== swapToken) return;
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+              swapViewersNow();
+            });
+          });
+        };
+        idleMv.addEventListener('load', onIdleLoad, { once: true });
+
+        idleMv.src = targetSrc;
+        return;
+      }
+
+      // 3) Not downloaded yet: load into idle viewer, then swap on load
+      if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+
+      const onIdleLoad = () => {
+        if (token !== swapToken) return;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+            swapViewersNow();
+          });
+        });
+      };
+      idleMv.addEventListener('load', onIdleLoad, { once: true });
+
+      try {
+        const blobUrl = await downloadToBlobUrl(modelId);
+        if (token !== swapToken) return;
+
+        // If the idle viewer already has it (rare, but possible if user clicked back/forth):
+        if ((idleMv.src || "") === blobUrl) {
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          swapViewersNow();
+          return;
+        }
+
+        idleMv.src = blobUrl;
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    function onUserSelect(modelId) {
+      const st = state.get(modelId);
+      if (!(st.status === "done" && st.blobUrl)) pausePreloadForAWhile();
+      showModel(modelId);
     }
 
     (function init() {
