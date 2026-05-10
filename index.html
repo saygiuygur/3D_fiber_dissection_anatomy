@@ -35,17 +35,8 @@
     .row.active { border-color:#111; }
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name{
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
-      flex: 1 1 auto;
-    }
-    .meta{
-      width:24px; height:24px;
-      display:flex; align-items:center; justify-content:center;
-      flex: 0 0 24px;
-    }
+    .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
+    .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
     .status-icon{ width:20px; height:20px; display:block; }
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
@@ -55,8 +46,7 @@
     .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
 
     .swatch{
-      width:26px;
-      height:26px;
+      width:26px; height:26px;
       border-radius:50%;
       border:1px solid #cfcfcf;
       cursor:pointer;
@@ -67,10 +57,7 @@
     .swatch.white{ background:#ffffff; }
     .swatch.gray{ background:#808080; }
     .swatch.black{ background:#000000; }
-    .swatch.selected{
-      outline:2px solid #111;
-      outline-offset:3px;
-    }
+    .swatch.selected{ outline:2px solid #111; outline-offset:3px; }
 
     .viewer-wrap{
       position: relative;
@@ -105,8 +92,7 @@
     }
     .hotspot::before{
       content:"";
-      width:8px;
-      height:8px;
+      width:8px; height:8px;
       border-radius:50%;
       background:#fff;
       display:inline-block;
@@ -132,9 +118,8 @@
       </div>
 
       <div class="small">
-        Hotspots are now linked to your real node names.<br>
-        Visible label = 01, 02, 03...<br>
-        Hover on a hotspot to see the full anatomical name.
+        Hotspots are linked to your node names.<br>
+        If hotspots look shifted, we apply a bounding-box center offset.
       </div>
     </div>
 
@@ -161,85 +146,26 @@
       }
     ];
 
-    // ========= YOUR REAL NODE NAMES =========
-
     const MODEL01_NAMES = [
-      "TrolardV001",
-      "SylvianV001",
-      "SuperiorparietalA001",
-      "PrefrontalA001",
-      "PrecentralsulcusA001",
-      "PosteriortemporalA001",
-      "PosteriorparietalA001",
-      "PIFA001",
-      "PericallosalA001",
-      "PCA001",
-      "ParacentralA001",
-      "OpticN001",
-      "OlfactoryN001",
-      "OlfactoryA001",
-      "MIFA001",
-      "MiddletemporalA001",
-      "MedialOrbitofrontalA001",
-      "LateralorbitofrontalA001",
-      "LabbeV001",
-      "InternalcerebralV001",
-      "InferiorparietalA001",
-      "ICA001",
-      "GalenV001",
-      "FrontopolarACont001",
-      "FrontopolarA001",
-      "CentralsulcusA001",
-      "CallosomarginalA001",
-      "Basalveinofrosenthal001",
-      "AnteriortemporalA001",
-      "AnteriorparietalA001",
-      "AIFA001",
-      "ACA001"
+      "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
+      "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
+      "ParacentralA001","OpticN001","OlfactoryN001","OlfactoryA001","MIFA001","MiddletemporalA001",
+      "MedialOrbitofrontalA001","LateralorbitofrontalA001","LabbeV001","InternalcerebralV001",
+      "InferiorparietalA001","ICA001","GalenV001","FrontopolarACont001","FrontopolarA001",
+      "CentralsulcusA001","CallosomarginalA001","Basalveinofrosenthal001","AnteriortemporalA001",
+      "AnteriorparietalA001","AIFA001","ACA001"
     ];
 
     const MODEL02_NAMES = [
-      "Uncus001",
-      "Thalamus001",
-      "TemporalOperculum001",
-      "Sylvianfissure001",
-      "Supramarginalgyrus001",
-      "SuperiortemporalSulcus001",
-      "SuperiortemporalGyrus001",
-      "Superiorparietallobule001",
-      "SuperiorFrontalsulcus001",
-      "SuperiorFrontalgyrus001",
-      "Preoccipitalnotch001",
-      "Precuneus001",
-      "Precentralsulcus001",
-      "Precentralgyrus001",
-      "Posteriorcalcarinesulcus001",
-      "Postcentralgyrus001",
-      "Parietooccipitalsulcus001",
-      "ParietalOperculum001",
-      "Parahippocampalgyrus001",
-      "Paracentrallobule001",
-      "MiddletemporalGyrus001",
-      "Middlefrontalgyrus001",
-      "Marginalsulcus001",
-      "Lingualgyrus001",
-      "Lateralventricle001",
-      "Isthmusgyrus001",
-      "Intraparietalsulcus001",
-      "Inferiortemporalsulcus001",
-      "Inferiortemporalgyrus001",
-      "InferiorFrontalsulcus001",
-      "InferiorFrontalgyrus001",
-      "Gyrusrectus001",
-      "Fusiformgyrus001",
-      "FrontalOperculum001",
-      "Cuneus001",
-      "Corpuscallosum001",
-      "Collateralsulcus001",
-      "Cingulategyrus001",
-      "Centralsulcus001",
-      "Anteriorcalcarinesulcus001",
-      "Angulargyrus001"
+      "Uncus001","Thalamus001","TemporalOperculum001","Sylvianfissure001","Supramarginalgyrus001",
+      "SuperiortemporalSulcus001","SuperiortemporalGyrus001","Superiorparietallobule001","SuperiorFrontalsulcus001",
+      "SuperiorFrontalgyrus001","Preoccipitalnotch001","Precuneus001","Precentralsulcus001","Precentralgyrus001",
+      "Posteriorcalcarinesulcus001","Postcentralgyrus001","Parietooccipitalsulcus001","ParietalOperculum001",
+      "Parahippocampalgyrus001","Paracentrallobule001","MiddletemporalGyrus001","Middlefrontalgyrus001","Marginalsulcus001",
+      "Lingualgyrus001","Lateralventricle001","Isthmusgyrus001","Intraparietalsulcus001","Inferiortemporalsulcus001",
+      "Inferiortemporalgyrus001","InferiorFrontalsulcus001","InferiorFrontalgyrus001","Gyrusrectus001","Fusiformgyrus001",
+      "FrontalOperculum001","Cuneus001","Corpuscallosum001","Collateralsulcus001","Cingulategyrus001","Centralsulcus001",
+      "Anteriorcalcarinesulcus001","Angulargyrus001"
     ];
 
     function makeAnnotations(names) {
@@ -263,7 +189,6 @@
 
     let activeMv = mvA;
     let idleMv = mvB;
-
     let selectedId = MODELS[0].id;
 
     const state = new Map();
@@ -282,14 +207,9 @@
     const rowEls = new Map();
     let downloadingVisualId = null;
 
-    // ===== Background selector =====
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
-      updateSwatchSelection(color);
-    }
-
-    function updateSwatchSelection(color) {
       bgOptions.querySelectorAll('.swatch').forEach(btn => {
         btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
       });
@@ -299,30 +219,20 @@
       bgOptions.querySelectorAll('.swatch').forEach(btn => {
         btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color));
       });
-
       let saved = null;
       try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
-
-      const validColors = ["#ffffff", "#808080", "#000000"];
-      const startColor = validColors.includes((saved || "").toLowerCase()) ? saved : "#ffffff";
-      applyBackgroundColor(startColor);
+      const valid = ["#ffffff","#808080","#000000"];
+      applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== UI helpers =====
     function paintDownloading(idOrNull) {
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
-        rowEls.get(downloadingVisualId).row.classList.remove("downloading");
-      }
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
       downloadingVisualId = idOrNull;
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
-        rowEls.get(downloadingVisualId).row.classList.add("downloading");
-      }
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
     }
 
     function paintActive() {
-      for (const m of MODELS) {
-        rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
-      }
+      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
     }
 
     function parsePercent(progressText) {
@@ -345,7 +255,6 @@
             stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
         </svg>`;
     }
-
     function doneIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -355,7 +264,6 @@
                 stroke-linecap="round" stroke-linejoin="round"></path>
         </svg>`;
     }
-
     function pausedIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -364,7 +272,6 @@
           <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
         </svg>`;
     }
-
     function errorIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -389,18 +296,14 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
-
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
-
         const meta = document.createElement('div');
         meta.className = "meta";
-
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
-
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
@@ -409,7 +312,6 @@
       paintDownloading(null);
     }
 
-    // ===== Preload scheduler =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -431,7 +333,6 @@
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
-
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
@@ -467,7 +368,6 @@
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             chunks.push(value);
             received += value.byteLength;
 
@@ -531,18 +431,14 @@
           const st = state.get(id);
           if (st.status === "done") continue;
 
-          try {
-            await downloadToBlobUrl(id);
-          } catch (e) {
-            if (e.name === "AbortError") return;
-          }
+          try { await downloadToBlobUrl(id); }
+          catch (e) { if (e.name === "AbortError") return; }
         }
       } finally {
         preloadRunning = false;
       }
     }
 
-    // ===== Camera helpers =====
     function readCamFrom(mv) {
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
@@ -570,13 +466,10 @@
       activeMv.classList.add('hiddenViewer');
       idleMv.classList.remove('hiddenViewer');
       idleMv.classList.add('shownViewer');
-
-      const tmp = activeMv;
-      activeMv = idleMv;
-      idleMv = tmp;
+      const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ===== Annotation helpers =====
+    // ===== annotation: map node positions -> hotspot positions, with center offset =====
     function getThreeScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
@@ -588,7 +481,6 @@
 
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
-
       const anns = ANNOTATIONS[modelId] || [];
       for (const a of anns) {
         const btn = document.createElement('button');
@@ -612,60 +504,48 @@
         return;
       }
 
-      if (typeof scene.updateMatrixWorld === 'function') {
-        scene.updateMatrixWorld(true);
-      }
+      if (typeof scene.updateMatrixWorld === 'function') scene.updateMatrixWorld(true);
 
-      let foundCount = 0;
-      let missingCount = 0;
+      // ✅ model-viewer hotspot space uses its own centering.
+      // Use the model-viewer bounding box center as an offset to align coordinates.
+      const center = mv.getBoundingBoxCenter?.() || { x: 0, y: 0, z: 0 };
+
+      let found = 0, missing = 0;
 
       for (const a of anns) {
         const obj = scene.getObjectByName(a.anchor);
-
-        if (!obj) {
-          console.warn(`Anchor not found: "${a.anchor}" in model ${modelId}`);
-          missingCount++;
-          continue;
-        }
+        if (!obj) { missing++; continue; }
 
         const V3 = obj.position.constructor;
         const worldPos = new V3();
         obj.getWorldPosition(worldPos);
 
-        const posStr = `${worldPos.x}m ${worldPos.y}m ${worldPos.z}m`;
+        // ✅ apply offset (main fix)
+        const x = worldPos.x + center.x;
+        const y = worldPos.y + center.y;
+        const z = worldPos.z + center.z;
+
+        const posStr = `${x}m ${y}m ${z}m`;
         const normalStr = `0m 1m 0m`;
 
         try {
-          mv.updateHotspot({
-            name: a.slotName,
-            position: posStr,
-            normal: normalStr
-          });
+          mv.updateHotspot({ name: a.slotName, position: posStr, normal: normalStr });
         } catch (_) {
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
-          if (el) {
-            el.dataset.position = posStr;
-            el.dataset.normal = normalStr;
-          }
+          if (el) { el.dataset.position = posStr; el.dataset.normal = normalStr; }
         }
-
-        foundCount++;
+        found++;
       }
 
-      console.log(`Model ${modelId}: hotspots placed = ${foundCount}, missing = ${missingCount}`);
+      console.log(`Model ${modelId}: placed=${found}, missing=${missing}, centerOffset=(${center.x.toFixed(4)},${center.y.toFixed(4)},${center.z.toFixed(4)})`);
     }
 
     function prepareAnnotationsForViewer(mv, modelId) {
       ensureHotspotElements(mv, modelId);
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          updateHotspotsFromEmpties(mv, modelId);
-        });
-      });
+      requestAnimationFrame(() => requestAnimationFrame(() => updateHotspotsFromEmpties(mv, modelId)));
     }
 
-    // ===== Show model =====
+    // ===== show model (double-buffer) =====
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -695,16 +575,13 @@
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-              prepareAnnotationsForViewer(idleMv, modelId);
-              swapViewersNow();
-            });
-          });
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+            prepareAnnotationsForViewer(idleMv, modelId);
+            swapViewersNow();
+          }));
         };
         idleMv.addEventListener('load', onIdleLoad, { once: true });
-
         idleMv.src = targetSrc;
         return;
       }
@@ -713,13 +590,11 @@
 
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-            prepareAnnotationsForViewer(idleMv, modelId);
-            swapViewersNow();
-          });
-        });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          prepareAnnotationsForViewer(idleMv, modelId);
+          swapViewersNow();
+        }));
       };
       idleMv.addEventListener('load', onIdleLoad, { once: true });
 
@@ -735,9 +610,7 @@
         }
 
         idleMv.src = blobUrl;
-      } catch (_) {
-        // ignore
-      }
+      } catch (_) {}
     }
 
     function onUserSelect(modelId) {
@@ -749,10 +622,7 @@
     (function init() {
       buildListOnce();
       initBackgroundSelector();
-      showModel(selectedId).then(() => {
-        resumeRequested = true;
-        maybeResumePreload();
-      });
+      showModel(selectedId).then(() => { resumeRequested = true; maybeResumePreload(); });
     })();
   </script>
 </body>
