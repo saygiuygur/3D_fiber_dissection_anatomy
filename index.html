@@ -13,7 +13,6 @@
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
 
-    /* sidebar unchanged */
     .sidebar{
       width:360px;
       border-right:1px solid #ddd;
@@ -36,8 +35,17 @@
     .row.active { border-color:#111; }
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
-    .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
+    .name{
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      flex: 1 1 auto;
+    }
+    .meta{
+      width:24px; height:24px;
+      display:flex; align-items:center; justify-content:center;
+      flex: 0 0 24px;
+    }
     .status-icon{ width:20px; height:20px; display:block; }
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
@@ -47,7 +55,8 @@
     .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
 
     .swatch{
-      width:26px; height:26px;
+      width:26px;
+      height:26px;
       border-radius:50%;
       border:1px solid #cfcfcf;
       cursor:pointer;
@@ -58,9 +67,11 @@
     .swatch.white{ background:#ffffff; }
     .swatch.gray{ background:#808080; }
     .swatch.black{ background:#000000; }
-    .swatch.selected{ outline:2px solid #111; outline-offset:3px; }
+    .swatch.selected{
+      outline:2px solid #111;
+      outline-offset:3px;
+    }
 
-    /* viewer */
     .viewer-wrap{
       position: relative;
       width: calc(100vw - 360px);
@@ -68,6 +79,7 @@
       background:var(--viewer-bg);
       overflow:hidden;
     }
+
     model-viewer.viewer{
       position:absolute;
       inset:0;
@@ -75,10 +87,10 @@
       height:100%;
       background:var(--viewer-bg);
     }
+
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
-    /* placeholder hotspots */
     .hotspot{
       border:0;
       background: rgba(0,0,0,0.78);
@@ -93,7 +105,8 @@
     }
     .hotspot::before{
       content:"";
-      width:8px; height:8px;
+      width:8px;
+      height:8px;
       border-radius:50%;
       background:#fff;
       display:inline-block;
@@ -119,8 +132,9 @@
       </div>
 
       <div class="small">
-        Placeholder annotation points (01–12) are placed automatically on each model after load.<br>
-        This is ONLY to test how hotspots look & behave. No empties needed yet.
+        Hotspots are now linked to your real node names.<br>
+        Visible label = 01, 02, 03...<br>
+        Hover on a hotspot to see the full anatomical name.
       </div>
     </div>
 
@@ -136,17 +150,111 @@
   </div>
 
   <script>
-    // Your two models (raw URLs pinned to commit)
     const MODELS = [
       {
         id: "01_Veselled_Annotated",
-        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/82cbdb959851464f6b119c9bb7157e92ad21968b/models/01_Veselled_Annotated.glb"
+        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb"
       },
       {
         id: "02_Veselless_Annotated",
-        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/82cbdb959851464f6b119c9bb7157e92ad21968b/models/02_Veselless_Annotated.glb"
+        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb"
       }
     ];
+
+    // ========= YOUR REAL NODE NAMES =========
+
+    const MODEL01_NAMES = [
+      "TrolardV001",
+      "SylvianV001",
+      "SuperiorparietalA001",
+      "PrefrontalA001",
+      "PrecentralsulcusA001",
+      "PosteriortemporalA001",
+      "PosteriorparietalA001",
+      "PIFA001",
+      "PericallosalA001",
+      "PCA001",
+      "ParacentralA001",
+      "OpticN001",
+      "OlfactoryN001",
+      "OlfactoryA001",
+      "MIFA001",
+      "MiddletemporalA001",
+      "MedialOrbitofrontalA001",
+      "LateralorbitofrontalA001",
+      "LabbeV001",
+      "InternalcerebralV001",
+      "InferiorparietalA001",
+      "ICA001",
+      "GalenV001",
+      "FrontopolarACont001",
+      "FrontopolarA001",
+      "CentralsulcusA001",
+      "CallosomarginalA001",
+      "Basalveinofrosenthal001",
+      "AnteriortemporalA001",
+      "AnteriorparietalA001",
+      "AIFA001",
+      "ACA001"
+    ];
+
+    const MODEL02_NAMES = [
+      "Uncus001",
+      "Thalamus001",
+      "TemporalOperculum001",
+      "Sylvianfissure001",
+      "Supramarginalgyrus001",
+      "SuperiortemporalSulcus001",
+      "SuperiortemporalGyrus001",
+      "Superiorparietallobule001",
+      "SuperiorFrontalsulcus001",
+      "SuperiorFrontalgyrus001",
+      "Preoccipitalnotch001",
+      "Precuneus001",
+      "Precentralsulcus001",
+      "Precentralgyrus001",
+      "Posteriorcalcarinesulcus001",
+      "Postcentralgyrus001",
+      "Parietooccipitalsulcus001",
+      "ParietalOperculum001",
+      "Parahippocampalgyrus001",
+      "Paracentrallobule001",
+      "MiddletemporalGyrus001",
+      "Middlefrontalgyrus001",
+      "Marginalsulcus001",
+      "Lingualgyrus001",
+      "Lateralventricle001",
+      "Isthmusgyrus001",
+      "Intraparietalsulcus001",
+      "Inferiortemporalsulcus001",
+      "Inferiortemporalgyrus001",
+      "InferiorFrontalsulcus001",
+      "InferiorFrontalgyrus001",
+      "Gyrusrectus001",
+      "Fusiformgyrus001",
+      "FrontalOperculum001",
+      "Cuneus001",
+      "Corpuscallosum001",
+      "Collateralsulcus001",
+      "Cingulategyrus001",
+      "Centralsulcus001",
+      "Anteriorcalcarinesulcus001",
+      "Angulargyrus001"
+    ];
+
+    function makeAnnotations(names) {
+      return names.map((name, i) => ({
+        slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
+        label: String(i + 1).padStart(2, '0'),
+        anchor: name,
+        title: name
+      }));
+    }
+
+    const ANNOTATIONS = {
+      "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
+      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
+    };
 
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
@@ -180,11 +288,13 @@
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
       updateSwatchSelection(color);
     }
+
     function updateSwatchSelection(color) {
       bgOptions.querySelectorAll('.swatch').forEach(btn => {
         btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
       });
     }
+
     function initBackgroundSelector() {
       bgOptions.querySelectorAll('.swatch').forEach(btn => {
         btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color));
@@ -208,8 +318,11 @@
         rowEls.get(downloadingVisualId).row.classList.add("downloading");
       }
     }
+
     function paintActive() {
-      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
+      for (const m of MODELS) {
+        rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
+      }
     }
 
     function parsePercent(progressText) {
@@ -232,6 +345,7 @@
             stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
         </svg>`;
     }
+
     function doneIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -241,6 +355,7 @@
                 stroke-linecap="round" stroke-linejoin="round"></path>
         </svg>`;
     }
+
     function pausedIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -249,6 +364,7 @@
           <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
         </svg>`;
     }
+
     function errorIconSVG() {
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -351,6 +467,7 @@
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+
             chunks.push(value);
             received += value.byteLength;
 
@@ -414,8 +531,11 @@
           const st = state.get(id);
           if (st.status === "done") continue;
 
-          try { await downloadToBlobUrl(id); }
-          catch (e) { if (e.name === "AbortError") return; }
+          try {
+            await downloadToBlobUrl(id);
+          } catch (e) {
+            if (e.name === "AbortError") return;
+          }
         }
       } finally {
         preloadRunning = false;
@@ -456,89 +576,96 @@
       idleMv = tmp;
     }
 
-    // ===== Placeholder hotspots (01..12) =====
-    const PLACEHOLDER_COUNT = 12;
+    // ===== Annotation helpers =====
+    function getThreeScene(mv) {
+      const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
+      return sceneSym ? mv[sceneSym] : null;
+    }
 
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
-    function ensurePlaceholderHotspots(mv) {
+    function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
-      for (let i = 1; i <= PLACEHOLDER_COUNT; i++) {
-        const label = String(i).padStart(2, '0');
-        const slotName = `hotspot-${label}`;
+
+      const anns = ANNOTATIONS[modelId] || [];
+      for (const a of anns) {
         const btn = document.createElement('button');
         btn.className = 'hotspot';
-        btn.setAttribute('slot', slotName);
-        btn.textContent = label;
+        btn.setAttribute('slot', a.slotName);
+        btn.textContent = a.label;
+        btn.title = a.title;
         btn.dataset.position = '0m 0m 0m';
         btn.dataset.normal = '0m 1m 0m';
         mv.appendChild(btn);
       }
     }
 
-    function getBounds(mv) {
-      // model-viewer has these in many builds; fallback if missing.
-      try {
-        const center = mv.getBoundingBoxCenter?.();
-        const dims = mv.getDimensions?.();
-        if (center && dims) return { center, dims };
-      } catch (_) {}
-      return null;
-    }
+    function updateHotspotsFromEmpties(mv, modelId) {
+      const anns = ANNOTATIONS[modelId] || [];
+      if (!anns.length) return;
 
-    function placePlaceholderHotspots(mv) {
-      const b = getBounds(mv);
-      // fallback values if bounds APIs aren't available
-      const cx = b ? b.center.x : 0;
-      const cy = b ? b.center.y : 0;
-      const cz = b ? b.center.z : 0;
+      const scene = getThreeScene(mv);
+      if (!scene || typeof scene.getObjectByName !== 'function') {
+        console.warn('Could not access THREE scene graph.');
+        return;
+      }
 
-      const dx = b ? b.dims.x : 0.25;
-      const dy = b ? b.dims.y : 0.25;
-      const dz = b ? b.dims.z : 0.25;
+      if (typeof scene.updateMatrixWorld === 'function') {
+        scene.updateMatrixWorld(true);
+      }
 
-      const radius = Math.max(dx, dy, dz) * 0.55 || 0.15;
+      let foundCount = 0;
+      let missingCount = 0;
 
-      for (let i = 1; i <= PLACEHOLDER_COUNT; i++) {
-        const label = String(i).padStart(2, '0');
-        const slotName = `hotspot-${label}`;
+      for (const a of anns) {
+        const obj = scene.getObjectByName(a.anchor);
 
-        // distribute points around the model in a ring + varying height
-        const t = (i - 1) / PLACEHOLDER_COUNT;
-        const angle = t * Math.PI * 2;
+        if (!obj) {
+          console.warn(`Anchor not found: "${a.anchor}" in model ${modelId}`);
+          missingCount++;
+          continue;
+        }
 
-        const x = cx + Math.cos(angle) * radius;
-        const z = cz + Math.sin(angle) * radius;
-        const y = cy + (Math.sin(angle * 2) * 0.15 * (dy || 0.25));
+        const V3 = obj.position.constructor;
+        const worldPos = new V3();
+        obj.getWorldPosition(worldPos);
 
-        const posStr = `${x}m ${y}m ${z}m`;
+        const posStr = `${worldPos.x}m ${worldPos.y}m ${worldPos.z}m`;
         const normalStr = `0m 1m 0m`;
 
         try {
-          mv.updateHotspot({ name: slotName, position: posStr, normal: normalStr });
+          mv.updateHotspot({
+            name: a.slotName,
+            position: posStr,
+            normal: normalStr
+          });
         } catch (_) {
-          const el = mv.querySelector(`[slot="${slotName}"]`);
+          const el = mv.querySelector(`[slot="${a.slotName}"]`);
           if (el) {
             el.dataset.position = posStr;
             el.dataset.normal = normalStr;
           }
         }
+
+        foundCount++;
       }
+
+      console.log(`Model ${modelId}: hotspots placed = ${foundCount}, missing = ${missingCount}`);
     }
 
-    function preparePlaceholdersForViewer(mv) {
-      ensurePlaceholderHotspots(mv);
-      // place after load settles
+    function prepareAnnotationsForViewer(mv, modelId) {
+      ensureHotspotElements(mv, modelId);
+
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          placePlaceholderHotspots(mv);
+          updateHotspotsFromEmpties(mv, modelId);
         });
       });
     }
 
-    // ===== Show model (double-buffer) =====
+    // ===== Show model =====
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -551,7 +678,6 @@
       const st = state.get(modelId);
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      // already downloaded
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
@@ -560,7 +686,7 @@
 
         if (idleSrc === targetSrc) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          preparePlaceholdersForViewer(idleMv);
+          prepareAnnotationsForViewer(idleMv, modelId);
           swapViewersNow();
           return;
         }
@@ -572,7 +698,7 @@
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-              preparePlaceholdersForViewer(idleMv);
+              prepareAnnotationsForViewer(idleMv, modelId);
               swapViewersNow();
             });
           });
@@ -583,7 +709,6 @@
         return;
       }
 
-      // not downloaded yet
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
       const onIdleLoad = () => {
@@ -591,7 +716,7 @@
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-            preparePlaceholdersForViewer(idleMv);
+            prepareAnnotationsForViewer(idleMv, modelId);
             swapViewersNow();
           });
         });
@@ -604,7 +729,7 @@
 
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          preparePlaceholdersForViewer(idleMv);
+          prepareAnnotationsForViewer(idleMv, modelId);
           swapViewersNow();
           return;
         }
