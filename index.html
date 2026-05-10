@@ -78,26 +78,17 @@
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
+    /* ✅ Hotspot marker: dot only (no text) */
     .hotspot{
-      border:0;
-      background: rgba(0,0,0,0.78);
-      color:#fff;
-      padding:5px 9px;
-      border-radius:999px;
-      font-size:12px;
-      cursor:default;
-      transform: translate(-50%, -100%);
-      white-space: nowrap;
-      line-height: 1;
-    }
-    .hotspot::before{
-      content:"";
-      width:8px; height:8px;
-      border-radius:50%;
-      background:#fff;
-      display:inline-block;
-      margin-right:6px;
-      vertical-align: middle;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border-radius: 50%;
+      border: 2px solid #000;                 /* black circle */
+      background: rgba(255,255,255,0.65);     /* slightly transparent white dot */
+      cursor: default;
+      transform: translate(-50%, -50%);       /* center exactly on point */
+      box-sizing: border-box;
     }
   </style>
 </head>
@@ -118,8 +109,7 @@
       </div>
 
       <div class="small">
-        Hotspots are linked to your node names.<br>
-        If hotspots look shifted, we apply a bounding-box center offset.
+        Hotspots are dots only (no numbers). Hover a dot to see the anatomical name.
       </div>
     </div>
 
@@ -171,7 +161,6 @@
     function makeAnnotations(names) {
       return names.map((name, i) => ({
         slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
-        label: String(i + 1).padStart(2, '0'),
         anchor: name,
         title: name
       }));
@@ -392,20 +381,17 @@
 
         } catch (err) {
           paintDownloading(null);
-
           if (err.name === "AbortError") {
             st.status = "paused";
             refreshMeta(modelId);
             maybeResumePreload();
             throw err;
           }
-
           st.status = "error";
           st.progressText = "";
           refreshMeta(modelId);
           maybeResumePreload();
           throw err;
-
         } finally {
           inFlight.delete(modelId);
         }
@@ -419,18 +405,15 @@
       if (!preloadEnabled) return;
       if (preloadRunning) return;
       preloadRunning = true;
-
       try {
         if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
           resumeRequested = true;
           return;
         }
-
         for (const id of preloadQueue) {
           if (!preloadEnabled) return;
           const st = state.get(id);
           if (st.status === "done") continue;
-
           try { await downloadToBlobUrl(id); }
           catch (e) { if (e.name === "AbortError") return; }
         }
@@ -469,7 +452,7 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ===== annotation: map node positions -> hotspot positions, with center offset =====
+    // ===== annotation mapping =====
     function getThreeScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
@@ -486,8 +469,8 @@
         const btn = document.createElement('button');
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
-        btn.textContent = a.label;
-        btn.title = a.title;
+        btn.title = a.title;          // ✅ tooltip still shows name
+        btn.textContent = "";         // ✅ no visible label
         btn.dataset.position = '0m 0m 0m';
         btn.dataset.normal = '0m 1m 0m';
         mv.appendChild(btn);
@@ -506,21 +489,16 @@
 
       if (typeof scene.updateMatrixWorld === 'function') scene.updateMatrixWorld(true);
 
-      // ✅ model-viewer hotspot space uses its own centering.
-      // Use the model-viewer bounding box center as an offset to align coordinates.
       const center = mv.getBoundingBoxCenter?.() || { x: 0, y: 0, z: 0 };
-
-      let found = 0, missing = 0;
 
       for (const a of anns) {
         const obj = scene.getObjectByName(a.anchor);
-        if (!obj) { missing++; continue; }
+        if (!obj) continue;
 
         const V3 = obj.position.constructor;
         const worldPos = new V3();
         obj.getWorldPosition(worldPos);
 
-        // ✅ apply offset (main fix)
         const x = worldPos.x + center.x;
         const y = worldPos.y + center.y;
         const z = worldPos.z + center.z;
@@ -534,10 +512,7 @@
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
           if (el) { el.dataset.position = posStr; el.dataset.normal = normalStr; }
         }
-        found++;
       }
-
-      console.log(`Model ${modelId}: placed=${found}, missing=${missing}, centerOffset=(${center.x.toFixed(4)},${center.y.toFixed(4)},${center.z.toFixed(4)})`);
     }
 
     function prepareAnnotationsForViewer(mv, modelId) {
@@ -550,7 +525,6 @@
 
     async function showModel(modelId) {
       const token = ++swapToken;
-
       const camForThisSwap = readCamFrom(activeMv);
       selectedId = modelId;
       paintActive();
