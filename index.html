@@ -9,6 +9,7 @@
 
   <style>
     :root{ --viewer-bg: #ffffff; }
+
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
 
@@ -73,23 +74,22 @@
       width:100%;
       height:100%;
       background:var(--viewer-bg);
-      /* Optional: a little smoother look */
-      --min-hotspot-opacity: 0.2;
     }
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
-    /* Hotspot styling */
+    /* placeholder hotspots */
     .hotspot{
       border:0;
-      background: rgba(0,0,0,0.72);
+      background: rgba(0,0,0,0.78);
       color:#fff;
-      padding:6px 8px;
+      padding:5px 9px;
       border-radius:999px;
       font-size:12px;
-      cursor:pointer;
+      cursor:default;
       transform: translate(-50%, -100%);
       white-space: nowrap;
+      line-height: 1;
     }
     .hotspot::before{
       content:"";
@@ -119,8 +119,8 @@
       </div>
 
       <div class="small">
-        Hotspots are anchored to named empties inside each GLB.<br>
-        Edit the <b>ANNOTATIONS</b> object in the code to match your empty names.
+        Placeholder annotation points (01–12) are placed automatically on each model after load.<br>
+        This is ONLY to test how hotspots look & behave. No empties needed yet.
       </div>
     </div>
 
@@ -136,7 +136,7 @@
   </div>
 
   <script>
-    // ✅ Your two annotated models (raw URLs pinned to commit)
+    // Your two models (raw URLs pinned to commit)
     const MODELS = [
       {
         id: "01_Veselled_Annotated",
@@ -148,49 +148,30 @@
       }
     ];
 
-    // ✅ EDIT THIS: add your empty names exactly as in Blender
-    // slotName must start with "hotspot-" for model-viewer to treat it as a hotspot.
-    const ANNOTATIONS = {
-      "01_Veselled_Annotated": [
-        { slotName: "hotspot-a", label: "A", anchor: "EMPTY_NAME_A_IN_GLB" },
-        { slotName: "hotspot-b", label: "B", anchor: "EMPTY_NAME_B_IN_GLB" },
-      ],
-      "02_Veselless_Annotated": [
-        { slotName: "hotspot-a", label: "A", anchor: "EMPTY_NAME_A_IN_GLB" },
-        { slotName: "hotspot-b", label: "B", anchor: "EMPTY_NAME_B_IN_GLB" },
-      ]
-    };
-
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
     const bgOptions = document.getElementById('bgOptions');
 
-    // Active/inactive viewer pointers
     let activeMv = mvA;
     let idleMv = mvB;
 
-    // Selection (black border)
     let selectedId = MODELS[0].id;
 
-    // Model state (download/progress/blob)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Download control
     let currentController = null;
     let currentDownloadingId = null;
-    const inFlight = new Map(); // modelId -> Promise<string>
+    const inFlight = new Map();
 
-    // Preload scheduler
     let preloadEnabled = true;
     let preloadTimer = null;
     let resumeRequested = false;
     let preloadRunning = false;
     const preloadQueue = MODELS.map(m => m.id);
 
-    // UI nodes
-    const rowEls = new Map(); // id -> { row, meta }
+    const rowEls = new Map();
     let downloadingVisualId = null;
 
     // ===== Background selector =====
@@ -200,8 +181,9 @@
       updateSwatchSelection(color);
     }
     function updateSwatchSelection(color) {
-      const swatches = bgOptions.querySelectorAll('.swatch');
-      swatches.forEach(btn => btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase()));
+      bgOptions.querySelectorAll('.swatch').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
+      });
     }
     function initBackgroundSelector() {
       bgOptions.querySelectorAll('.swatch').forEach(btn => {
@@ -210,17 +192,22 @@
 
       let saved = null;
       try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
+
       const validColors = ["#ffffff", "#808080", "#000000"];
       const startColor = validColors.includes((saved || "").toLowerCase()) ? saved : "#ffffff";
       applyBackgroundColor(startColor);
     }
 
+    // ===== UI helpers =====
     function paintDownloading(idOrNull) {
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
+        rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      }
       downloadingVisualId = idOrNull;
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
+        rowEls.get(downloadingVisualId).row.classList.add("downloading");
+      }
     }
-
     function paintActive() {
       for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
     }
@@ -306,6 +293,7 @@
       paintDownloading(null);
     }
 
+    // ===== Preload scheduler =====
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -337,7 +325,6 @@
         st.progressText = "";
         refreshMeta(modelId);
 
-        // Abort previous active download (your chosen behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -469,62 +456,70 @@
       idleMv = tmp;
     }
 
-    // ===== Annotation anchoring to empties =====
-    function getThreeScene(mv) {
-      // Internal, but works in practice: find the "scene" symbol and use it as a THREE.Scene.
-      // (If it fails, we'll log a clear error.)
-      const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
-      return sceneSym ? mv[sceneSym] : null;
+    // ===== Placeholder hotspots (01..12) =====
+    const PLACEHOLDER_COUNT = 12;
+
+    function clearHotspots(mv) {
+      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
-    function ensureHotspotElements(mv, modelId) {
-      // remove old hotspot elements
-      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
-
-      const anns = ANNOTATIONS[modelId] || [];
-      for (const a of anns) {
+    function ensurePlaceholderHotspots(mv) {
+      clearHotspots(mv);
+      for (let i = 1; i <= PLACEHOLDER_COUNT; i++) {
+        const label = String(i).padStart(2, '0');
+        const slotName = `hotspot-${label}`;
         const btn = document.createElement('button');
         btn.className = 'hotspot';
-        btn.setAttribute('slot', a.slotName);
-        btn.textContent = a.label;
-        // Start somewhere; will be updated after load by updateHotspot()
+        btn.setAttribute('slot', slotName);
+        btn.textContent = label;
         btn.dataset.position = '0m 0m 0m';
         btn.dataset.normal = '0m 1m 0m';
         mv.appendChild(btn);
       }
     }
 
-    function updateHotspotsFromEmpties(mv, modelId) {
-      const anns = ANNOTATIONS[modelId] || [];
-      if (!anns.length) return;
+    function getBounds(mv) {
+      // model-viewer has these in many builds; fallback if missing.
+      try {
+        const center = mv.getBoundingBoxCenter?.();
+        const dims = mv.getDimensions?.();
+        if (center && dims) return { center, dims };
+      } catch (_) {}
+      return null;
+    }
 
-      const scene = getThreeScene(mv);
-      if (!scene || typeof scene.getObjectByName !== 'function') {
-        console.warn('Could not access THREE scene graph. Hotspots will not be anchored. (scene symbol missing)');
-        return;
-      }
+    function placePlaceholderHotspots(mv) {
+      const b = getBounds(mv);
+      // fallback values if bounds APIs aren't available
+      const cx = b ? b.center.x : 0;
+      const cy = b ? b.center.y : 0;
+      const cz = b ? b.center.z : 0;
 
-      for (const a of anns) {
-        const obj = scene.getObjectByName(a.anchor);
-        if (!obj) {
-          console.warn(`Anchor not found in GLB: "${a.anchor}" (model: ${modelId})`);
-          continue;
-        }
+      const dx = b ? b.dims.x : 0.25;
+      const dy = b ? b.dims.y : 0.25;
+      const dz = b ? b.dims.z : 0.25;
 
-        // Get world position using the Vector3 type already used by three.js
-        const V3 = obj.position.constructor; // THREE.Vector3
-        const v = new V3();
-        obj.getWorldPosition(v);
+      const radius = Math.max(dx, dy, dz) * 0.55 || 0.15;
 
-        const posStr = `${v.x}m ${v.y}m ${v.z}m`;
-        const normalStr = `0m 1m 0m`; // simple upward normal
+      for (let i = 1; i <= PLACEHOLDER_COUNT; i++) {
+        const label = String(i).padStart(2, '0');
+        const slotName = `hotspot-${label}`;
 
-        // updateHotspot updates the hotspot for slot=name. :contentReference[oaicite:2]{index=2}
+        // distribute points around the model in a ring + varying height
+        const t = (i - 1) / PLACEHOLDER_COUNT;
+        const angle = t * Math.PI * 2;
+
+        const x = cx + Math.cos(angle) * radius;
+        const z = cz + Math.sin(angle) * radius;
+        const y = cy + (Math.sin(angle * 2) * 0.15 * (dy || 0.25));
+
+        const posStr = `${x}m ${y}m ${z}m`;
+        const normalStr = `0m 1m 0m`;
+
         try {
-          mv.updateHotspot({ name: a.slotName, position: posStr, normal: normalStr });
-        } catch (e) {
-          // fallback: set attributes directly
-          const el = mv.querySelector(`[slot="${a.slotName}"]`);
+          mv.updateHotspot({ name: slotName, position: posStr, normal: normalStr });
+        } catch (_) {
+          const el = mv.querySelector(`[slot="${slotName}"]`);
           if (el) {
             el.dataset.position = posStr;
             el.dataset.normal = normalStr;
@@ -533,14 +528,12 @@
       }
     }
 
-    function prepareAnnotationsForViewer(mv, modelId) {
-      mv.dataset.modelId = modelId;
-      ensureHotspotElements(mv, modelId);
-      // After model has loaded, we update hotspot positions from empties:
-      // We do it 2 rAFs later so the scene graph has settled.
+    function preparePlaceholdersForViewer(mv) {
+      ensurePlaceholderHotspots(mv);
+      // place after load settles
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          updateHotspotsFromEmpties(mv, modelId);
+          placePlaceholderHotspots(mv);
         });
       });
     }
@@ -558,7 +551,7 @@
       const st = state.get(modelId);
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      // If already downloaded:
+      // already downloaded
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
@@ -566,10 +559,8 @@
         if (activeSrc === targetSrc) return;
 
         if (idleSrc === targetSrc) {
-          // swap immediately (no load will fire)
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          // ensure annotations are correct for the model we are about to show
-          prepareAnnotationsForViewer(idleMv, modelId);
+          preparePlaceholdersForViewer(idleMv);
           swapViewersNow();
           return;
         }
@@ -581,8 +572,7 @@
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-              // now that the model is loaded in idleMv, bind hotspots to empties
-              prepareAnnotationsForViewer(idleMv, modelId);
+              preparePlaceholdersForViewer(idleMv);
               swapViewersNow();
             });
           });
@@ -593,7 +583,7 @@
         return;
       }
 
-      // Not downloaded yet:
+      // not downloaded yet
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
       const onIdleLoad = () => {
@@ -601,7 +591,7 @@
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-            prepareAnnotationsForViewer(idleMv, modelId);
+            preparePlaceholdersForViewer(idleMv);
             swapViewersNow();
           });
         });
@@ -614,7 +604,7 @@
 
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          prepareAnnotationsForViewer(idleMv, modelId);
+          preparePlaceholdersForViewer(idleMv);
           swapViewersNow();
           return;
         }
@@ -634,7 +624,6 @@
     (function init() {
       buildListOnce();
       initBackgroundSelector();
-      // First model
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
