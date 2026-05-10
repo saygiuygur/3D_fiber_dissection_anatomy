@@ -9,29 +9,53 @@
 
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
+
     .wrap { display:flex; height:100vh; }
-    .sidebar { width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff; }
+
+    /* keep sidebar as-is */
+    .sidebar {
+      width:360px;
+      border-right:1px solid #ddd;
+      padding:12px;
+      overflow:auto;
+      background:#fff;
+    }
 
     .row{
       display:flex; align-items:center; justify-content:space-between;
-      width:100%; padding:10px; margin:6px 0; border:1px solid #ddd;
-      border-radius:10px; background:#fff; cursor:pointer; user-select:none;
+      width:100%; padding:10px; margin:6px 0;
+      border:1px solid #ddd;
+      border-radius:10px;
+      background:#fff;
+      cursor:pointer;
+      user-select:none;
       gap:10px;
       transition: border-color 120ms ease;
     }
     .row.active { border-color:#111; }
     .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
 
-    .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
-    .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
+    .name{
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      flex: 1 1 auto;
+    }
+    .meta{
+      width:24px; height:24px;
+      display:flex; align-items:center; justify-content:center;
+      flex: 0 0 24px;
+    }
     .status-icon{ width:20px; height:20px; display:block; }
+
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
+    /* viewer background color: #030020 */
     .viewer-wrap{
       position: relative;
       width: calc(100vw - 360px);
       height: 100vh;
-      background:#fff;
+      background:#030020;
       overflow:hidden;
     }
 
@@ -40,7 +64,7 @@
       inset:0;
       width:100%;
       height:100%;
-      background:#fff;
+      background:#030020; /* ensures no white flash */
     }
 
     .hiddenViewer { visibility: hidden; pointer-events: none; }
@@ -55,7 +79,8 @@
       <div id="list"></div>
       <div class="small">
         Double-buffer viewer (mvA/mvB).<br>
-        Fix implemented: if the idle viewer already has the requested src, swap immediately (no waiting for load).
+        If the idle viewer already has the requested src, swap immediately (no waiting for load).<br>
+        Viewer background: #030020.
       </div>
     </div>
 
@@ -392,26 +417,23 @@
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // 1) Freeze camera EXACTLY at click time from the active viewer
+      // Freeze camera at click time from the active viewer
       const camForThisSwap = readCamFrom(activeMv);
 
       selectedId = modelId;
       paintActive();
 
-      // 2) Determine the exact target src we want to show
+      // Determine target src
       const st = state.get(modelId);
       let targetSrc = null;
 
       if (st.status === "done" && st.blobUrl) {
         targetSrc = st.blobUrl;
       } else {
-        // we will download; targetSrc will be set once download resolves
         targetSrc = null;
       }
 
-      // If we already have the blob and:
-      // - the idle viewer already shows it => swap immediately (the requested fix)
-      // - the active viewer already shows it => do nothing
+      // If already downloaded:
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
@@ -421,13 +443,12 @@
         }
 
         if (idleSrc === targetSrc) {
-          // ✅ NEW RULE: no load event will fire, so just swap now
+          // ✅ Rule: swap immediately (no load will fire)
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           swapViewersNow();
           return;
         }
 
-        // Otherwise, prepare idle and load it (old model stays visible)
         if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
         const onIdleLoad = () => {
@@ -445,7 +466,7 @@
         return;
       }
 
-      // 3) Not downloaded yet: load into idle viewer, then swap on load
+      // Not downloaded yet: load into idle then swap on load
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
       const onIdleLoad = () => {
@@ -463,7 +484,6 @@
         const blobUrl = await downloadToBlobUrl(modelId);
         if (token !== swapToken) return;
 
-        // If the idle viewer already has it (rare, but possible if user clicked back/forth):
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           swapViewersNow();
