@@ -9,7 +9,7 @@
 
   <style>
     :root{
-      --viewer-bg: #000000;
+      --viewer-bg: #ffffff;
     }
 
     body { margin:0; font-family: system-ui, sans-serif; }
@@ -84,10 +84,9 @@
       box-sizing:border-box;
     }
 
-    .swatch.black  { background:#000000; }
-    .swatch.gray   { background:#808080; }
     .swatch.white  { background:#ffffff; }
-    .swatch.navy   { background:#030020; }
+    .swatch.gray   { background:#808080; }
+    .swatch.black  { background:#000000; }
 
     .swatch.selected{
       outline:2px solid #111;
@@ -125,10 +124,9 @@
       <div class="bg-section">
         <div class="bg-title">Background Color</div>
         <div class="bg-options" id="bgOptions">
-          <button class="swatch black selected" data-color="#000000" aria-label="Black background" title="Black"></button>
+          <button class="swatch white selected" data-color="#ffffff" aria-label="White background" title="White"></button>
           <button class="swatch gray" data-color="#808080" aria-label="Gray background" title="Gray"></button>
-          <button class="swatch white" data-color="#ffffff" aria-label="White background" title="White"></button>
-          <button class="swatch navy" data-color="#030020" aria-label="Navy background" title="#030020"></button>
+          <button class="swatch black" data-color="#000000" aria-label="Black background" title="Black"></button>
         </div>
       </div>
 
@@ -226,8 +224,8 @@
         saved = localStorage.getItem('viewerBgColor');
       } catch (_) {}
 
-      const validColors = ["#000000", "#808080", "#ffffff", "#030020"];
-      const startColor = validColors.includes((saved || "").toLowerCase()) ? saved : "#000000";
+      const validColors = ["#ffffff", "#808080", "#000000"];
+      const startColor = validColors.includes((saved || "").toLowerCase()) ? saved : "#ffffff";
       applyBackgroundColor(startColor);
     }
 
