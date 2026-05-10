@@ -8,12 +8,16 @@
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
   <style>
+    :root{
+      --viewer-bg: #000000;
+    }
+
     body { margin:0; font-family: system-ui, sans-serif; }
 
     .wrap { display:flex; height:100vh; }
 
     /* keep sidebar as-is */
-    .sidebar {
+    .sidebar{
       width:360px;
       border-right:1px solid #ddd;
       padding:12px;
@@ -50,12 +54,52 @@
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
-    /* viewer background color: #030020 */
+    .bg-section{
+      margin-top:18px;
+    }
+
+    .bg-title{
+      font-size:14px;
+      font-weight:600;
+      margin:0 0 10px 0;
+    }
+
+    .bg-options{
+      display:flex;
+      align-items:center;
+      gap:14px;
+      margin-bottom:8px;
+    }
+
+    .swatch{
+      width:26px;
+      height:26px;
+      border-radius:50%;
+      border:1px solid #cfcfcf;
+      cursor:pointer;
+      padding:0;
+      background:transparent;
+      display:inline-block;
+      position:relative;
+      box-sizing:border-box;
+    }
+
+    .swatch.black  { background:#000000; }
+    .swatch.gray   { background:#808080; }
+    .swatch.white  { background:#ffffff; }
+    .swatch.navy   { background:#030020; }
+
+    .swatch.selected{
+      outline:2px solid #111;
+      outline-offset:3px;
+    }
+
+    /* viewer background = variable */
     .viewer-wrap{
       position: relative;
       width: calc(100vw - 360px);
       height: 100vh;
-      background:#030020;
+      background:var(--viewer-bg);
       overflow:hidden;
     }
 
@@ -64,7 +108,7 @@
       inset:0;
       width:100%;
       height:100%;
-      background:#030020; /* ensures no white flash */
+      background:var(--viewer-bg);
     }
 
     .hiddenViewer { visibility: hidden; pointer-events: none; }
@@ -77,10 +121,21 @@
     <div class="sidebar">
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
+
+      <div class="bg-section">
+        <div class="bg-title">Background Color</div>
+        <div class="bg-options" id="bgOptions">
+          <button class="swatch black selected" data-color="#000000" aria-label="Black background" title="Black"></button>
+          <button class="swatch gray" data-color="#808080" aria-label="Gray background" title="Gray"></button>
+          <button class="swatch white" data-color="#ffffff" aria-label="White background" title="White"></button>
+          <button class="swatch navy" data-color="#030020" aria-label="Navy background" title="#030020"></button>
+        </div>
+      </div>
+
       <div class="small">
         Double-buffer viewer (mvA/mvB).<br>
         If the idle viewer already has the requested src, swap immediately (no waiting for load).<br>
-        Viewer background: #030020.
+        Background color can be changed from the sidebar.
       </div>
     </div>
 
@@ -113,6 +168,7 @@
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
+    const bgOptions = document.getElementById('bgOptions');
 
     // Active/inactive viewer pointers
     let activeMv = mvA;
@@ -140,6 +196,40 @@
     // UI nodes
     const rowEls = new Map(); // id -> { row, meta }
     let downloadingVisualId = null;
+
+    // ===== Background selector =====
+    function applyBackgroundColor(color) {
+      document.documentElement.style.setProperty('--viewer-bg', color);
+      try {
+        localStorage.setItem('viewerBgColor', color);
+      } catch (_) {}
+      updateSwatchSelection(color);
+    }
+
+    function updateSwatchSelection(color) {
+      const swatches = bgOptions.querySelectorAll('.swatch');
+      swatches.forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
+      });
+    }
+
+    function initBackgroundSelector() {
+      const swatches = bgOptions.querySelectorAll('.swatch');
+      swatches.forEach(btn => {
+        btn.addEventListener('click', () => {
+          applyBackgroundColor(btn.dataset.color);
+        });
+      });
+
+      let saved = null;
+      try {
+        saved = localStorage.getItem('viewerBgColor');
+      } catch (_) {}
+
+      const validColors = ["#000000", "#808080", "#ffffff", "#030020"];
+      const startColor = validColors.includes((saved || "").toLowerCase()) ? saved : "#000000";
+      applyBackgroundColor(startColor);
+    }
 
     function paintDownloading(idOrNull) {
       if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
@@ -443,7 +533,7 @@
         }
 
         if (idleSrc === targetSrc) {
-          // ✅ Rule: swap immediately (no load will fire)
+          // Rule: swap immediately (no load will fire)
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           swapViewersNow();
           return;
@@ -504,6 +594,7 @@
 
     (function init() {
       buildListOnce();
+      initBackgroundSelector();
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
