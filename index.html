@@ -73,22 +73,29 @@
       width:100%;
       height:100%;
       background:var(--viewer-bg);
+      --min-hotspot-opacity: 0; /* hide “not visible” hotspots completely */
     }
 
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
-    /* ✅ Hotspot marker: dot only (no text) */
+    /* Hotspot marker: dot only (no text) */
     .hotspot{
       width: 14px;
       height: 14px;
       padding: 0;
       border-radius: 50%;
       border: 2px solid #000;                 /* black circle */
-      background: rgba(255,255,255,0.65);     /* slightly transparent white dot */
+      background: rgba(255,255,255,0.65);     /* slightly transparent white */
       cursor: default;
-      transform: translate(-50%, -50%);       /* center exactly on point */
+      transform: translate(-50%, -50%);       /* center on point */
       box-sizing: border-box;
+    }
+
+    /* ✅ hide hotspots that are “not visible” (back-facing / off-screen) */
+    .hotspot:not([data-visible]) {
+      opacity: 0;
+      pointer-events: none;
     }
   </style>
 </head>
@@ -109,7 +116,7 @@
       </div>
 
       <div class="small">
-        Hotspots are dots only (no numbers). Hover a dot to see the anatomical name.
+        Dots behind the model are hidden automatically.
       </div>
     </div>
 
@@ -126,14 +133,8 @@
 
   <script>
     const MODELS = [
-      {
-        id: "01_Veselled_Annotated",
-        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb"
-      },
-      {
-        id: "02_Veselless_Annotated",
-        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb"
-      }
+      { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
+      { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" }
     ];
 
     const MODEL01_NAMES = [
@@ -452,7 +453,6 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ===== annotation mapping =====
     function getThreeScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
@@ -469,8 +469,9 @@
         const btn = document.createElement('button');
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
-        btn.title = a.title;          // ✅ tooltip still shows name
-        btn.textContent = "";         // ✅ no visible label
+        btn.setAttribute('data-visibility-attribute', 'visible'); // ✅ enables data-visible toggling :contentReference[oaicite:2]{index=2}
+        btn.title = a.title;
+        btn.textContent = "";
         btn.dataset.position = '0m 0m 0m';
         btn.dataset.normal = '0m 1m 0m';
         mv.appendChild(btn);
@@ -482,11 +483,7 @@
       if (!anns.length) return;
 
       const scene = getThreeScene(mv);
-      if (!scene || typeof scene.getObjectByName !== 'function') {
-        console.warn('Could not access THREE scene graph.');
-        return;
-      }
-
+      if (!scene || typeof scene.getObjectByName !== 'function') return;
       if (typeof scene.updateMatrixWorld === 'function') scene.updateMatrixWorld(true);
 
       const center = mv.getBoundingBoxCenter?.() || { x: 0, y: 0, z: 0 };
@@ -520,12 +517,12 @@
       requestAnimationFrame(() => requestAnimationFrame(() => updateHotspotsFromEmpties(mv, modelId)));
     }
 
-    // ===== show model (double-buffer) =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
       const camForThisSwap = readCamFrom(activeMv);
+
       selectedId = modelId;
       paintActive();
 
@@ -556,6 +553,7 @@
           }));
         };
         idleMv.addEventListener('load', onIdleLoad, { once: true });
+
         idleMv.src = targetSrc;
         return;
       }
@@ -598,6 +596,28 @@
       initBackgroundSelector();
       showModel(selectedId).then(() => { resumeRequested = true; maybeResumePreload(); });
     })();
+
+    // --- list UI (kept minimal) ---
+    function buildListOnce() {
+      list.innerHTML = "";
+      for (const m of MODELS) {
+        const row = document.createElement('div');
+        row.className = "row";
+        const name = document.createElement('div');
+        name.className = "name";
+        name.textContent = m.id;
+        const meta = document.createElement('div');
+        meta.className = "meta";
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.addEventListener('click', () => onUserSelect(m.id));
+        list.appendChild(row);
+        rowEls.set(m.id, { row, meta });
+        refreshMeta(m.id);
+      }
+      paintActive();
+      paintDownloading(null);
+    }
   </script>
 </body>
 </html>
