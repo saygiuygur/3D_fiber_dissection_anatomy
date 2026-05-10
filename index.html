@@ -13,7 +13,6 @@
     }
 
     body { margin:0; font-family: system-ui, sans-serif; }
-
     .wrap { display:flex; height:100vh; }
 
     /* keep sidebar as-is */
@@ -54,22 +53,9 @@
 
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
-    .bg-section{
-      margin-top:18px;
-    }
-
-    .bg-title{
-      font-size:14px;
-      font-weight:600;
-      margin:0 0 10px 0;
-    }
-
-    .bg-options{
-      display:flex;
-      align-items:center;
-      gap:14px;
-      margin-bottom:8px;
-    }
+    .bg-section{ margin-top:18px; }
+    .bg-title{ font-size:14px; font-weight:600; margin:0 0 10px 0; }
+    .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
 
     .swatch{
       width:26px;
@@ -83,7 +69,6 @@
       position:relative;
       box-sizing:border-box;
     }
-
     .swatch.white  { background:#ffffff; }
     .swatch.gray   { background:#808080; }
     .swatch.black  { background:#000000; }
@@ -131,9 +116,8 @@
       </div>
 
       <div class="small">
-        Double-buffer viewer (mvA/mvB).<br>
-        If the idle viewer already has the requested src, swap immediately (no waiting for load).<br>
-        Background color can be changed from the sidebar.
+        Test build: only 2 annotated models.<br>
+        Double-buffer viewer (mvA/mvB). If idle already has requested src, swap immediately.<br>
       </div>
     </div>
 
@@ -149,18 +133,16 @@
   </div>
 
   <script>
+    // ✅ Only the 2 annotated models, using RAW URLs pinned to your commit hash
     const MODELS = [
-      { id: "01_Veselled", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled.glb" },
-      { id: "02_Veselless", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless.glb" },
-      { id: "03_U_Fibers", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers.glb" },
-      { id: "04_Superficial_SLF", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF.glb" },
-      { id: "05_Superficial_Arcuate", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate.glb" },
-      { id: "06_Arcuate_SLF", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Arcuate_SLF.glb" },
-      { id: "07_Extreme_Capsule", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule.glb" },
-      { id: "08_Claustrum", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/08_Claustrum.glb" },
-      { id: "09_Putamen_External_Capsule", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule.glb" },
-      { id: "10_Internal_Capsule_Perforators", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Internal_Capsule_Perforators.glb" },
-      { id: "11_Anterior_Comissure", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure.glb" },
+      {
+        id: "01_Veselled_Annotated",
+        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/82cbdb959851464f6b119c9bb7157e92ad21968b/models/01_Veselled_Annotated.glb"
+      },
+      {
+        id: "02_Veselless_Annotated",
+        url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/82cbdb959851464f6b119c9bb7157e92ad21968b/models/02_Veselless_Annotated.glb"
+      }
     ];
 
     const list = document.getElementById('list');
@@ -184,7 +166,7 @@
     let currentDownloadingId = null;
     const inFlight = new Map(); // modelId -> Promise<string>
 
-    // Preload scheduler
+    // Preload scheduler (still works with 2 models)
     let preloadEnabled = true;
     let preloadTimer = null;
     let resumeRequested = false;
@@ -198,9 +180,7 @@
     // ===== Background selector =====
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
-      try {
-        localStorage.setItem('viewerBgColor', color);
-      } catch (_) {}
+      try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
       updateSwatchSelection(color);
     }
 
@@ -214,15 +194,11 @@
     function initBackgroundSelector() {
       const swatches = bgOptions.querySelectorAll('.swatch');
       swatches.forEach(btn => {
-        btn.addEventListener('click', () => {
-          applyBackgroundColor(btn.dataset.color);
-        });
+        btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color));
       });
 
       let saved = null;
-      try {
-        saved = localStorage.getItem('viewerBgColor');
-      } catch (_) {}
+      try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
 
       const validColors = ["#ffffff", "#808080", "#000000"];
       const startColor = validColors.includes((saved || "").toLowerCase()) ? saved : "#ffffff";
@@ -511,7 +487,6 @@
       selectedId = modelId;
       paintActive();
 
-      // Determine target src
       const st = state.get(modelId);
       let targetSrc = null;
 
@@ -526,12 +501,10 @@
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
 
-        if (activeSrc === targetSrc) {
-          return; // already showing
-        }
+        if (activeSrc === targetSrc) return;
 
         if (idleSrc === targetSrc) {
-          // Rule: swap immediately (no load will fire)
+          // ✅ swap immediately (no load will fire)
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           swapViewersNow();
           return;
@@ -554,7 +527,7 @@
         return;
       }
 
-      // Not downloaded yet: load into idle then swap on load
+      // Not downloaded yet
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
       const onIdleLoad = () => {
