@@ -113,7 +113,7 @@
       </div>
 
       <div class="small">
-        Raycast occlusion updates in real-time while orbiting (every 6 frames).
+        Raycast occlusion updates while orbiting (every 12 frames).
       </div>
     </div>
 
@@ -447,9 +447,9 @@
     const occState = new WeakMap();
     const loopState = new WeakMap();
 
-    const EPS = 1e-4;
-    const TOL = 0.002;
-    const OCCLUSION_EVERY_N_FRAMES = 6; // ✅ changed to 6
+    const EPS2 = 1e-4;
+    const TOL2 = 0.002;
+    const OCCLUSION_EVERY_N_FRAMES = 12;
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -555,19 +555,19 @@
       for (const [slot, point] of st.pointMap.entries()) {
         const dir = point.clone().sub(camPos);
         const dist = dir.length();
-        if (dist < EPS) continue;
+        if (dist < EPS2) continue;
 
         dir.normalize();
         st.raycaster.set(camPos, dir);
         st.raycaster.near = 0;
-        st.raycaster.far = dist + EPS;
+        st.raycaster.far = dist + EPS2;
 
         const hits = st.raycaster.intersectObjects(st.occluders, true);
 
         let occluded = false;
         if (hits.length > 0) {
           const hitDist = hits[0].distance;
-          occluded = hitDist < (dist - TOL);
+          occluded = hitDist < (dist - TOL2);
         }
 
         const el = mv.querySelector(`[slot="${slot}"]`);
