@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Perpendicular focus: uses raycast normal and moves camera to be fully orthogonal to surface.
+        Focus method: center-to-point line (no raycasts).
       </div>
     </div>
 
@@ -252,7 +252,7 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // ===== Background selector (unchanged) =====
+    // ===== Background selector (LOCKED) =====
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -270,7 +270,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (unchanged) =====
+    // ===== Toggle annotations (LOCKED) =====
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hotspotTip.style.display = 'none';
@@ -285,7 +285,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // ===== Tooltip =====
+    // ===== Tooltip (LOCKED) =====
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -307,7 +307,7 @@
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
     // ==========================================================
-    // ========== ICONS / DOWNLOAD BEHAVIOR (UNCHANGED) ==========
+    // ========== ICONS / DOWNLOAD BEHAVIOR (LOCKED) ==========
     // ==========================================================
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
@@ -838,7 +838,7 @@
     }
 
     // ==========================================================
-    // ========== PERPENDICULAR FOCUS (NEW) =======================
+    // ========== RADIAL CENTER-LINE FOCUS (IMPLEMENTED) ==========
     // ==========================================================
     const focusAnim = new WeakMap(); // mv -> { rafId, token }
 
@@ -858,80 +858,6 @@
       const phi = Math.acos(clamp(off.y / r, -1, 1));
       const theta = Math.atan2(off.x, off.z);
       return { theta, phi, radius: r };
-    }
-
-    function focusOnSlotPerpendicular(mv, slotName){
-      const st = occState.get(mv);
-      if (!st || !st.pointMap || !st.occluders) return;
-
-      const P = st.pointMap.get(slotName);
-      if (!P) return;
-
-      const orbit0 = mv.getCameraOrbit?.();
-      const target0 = mv.getCameraTarget?.();
-      if (!orbit0 || !target0) return;
-
-      const camPos0 = getCameraPositionHotspotSpace(mv);
-      if (!camPos0) return;
-
-      // Raycast from camera -> point to find surface + normal
-      const dirToP = P.clone().sub(camPos0);
-      const distToP = dirToP.length();
-      if (distToP < 1e-6) return;
-      dirToP.normalize();
-
-      st.raycaster.set(camPos0, dirToP);
-      st.raycaster.near = 0;
-      st.raycaster.far = distToP + 1e-3;
-
-      const hits = st.raycaster.intersectObjects(st.occluders, true);
-
-      // Fallback: if no hit, do old focus (keep angle, target to P)
-      if (!hits || !hits.length || !hits[0].point) {
-        // simple stable focus fallback
-        const r0 = orbit0.radius;
-        const desired = Math.max(0.01, distToP * 0.65);
-        const r1 = Math.min(r0, desired);
-        animateCamera(mv,
-          {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
-          {theta: orbit0.theta, phi: orbit0.phi, radius: r1, target: P.clone()}
-        );
-        return;
-      }
-
-      const hit = hits[0];
-      const surfacePoint = hit.point.clone();
-
-      // Normal (best effort)
-      let N = null;
-      if (hit.face && hit.face.normal) {
-        N = hit.face.normal.clone().normalize();
-      }
-      if (!N) {
-        // If face normal missing, approximate by pointing from surface to camera
-        N = camPos0.clone().sub(surfacePoint).normalize();
-      }
-
-      // Ensure N faces camera
-      const camSide = camPos0.clone().sub(surfacePoint).normalize();
-      if (camSide.dot(N) < 0) N.multiplyScalar(-1);
-
-      // Choose radius: zoom in a bit but not too much
-      const r0 = orbit0.radius;
-      const dSurf = camPos0.distanceTo(surfacePoint);
-      const desiredR = Math.max(0.01, dSurf * 0.60);
-      const r1 = Math.min(r0, desiredR);
-
-      // Perpendicular camera position: surfacePoint + N * r1
-      const camPos1 = surfacePoint.clone().add(N.clone().multiplyScalar(r1));
-      const off = camPos1.clone().sub(surfacePoint);
-
-      const o1 = orbitFromOffset(off);
-
-      animateCamera(mv,
-        {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
-        {theta: o1.theta, phi: o1.phi, radius: r1, target: surfacePoint}
-      );
     }
 
     function animateCamera(mv, from, to) {
@@ -979,6 +905,63 @@
       focusAnim.set(mv, cur);
     }
 
+    function focusOnSlotRadial(mv, slotName){
+      const st = occState.get(mv);
+      if (!st || !st.pointMap) return;
+
+      const P = st.pointMap.get(slotName);
+      if (!P) return;
+
+      const orbit0 = mv.getCameraOrbit?.();
+      const target0 = mv.getCameraTarget?.();
+      if (!orbit0 || !target0) return;
+
+      // Center C in the SAME hotspot space as P:
+      // C = baseCenter(currentShown) + panDelta
+      const delta = getPanDelta();
+      const bc = baseCenter.get(currentShownId);
+      if (!bc) return;
+      const C = bc.clone().add(delta);
+
+      // Direction from center to point
+      const d = P.clone().sub(C);
+      if (d.length() < 1e-6) {
+        // fallback: keep angle, just target to P
+        const r0 = orbit0.radius;
+        const camPos0 = getCameraPositionHotspotSpace(mv);
+        if (!camPos0) return;
+        const dist = camPos0.distanceTo(P);
+        const desiredR = Math.max(0.01, dist * 0.65);
+        const r1 = Math.min(r0, desiredR);
+
+        animateCamera(mv,
+          {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
+          {theta: orbit0.theta, phi: orbit0.phi, radius: r1, target: P.clone()}
+        );
+        return;
+      }
+      d.normalize();
+
+      // Use the same radius logic you already like (zoom in only)
+      const camPos0 = getCameraPositionHotspotSpace(mv);
+      if (!camPos0) return;
+      const distToPoint = camPos0.distanceTo(P);
+
+      const r0 = orbit0.radius;
+      const desiredR = Math.max(0.01, distToPoint * 0.65);
+      const r1 = Math.min(r0, desiredR);
+
+      // Place camera on the radial line: P + d * r1
+      const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
+      const off = camPos1.clone().sub(P);
+      const o1 = orbitFromOffset(off);
+
+      animateCamera(mv,
+        {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
+        {theta: o1.theta, phi: o1.phi, radius: r1, target: P.clone()}
+      );
+    }
+
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -994,7 +977,7 @@
           e.preventDefault();
           e.stopPropagation();
           hideTip();
-          focusOnSlotPerpendicular(mv, a.slotName);
+          focusOnSlotRadial(mv, a.slotName);
         });
 
         mv.appendChild(btn);
