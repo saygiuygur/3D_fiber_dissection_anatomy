@@ -141,7 +141,7 @@
 
     #hotspotTip{
       position: absolute;
-      z-index: 50;
+      z-index: 60;
       display: none;
       padding: 6px 8px;
       border-radius: 8px;
@@ -156,6 +156,56 @@
 
     .annOff .hotspot{ display:none !important; }
     .annOff #hotspotTip{ display:none !important; }
+
+    /* ===== Annotation bottom navigator ===== */
+    #annoNav{
+      position:absolute;
+      left:50%;
+      bottom:18px;
+      transform:translateX(-50%);
+      z-index:55;
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding:10px 16px;
+      border-radius:999px;
+      background: rgba(0,0,0,0.60);
+      color:#fff;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      max-width: min(560px, 92%);
+      user-select:none;
+    }
+    #annoNav .navBtn{
+      width:28px;
+      height:28px;
+      border:none;
+      border-radius:999px;
+      background: rgba(255,255,255,0.12);
+      color:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      flex: 0 0 28px;
+      font-size:18px;
+      line-height:1;
+    }
+    #annoNav .navBtn:hover{
+      background: rgba(255,255,255,0.18);
+    }
+    #annoNav .navText{
+      flex: 1 1 auto;
+      min-width: 0;
+      text-align:center;
+      font-size:14px;
+      font-weight:600;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      letter-spacing: 0.2px;
+    }
   </style>
 </head>
 
@@ -189,6 +239,13 @@
 
     <div class="viewer-wrap" id="viewerWrap">
       <div id="hotspotTip"></div>
+
+      <!-- Bottom annotation navigator -->
+      <div id="annoNav" aria-label="Annotation navigator">
+        <button id="annoPrev" class="navBtn" aria-label="Previous annotation" title="Previous">‹</button>
+        <div id="annoLabel" class="navText">Select an annotation</div>
+        <button id="annoNext" class="navBtn" aria-label="Next annotation" title="Next">›</button>
+      </div>
 
       <model-viewer id="mvA" class="viewer shownViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
@@ -248,10 +305,61 @@
     const bgOptions = document.getElementById('bgOptions');
     const annToggle = document.getElementById('annToggle');
 
+    // bottom navigator elements
+    const annoNav = document.getElementById('annoNav');
+    const annoPrev = document.getElementById('annoPrev');
+    const annoNext = document.getElementById('annoNext');
+    const annoLabel = document.getElementById('annoLabel');
+
     let activeMv = mvA;
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
+
+    // selection state for navigator
+    let selectedAnnoIndex = -1;
+
+    function getAnnoListForCurrentModel() {
+      return ANNOTATIONS[currentShownId] || [];
+    }
+    function setAnnoLabelText(text) {
+      annoLabel.textContent = text || "Select an annotation";
+    }
+    function refreshAnnoNavLabel() {
+      const list = getAnnoListForCurrentModel();
+      if (!list.length || selectedAnnoIndex < 0 || selectedAnnoIndex >= list.length) {
+        setAnnoLabelText("Select an annotation");
+        return;
+      }
+      setAnnoLabelText(list[selectedAnnoIndex].title);
+    }
+    function setSelectedAnnoBySlot(slotName) {
+      const list = getAnnoListForCurrentModel();
+      const idx = list.findIndex(a => a.slotName === slotName);
+      selectedAnnoIndex = idx;
+      refreshAnnoNavLabel();
+    }
+    function gotoAnnoIndex(idx, doFocus = true) {
+      const list = getAnnoListForCurrentModel();
+      if (!list.length) return;
+      const n = list.length;
+      const i = ((idx % n) + n) % n;
+      selectedAnnoIndex = i;
+      refreshAnnoNavLabel();
+      if (doFocus) focusHotspot(list[i].slotName);
+    }
+    function gotoNextPrev(dir) {
+      const list = getAnnoListForCurrentModel();
+      if (!list.length) return;
+      if (selectedAnnoIndex < 0) {
+        gotoAnnoIndex(0, true);
+        return;
+      }
+      gotoAnnoIndex(selectedAnnoIndex + dir, true);
+    }
+
+    annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
+    annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
 
     // ===== Background (LOCKED) =====
     function applyBackgroundColor(color) {
@@ -271,10 +379,17 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (LOCKED) =====
+    // ===== Toggle annotations (LOCKED) + NEW: auto-hide navigator =====
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
-      if (!enabled) hotspotTip.style.display = 'none';
+      if (!enabled) {
+        hotspotTip.style.display = 'none';
+        annoNav.style.display = 'none';   // NEW: hide navigator
+        selectedAnnoIndex = -1;           // NEW: reset selection
+        refreshAnnoNavLabel();
+      } else {
+        annoNav.style.display = 'flex';   // NEW: show navigator
+      }
       try { localStorage.setItem('annotationsEnabled', enabled ? '1' : '0'); } catch (_) {}
     }
     function initAnnotationsToggle(){
@@ -307,7 +422,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // ===== Download/progress icons (LOCKED) =====
+    // ===== Download/progress icons + download behavior (LOCKED) =====
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -597,39 +712,12 @@
     }
 
     // =========================
-    // HOTSPOTS / OCCLUSION
+    // OCCLUSION + bottom override (LOCKED)
     // =========================
-    function clearHotspots(mv) {
-      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
-    }
-
-    function ensureHotspotElements(mv, modelId) {
-      clearHotspots(mv);
-      const anns = ANNOTATIONS[modelId] || [];
-      for (const a of anns) {
-        const btn = document.createElement('button');
-        btn.className = 'hotspot';
-        btn.setAttribute('slot', a.slotName);
-        btn.dataset.label = a.title;
-        btn.setAttribute('aria-label', a.title);
-        attachTip(btn);
-
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          hideTip();
-          focusHotspot(a.slotName);
-        });
-
-        mv.appendChild(btn);
-      }
-    }
-
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
     const TOL = 5;
-
     const FORCE_VISIBLE_K = 5;
 
     const occState = new WeakMap();
@@ -846,40 +934,8 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    function prepareAnnotationsAndOcclusion(mv, modelId) {
-      ensureHotspotElements(mv, modelId);
-
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        captureAutoFrameBase(mv, modelId);
-
-        // delta is always computed using CURRENT model's baseTarget + cameraTarget (correct now)
-        const bt = baseTarget.get(modelId);
-        const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-        const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-
-        const shift = baseCenter.get(modelId).clone().add(delta);
-
-        const occluders = buildRaycastOccluders(mv, shift);
-        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
-        const slots = Array.from(pointMap.keys());
-
-        if (occluders && occluders.length && slots.length) {
-          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null, forcedVisible: null });
-        } else {
-          occState.set(mv, null);
-        }
-
-        runBatch(mv, RAYS_PER_BATCH);
-
-        if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
-          mv.__hasOccListener = true;
-        }
-      }));
-    }
-
     // =========================
-    // FOCUS (ellipse locked)
+    // FOCUS (ELLIPSE LOCKED)
     // =========================
     const focusAnim = new WeakMap();
     const ELL_A = 35;
@@ -998,14 +1054,74 @@
     }
 
     // =========================
-    // VIEWER SWITCH / MODEL SHOW
+    // Hotspot creation / prep
+    // =========================
+    function clearHotspots(mv) {
+      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
+    }
+
+    function ensureHotspotElements(mv, modelId) {
+      clearHotspots(mv);
+      const anns = ANNOTATIONS[modelId] || [];
+      for (const a of anns) {
+        const btn = document.createElement('button');
+        btn.className = 'hotspot';
+        btn.setAttribute('slot', a.slotName);
+        btn.dataset.label = a.title;
+        btn.setAttribute('aria-label', a.title);
+        attachTip(btn);
+
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTip();
+          setSelectedAnnoBySlot(a.slotName);
+          focusHotspot(a.slotName);
+        });
+
+        mv.appendChild(btn);
+      }
+    }
+
+    function prepareAnnotationsAndOcclusion(mv, modelId) {
+      ensureHotspotElements(mv, modelId);
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        captureAutoFrameBase(mv, modelId);
+
+        const bt = baseTarget.get(modelId);
+        const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
+        const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
+
+        const shift = baseCenter.get(modelId).clone().add(delta);
+
+        const occluders = buildRaycastOccluders(mv, shift);
+        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
+        const slots = Array.from(pointMap.keys());
+
+        if (occluders && occluders.length && slots.length) {
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null, forcedVisible: null });
+        } else {
+          occState.set(mv, null);
+        }
+
+        runBatch(mv, RAYS_PER_BATCH);
+
+        if (!mv.__hasOccListener) {
+          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
+          mv.__hasOccListener = true;
+        }
+      }));
+    }
+
+    // =========================
+    // MODEL SWAP (LOCKED)
     // =========================
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // read pan delta from current model (LOCKED behavior)
       const camForThisSwap = readCamWithDelta(activeMv);
 
       selectedId = modelId;
@@ -1020,12 +1136,13 @@
         currentShownId = modelId;
         cameraReady = true;
         startLoop(activeMv);
+
+        selectedAnnoIndex = -1;
+        refreshAnnoNavLabel();
       };
 
       const applyAfterLoad = () => {
-        // capture base for modelId (now exists)
         captureAutoFrameBase(idleMv, modelId);
-        // apply delta-pan camera to this model
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
       };
 
@@ -1079,25 +1196,14 @@
     // =========================
     buildListOnce();
     initBackgroundSelector();
+
+    refreshAnnoNavLabel();
     initAnnotationsToggle();
 
-    // First show (auto-frame works once naturally)
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
     });
-
-    // Debug
-    window.__dbg = window.__dbg || {};
-    window.__dbg.getState = () => ({
-      currentShownId,
-      baseCenter: baseCenter.get(currentShownId) || null,
-      baseTarget: baseTarget.get(currentShownId) || null,
-      cameraTarget: activeMv.getCameraTarget?.() || null,
-      cameraOrbit: activeMv.getCameraOrbit?.() || null,
-      apAxis: apAxisByModel.get(currentShownId) || null
-    });
-    window.__dbg.getHotspotPos = (slot) => activeMv.queryHotspot?.(slot)?.position || null;
   </script>
 </body>
 </html>
