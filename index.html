@@ -572,6 +572,12 @@
     const occState = new WeakMap();
     const loopState = new WeakMap();
 
+    // ✅ Center cache per viewer (this is “do 1” correctly)
+    const centerCache = new WeakMap(); // mv -> {x,y,z}
+    function getCachedCenter(mv){
+      return centerCache.get(mv) || {x:0,y:0,z:0};
+    }
+
     // ===== Smooth click focus (perpendicular normal via raycast) =====
     const focusAnim = new WeakMap();
 
@@ -624,7 +630,6 @@
 
       const camPos0 = cameraPosFromOrbitTarget(orbit0, target0);
 
-      // Raycast from camera -> point
       const dir = P.clone().sub(camPos0);
       const distToP = dir.length();
       if (distToP < 1e-6) return;
@@ -645,7 +650,6 @@
         if (h.face && h.face.normal) N = h.face.normal.clone().normalize();
       }
 
-      // adaptive gentle zoom
       const diag = computeModelDiagonal(mv);
       const rMin = diag ? (0.03 * diag) : 1;
       const r0 = orbit0.radius;
@@ -659,7 +663,6 @@
 
       let oEnd;
       if (N) {
-        // flip normal toward camera side
         const camSide = camPos0.clone().sub(surfacePoint).normalize();
         if (camSide.dot(N) < 0) N.multiplyScalar(-1);
 
@@ -668,7 +671,6 @@
         oEnd = orbitFromOffset(off.x, off.y, off.z);
         oEnd.radius = r1;
       } else {
-        // fallback: keep same angles
         oEnd = { theta: orbit0.theta, phi: orbit0.phi, radius: r1 };
       }
 
@@ -746,13 +748,15 @@
       }
     }
 
-    // ✅ IMPORTANT FIX: no center offsets anywhere.
-    // Occluders and hotspot positions use the same world/model space.
+    // ✅ uses cached center for BOTH occluders and points (stable even after pan)
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
 
       scene.updateMatrixWorld?.(true);
+
+      const c = getCachedCenter(mv);
+      const centerV = new THREE.Vector3(c.x, c.y, c.z);
 
       const occluders = [];
       scene.traverse(obj => {
@@ -779,6 +783,8 @@
         const m = obj.matrixWorld?.elements;
         if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
 
+        geo.translate(centerV.x, centerV.y, centerV.z);
+
         occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial()));
       });
 
@@ -791,9 +797,10 @@
 
       scene.updateMatrixWorld?.(true);
 
+      const c = getCachedCenter(mv);
       const pointMap = new Map();
-      const anns = ANNOTATIONS[modelId] || [];
 
+      const anns = ANNOTATIONS[modelId] || [];
       for (const a of anns) {
         const obj = scene.getObjectByName(a.anchor);
         if (!obj) continue;
@@ -801,14 +808,18 @@
         const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
         if (!p) continue;
 
-        const posStr = `${p.x}m ${p.y}m ${p.z}m`;
+        const x = p.x + c.x;
+        const y = p.y + c.y;
+        const z = p.z + c.z;
+
+        const posStr = `${x}m ${y}m ${z}m`;
         try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
         catch {
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
           if (el) el.dataset.position = posStr;
         }
 
-        pointMap.set(a.slotName, p.clone());
+        pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
       }
 
       return pointMap;
@@ -915,6 +926,10 @@
       ensureHotspotElements(mv, modelId);
 
       requestAnimationFrame(() => requestAnimationFrame(() => {
+        // ✅ cache center ONCE per load; never recompute on pan
+        const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
+        centerCache.set(mv, c);
+
         const occluders = buildRaycastOccluders(mv);
         const pointMap = updateHotspotPositionsAndPointMap(mv, modelId);
         const slots = Array.from(pointMap.keys());
