@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Occlusion: TOL=5m, SURFACE_EPS=15m.
+        Occlusion: ignore near-camera hits (2m), then apply TOL only.
       </div>
     </div>
 
@@ -430,9 +430,9 @@
     // ==========================================================
     // ========== CALIBRATION QUEUE (LOCKED) =====================
     // ==========================================================
-    const baseCenter = new Map(); // modelId -> Vector3
-    const baseTarget = new Map(); // modelId -> Vector3
-    const apAxisByModel = new Map(); // modelId -> 'x' | 'z'
+    const baseCenter = new Map();
+    const baseTarget = new Map();
+    const apAxisByModel = new Map();
 
     const calibrationQueue = [];
     const calibrationQueued = new Set();
@@ -678,8 +678,8 @@
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
-    const TOL = 5;          // user requested
-    const SURFACE_EPS = 5;  // user requested
+    const TOL = 5;
+    const NEAR_HIT_IGNORE = 2; // ✅ new: ignore hits closer than this to camera
 
     const occState = new WeakMap();
     const loopState = new WeakMap();
@@ -795,11 +795,15 @@
 
       const hits = st.raycaster.intersectObjects(st.occluders, true);
 
+      // ✅ ignore extremely near hits, then apply TOL
       let occluded = false;
       if (hits.length > 0) {
-        const hitDist = hits[0].distance;
-        // ✅ Only change: add SURFACE_EPS on top of TOL
-        occluded = hitDist < (dist - (TOL + SURFACE_EPS));
+        const firstRealHit = hits.find(h => h.distance > NEAR_HIT_IGNORE);
+        if (firstRealHit) {
+          occluded = firstRealHit.distance < (dist - TOL);
+        } else {
+          occluded = false; // only near-camera hits => treat as no blocker
+        }
       }
 
       const el = activeMv.querySelector(`[slot="${slot}"]`);
@@ -853,9 +857,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ==========================================================
-    // =================== FOCUS (LOCKED ellipse version) ========
-    // ==========================================================
+    // ===== Focus: ellipse C* (LOCKED) =====
     const focusAnim = new WeakMap();
 
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
