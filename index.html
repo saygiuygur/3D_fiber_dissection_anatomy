@@ -512,13 +512,13 @@
       }
     }
 
-    // ✅ Camera gate (ONLY CHANGE for this request)
+    // ===== CAMERA CARRY-OVER + INITIAL AUTO-FRAME (DO NOT CHANGE) =====
+    // (This block is the "locked" behavior you approved.)
+
     let cameraReady = false;
 
     function readCamFrom(mv) {
-      // gate: only after first show and only if viewer has a src
       if (!cameraReady || !mv || !mv.src) return null;
-
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
       const f = mv.getFieldOfView?.();
@@ -551,6 +551,8 @@
       idleMv = tmp;
     }
 
+    // ===== END CAMERA LOCKED BLOCK =====
+
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
@@ -560,6 +562,105 @@
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
+    // ===== Smooth focus on annotation (NEW) =====
+    const focusAnim = new WeakMap(); // mv -> { rafId, cancelToken }
+
+    function easeInOutCubic(t){
+      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
+    }
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function lerp(a, b, t){ return a + (b - a) * t; }
+
+    function getCameraPositionFromOrbitTarget(orbit, target){
+      const theta = orbit.theta, phi = orbit.phi, r = orbit.radius;
+      const sinPhi = Math.sin(phi);
+      return new THREE.Vector3(
+        target.x + r * sinPhi * Math.sin(theta),
+        target.y + r * Math.cos(phi),
+        target.z + r * sinPhi * Math.cos(theta)
+      );
+    }
+
+    function computeModelDiagonal(mv){
+      try{
+        const d = mv.getDimensions?.();
+        if (!d || !Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isFinite(d.z)) return null;
+        return Math.sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+      } catch { return null; }
+    }
+
+    function focusOnSlot(mv, slotName){
+      const st = occState.get(mv);
+      if (!st || !st.pointMap) return;
+      const p = st.pointMap.get(slotName);
+      if (!p) return;
+
+      const orbit0 = mv.getCameraOrbit?.();
+      const target0 = mv.getCameraTarget?.();
+      if (!orbit0 || !target0) return;
+
+      // cancel previous animation (if any)
+      const prev = focusAnim.get(mv);
+      if (prev?.rafId) cancelAnimationFrame(prev.rafId);
+
+      const camPos0 = getCameraPositionFromOrbitTarget(orbit0, target0);
+      const distToPoint = camPos0.distanceTo(p);
+
+      const diag = computeModelDiagonal(mv);
+      const rMin = diag ? (0.03 * diag) : 1; // safe fallback in your scale
+      const r0 = orbit0.radius;
+
+      // your rule: rTarget = clamp(0.6*d, rMin, r0)  (never zoom out)
+      const rTarget = clamp(0.6 * distToPoint, rMin, r0);
+
+      // gentle: move only part-way
+      const r1 = lerp(r0, rTarget, 0.35);
+
+      const theta = orbit0.theta;
+      const phi   = orbit0.phi;
+
+      const tStart = { x: target0.x, y: target0.y, z: target0.z };
+      const tEnd   = { x: p.x,       y: p.y,       z: p.z       };
+
+      const durationMs = 520;
+      const startTime = performance.now();
+
+      const token = (prev?.cancelToken ?? 0) + 1;
+      focusAnim.set(mv, { rafId: 0, cancelToken: token });
+
+      const tick = (now) => {
+        const cur = focusAnim.get(mv);
+        if (!cur || cur.cancelToken !== token) return;
+
+        const t = clamp((now - startTime) / durationMs, 0, 1);
+        const e = easeInOutCubic(t);
+
+        const tx = lerp(tStart.x, tEnd.x, e);
+        const ty = lerp(tStart.y, tEnd.y, e);
+        const tz = lerp(tStart.z, tEnd.z, e);
+        const rr = lerp(r0, r1, e);
+
+        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
+        mv.cameraOrbit  = `${theta}rad ${phi}rad ${rr}m`;
+
+        if (t < 1) {
+          cur.rafId = requestAnimationFrame(tick);
+          focusAnim.set(mv, cur);
+        } else {
+          if (typeof mv.jumpCameraToGoal === "function") {
+            try { mv.jumpCameraToGoal(); } catch (_) {}
+          }
+          cur.rafId = 0;
+          focusAnim.set(mv, cur);
+        }
+      };
+
+      const cur = focusAnim.get(mv);
+      cur.rafId = requestAnimationFrame(tick);
+      focusAnim.set(mv, cur);
+    }
+
+    // Hotspots: keep tooltip system, no native title tooltip + CLICK FOCUS
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -574,6 +675,14 @@
         btn.addEventListener('mouseenter', (e) => showTip(btn.dataset.label, e.clientX, e.clientY));
         btn.addEventListener('mousemove',  (e) => moveTip(e.clientX, e.clientY));
         btn.addEventListener('mouseleave', () => hideTip());
+
+        // NEW: click to focus (smooth)
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTip();
+          focusOnSlot(mv, a.slotName);
+        });
 
         mv.appendChild(btn);
       }
@@ -785,13 +894,12 @@
       }));
     }
 
-    // ===== Show model (double-buffer) — with cameraReady gate =====
+    // ===== Show model (double-buffer) — with cameraReady gate (LOCKED) =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // camera snapshot only after first show
       const camForThisSwap = readCamFrom(activeMv);
 
       selectedId = modelId;
@@ -856,7 +964,6 @@
         const blobUrl = await downloadToBlobUrl(modelId);
         if (token !== swapToken) return;
 
-        // if already set (cache weirdness), swap immediately
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           prepareAnnotationsAndOcclusion(idleMv, modelId);
