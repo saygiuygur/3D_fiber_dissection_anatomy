@@ -85,7 +85,7 @@
       border-radius: 50%;
       border: 2px solid #000;
       background: rgba(255,255,255,0.65);
-      cursor: pointer;
+      cursor: default;
       transform: translate(-50%, -50%);
       box-sizing: border-box;
     }
@@ -94,6 +94,7 @@
       pointer-events: none;
     }
 
+    /* Tooltip */
     #hotspotTip{
       position: absolute;
       z-index: 50;
@@ -109,6 +110,7 @@
       white-space: nowrap;
     }
 
+    /* Toggle annotations UI */
     .toggle-row{
       display:flex;
       align-items:center;
@@ -302,7 +304,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // Download/progress
+    // Download/progress (same as your existing setup)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -327,59 +329,6 @@
       for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
     }
 
-    function parsePercent(progressText) {
-      const match = String(progressText || "").match(/^(\d+)%$/);
-      if (!match) return 0;
-      const n = Number(match[1]);
-      return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
-    }
-    function loadingIconSVG(percent) {
-      const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
-          <circle cx="10" cy="10" r="${r}"
-            fill="none" stroke="#1e88e5" stroke-width="2.5" stroke-linecap="round"
-            transform="rotate(-90 10 10)"
-            stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
-        </svg>`;
-    }
-    function doneIconSVG() {
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" fill="#2e7d32"></circle>
-          <path d="M6 10.2 L8.6 12.8 L14 7.4"
-                fill="none" stroke="#ffffff" stroke-width="2.2"
-                stroke-linecap="round" stroke-linejoin="round"></path>
-        </svg>`;
-    }
-    function pausedIconSVG() {
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" fill="#ffffff" stroke="#9e9e9e" stroke-width="2"></circle>
-          <rect x="7" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
-          <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
-        </svg>`;
-    }
-    function errorIconSVG() {
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" fill="#c62828"></circle>
-          <rect x="9.1" y="5.2" width="1.8" height="6.8" rx="0.9" fill="#ffffff"></rect>
-          <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
-        </svg>`;
-    }
-    function refreshMeta(id) {
-      const st = state.get(id);
-      const meta = rowEls.get(id)?.meta;
-      if (!meta) return;
-      if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
-      if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
-      if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
-      if (st.status === "loading") { meta.innerHTML = loadingIconSVG(parsePercent(st.progressText)); return; }
-      meta.innerHTML = "";
-    }
-
     function buildListOnce() {
       list.innerHTML = "";
       for (const m of MODELS) {
@@ -395,19 +344,11 @@
         row.addEventListener('click', () => onUserSelect(m.id));
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
-        refreshMeta(m.id);
       }
       paintActive();
       paintDownloading(null);
     }
 
-    function maybeResumePreload() {
-      if (!preloadEnabled) return;
-      if (!resumeRequested) return;
-      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-      resumeRequested = false;
-      resumePreload();
-    }
     function pausePreloadForAWhile() {
       preloadEnabled = false;
       if (preloadTimer) clearTimeout(preloadTimer);
@@ -418,6 +359,14 @@
       }, 1200);
     }
 
+    function maybeResumePreload() {
+      if (!preloadEnabled) return;
+      if (!resumeRequested) return;
+      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+      resumeRequested = false;
+      resumePreload();
+    }
+
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -426,76 +375,38 @@
 
       const p = (async () => {
         paintDownloading(modelId);
-        st.status = "loading";
-        st.progressText = "";
-        refreshMeta(modelId);
 
         if (currentController) {
           currentController.abort();
-          if (currentDownloadingId && currentDownloadingId !== modelId) {
-            const prev = state.get(currentDownloadingId);
-            if (prev && prev.status === "loading") {
-              prev.status = "paused";
-              refreshMeta(currentDownloadingId);
-            }
-          }
         }
-
         currentController = new AbortController();
         currentDownloadingId = modelId;
 
-        try {
-          const res = await fetch(model.url, { signal: currentController.signal });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const res = await fetch(model.url, { signal: currentController.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-          const total = Number(res.headers.get("Content-Length")) || null;
-          const reader = res.body.getReader();
-          let received = 0;
-          const chunks = [];
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.byteLength;
-            if (total) {
-              st.progressText = `${Math.floor((received / total) * 100)}%`;
-              refreshMeta(modelId);
-            }
-          }
-
-          const blob = new Blob(chunks, { type: "model/gltf-binary" });
-          const blobUrl = URL.createObjectURL(blob);
-
-          st.status = "done";
-          st.progressText = "";
-          st.blobUrl = blobUrl;
-          refreshMeta(modelId);
-
-          paintDownloading(null);
-          maybeResumePreload();
-          return blobUrl;
-
-        } catch (err) {
-          paintDownloading(null);
-          if (err.name === "AbortError") {
-            st.status = "paused";
-            refreshMeta(modelId);
-            maybeResumePreload();
-            throw err;
-          }
-          st.status = "error";
-          st.progressText = "";
-          refreshMeta(modelId);
-          maybeResumePreload();
-          throw err;
-        } finally {
-          inFlight.delete(modelId);
+        const reader = res.body.getReader();
+        const chunks = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
         }
+
+        const blob = new Blob(chunks, { type: "model/gltf-binary" });
+        const blobUrl = URL.createObjectURL(blob);
+
+        st.status = "done";
+        st.blobUrl = blobUrl;
+
+        paintDownloading(null);
+        maybeResumePreload();
+        return blobUrl;
       })();
 
       inFlight.set(modelId, p);
-      return p;
+      try { return await p; }
+      finally { inFlight.delete(modelId); }
     }
 
     async function resumePreload() {
@@ -515,9 +426,7 @@
       }
     }
 
-    // ============================================================
-    // ===== CAMERA CARRY-OVER + INITIAL AUTO-FRAME (LOCKED) =======
-    // ============================================================
+    // ===== CAMERA CARRY-OVER + INITIAL AUTO-FRAME (LOCKED) =====
     // DO NOT CHANGE THIS BLOCK.
 
     let cameraReady = false;
@@ -556,15 +465,14 @@
       idleMv = tmp;
     }
 
-    // =================== END LOCKED CAMERA BLOCK =================
+    // ===== END LOCKED CAMERA BLOCK =====
 
-    // Scene access
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
     }
 
-    // ===== Occlusion batching knobs =====
+    // ===== Annotations + occlusion (no focus) =====
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
@@ -573,150 +481,6 @@
     const occState = new WeakMap();
     const loopState = new WeakMap();
 
-    // Cache center per viewer, set ONCE after each model load
-    const centerCache = new WeakMap(); // mv -> {x,y,z}
-    function getCachedCenter(mv){ return centerCache.get(mv) || {x:0,y:0,z:0}; }
-
-    // ===== Smooth click focus (perpendicular normal via raycast) =====
-    const focusAnim = new WeakMap();
-
-    function easeInOutCubic(t){
-      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
-    }
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-    function lerp(a, b, t){ return a + (b - a) * t; }
-    function lerpAngleRad(a, b, t){
-      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
-      return a + d * t;
-    }
-
-    function cameraPosFromOrbitTarget(orbit, target){
-      const theta = orbit.theta, phi = orbit.phi, r = orbit.radius;
-      const sinPhi = Math.sin(phi);
-      return new THREE.Vector3(
-        target.x + r * sinPhi * Math.sin(theta),
-        target.y + r * Math.cos(phi),
-        target.z + r * sinPhi * Math.cos(theta)
-      );
-    }
-
-    function orbitFromOffset(dx, dy, dz){
-      const r = Math.sqrt(dx*dx + dy*dy + dz*dz);
-      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
-      const phi = Math.acos(clamp(dy / r, -1, 1));
-      const theta = Math.atan2(dx, dz);
-      return { theta, phi, radius: r };
-    }
-
-    function computeModelDiagonal(mv){
-      try{
-        const d = mv.getDimensions?.();
-        if (!d || !Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isFinite(d.z)) return null;
-        return Math.sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-      } catch { return null; }
-    }
-
-    function focusOnSlot(mv, slotName){
-      const st = occState.get(mv);
-      if (!st || !st.pointMap || !st.occluders || !st.raycaster) return;
-
-      const P = st.pointMap.get(slotName);
-      if (!P) return;
-
-      const orbit0 = mv.getCameraOrbit?.();
-      const target0 = mv.getCameraTarget?.();
-      if (!orbit0 || !target0) return;
-
-      const camPos0 = cameraPosFromOrbitTarget(orbit0, target0);
-
-      const dir = P.clone().sub(camPos0);
-      const distToP = dir.length();
-      if (distToP < 1e-6) return;
-      dir.normalize();
-
-      st.raycaster.set(camPos0, dir);
-      st.raycaster.near = 0;
-      st.raycaster.far = distToP + 1e-3;
-
-      const hits = st.raycaster.intersectObjects(st.occluders, true);
-
-      let surfacePoint = P.clone();
-      let N = null;
-
-      if (hits && hits.length) {
-        const h = hits[0];
-        if (h.point) surfacePoint = h.point.clone();
-        if (h.face && h.face.normal) N = h.face.normal.clone().normalize();
-      }
-
-      const diag = computeModelDiagonal(mv);
-      const rMin = diag ? (0.03 * diag) : 1;
-      const r0 = orbit0.radius;
-
-      const dSurf = camPos0.distanceTo(surfacePoint);
-      const rTarget = clamp(0.6 * dSurf, rMin, r0);
-      const r1 = lerp(r0, rTarget, 0.35);
-
-      const tStart = { x: target0.x, y: target0.y, z: target0.z };
-      const tEnd   = { x: surfacePoint.x, y: surfacePoint.y, z: surfacePoint.z };
-
-      let oEnd;
-      if (N) {
-        const camSide = camPos0.clone().sub(surfacePoint).normalize();
-        if (camSide.dot(N) < 0) N.multiplyScalar(-1);
-
-        const camPos1 = surfacePoint.clone().add(N.clone().multiplyScalar(r1));
-        const off = camPos1.clone().sub(surfacePoint);
-        oEnd = orbitFromOffset(off.x, off.y, off.z);
-        oEnd.radius = r1;
-      } else {
-        oEnd = { theta: orbit0.theta, phi: orbit0.phi, radius: r1 };
-      }
-
-      const prev = focusAnim.get(mv);
-      if (prev?.rafId) cancelAnimationFrame(prev.rafId);
-      const token = (prev?.token ?? 0) + 1;
-      focusAnim.set(mv, { rafId: 0, token });
-
-      const durationMs = 560;
-      const startTime = performance.now();
-
-      const tick = (now) => {
-        const cur = focusAnim.get(mv);
-        if (!cur || cur.token !== token) return;
-
-        const t = clamp((now - startTime) / durationMs, 0, 1);
-        const e = easeInOutCubic(t);
-
-        const tx = lerp(tStart.x, tEnd.x, e);
-        const ty = lerp(tStart.y, tEnd.y, e);
-        const tz = lerp(tStart.z, tEnd.z, e);
-
-        const th = lerpAngleRad(orbit0.theta, oEnd.theta, e);
-        const ph = lerpAngleRad(orbit0.phi,   oEnd.phi,   e);
-        const rr = lerp(r0, oEnd.radius, e);
-
-        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
-        mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
-
-        if (t < 1) {
-          cur.rafId = requestAnimationFrame(tick);
-          focusAnim.set(mv, cur);
-        } else {
-          if (typeof mv.jumpCameraToGoal === "function") {
-            try { mv.jumpCameraToGoal(); } catch (_) {}
-          }
-          cur.rafId = 0;
-          focusAnim.set(mv, cur);
-        }
-      };
-
-      const cur = focusAnim.get(mv);
-      cur.rafId = requestAnimationFrame(tick);
-      focusAnim.set(mv, cur);
-    }
-
-    // Hotspots (IMPORTANT: data-position / data-normal are the canonical source now)
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -732,34 +496,23 @@
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
 
-        // ✅ make positions attribute-based so panning cannot “recompute” them
-        btn.dataset.position = "0m 0m 0m";
-        btn.dataset.normal = "0m 1m 0m";
-
+        // tooltip only
         btn.addEventListener('mouseenter', (e) => showTip(btn.dataset.label, e.clientX, e.clientY));
         btn.addEventListener('mousemove',  (e) => moveTip(e.clientX, e.clientY));
         btn.addEventListener('mouseleave', () => hideTip());
-
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          hideTip();
-          focusOnSlot(mv, a.slotName);
-        });
 
         mv.appendChild(btn);
       }
     }
 
-    // Occluders: keep your original center-space (because it matched your model-viewer hotspot space)
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
 
       scene.updateMatrixWorld?.(true);
 
-      const c = getCachedCenter(mv);
-      const centerV = new THREE.Vector3(c.x, c.y, c.z);
+      const center = mv.getBoundingBoxCenter?.() || { x:0, y:0, z:0 };
+      const centerV = new THREE.Vector3(center.x, center.y, center.z);
 
       const occluders = [];
       scene.traverse(obj => {
@@ -784,7 +537,9 @@
         }
 
         const m = obj.matrixWorld?.elements;
-        if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
+        if (m && m.length === 16) {
+          geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
+        }
 
         geo.translate(centerV.x, centerV.y, centerV.z);
 
@@ -794,14 +549,13 @@
       return occluders;
     }
 
-    // ✅ IMPORTANT: no mv.updateHotspot(); we only write data-position to the button.
     function updateHotspotPositionsAndPointMap(mv, modelId) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return new Map();
 
       scene.updateMatrixWorld?.(true);
 
-      const c = getCachedCenter(mv);
+      const center = mv.getBoundingBoxCenter?.() || { x:0, y:0, z:0 };
       const pointMap = new Map();
 
       const anns = ANNOTATIONS[modelId] || [];
@@ -812,16 +566,17 @@
         const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
         if (!p) continue;
 
-        const x = p.x + c.x;
-        const y = p.y + c.y;
-        const z = p.z + c.z;
+        const x = p.x + center.x;
+        const y = p.y + center.y;
+        const z = p.z + center.z;
 
         const posStr = `${x}m ${y}m ${z}m`;
 
-        const el = mv.querySelector(`[slot="${a.slotName}"]`);
-        if (el) {
-          el.dataset.position = posStr;
-          el.dataset.normal = "0m 1m 0m";
+        // canonical way
+        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
+        catch {
+          const el = mv.querySelector(`[slot="${a.slotName}"]`);
+          if (el) el.dataset.position = posStr;
         }
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
@@ -830,7 +585,6 @@
       return pointMap;
     }
 
-    // Occlusion logic (unchanged)
     function getCameraPositionHotspotSpace(mv) {
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
@@ -932,10 +686,6 @@
       ensureHotspotElements(mv, modelId);
 
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        // cache center ONCE per load
-        const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
-        centerCache.set(mv, c);
-
         const occluders = buildRaycastOccluders(mv);
         const pointMap = updateHotspotPositionsAndPointMap(mv, modelId);
         const slots = Array.from(pointMap.keys());
@@ -955,7 +705,7 @@
       }));
     }
 
-    // ===== Model swapping / preload =====
+    // ===== Model switching (keeps your camera behavior) =====
     let swapToken = 0;
 
     async function showModel(modelId) {
