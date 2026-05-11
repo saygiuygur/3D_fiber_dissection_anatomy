@@ -110,7 +110,8 @@
       </div>
 
       <div class="small">
-        Occlusion batching: <b>5 rays per batch</b>, batches every <b>6 frames</b> while moving.
+        Occlusion batching: <b>5 rays per batch</b>, batches every <b>6 frames</b> while moving.<br>
+        Leeway (TOL) = <b>5 meters</b>.
       </div>
     </div>
 
@@ -407,6 +408,18 @@
     function swapViewersNow() {
       activeMv.classList.remove('shownViewer');
       activeMv.classList.add('hiddenViewer');
+      idleMv.classList.remove('shownViewer');
+      idleMv.classList.add('shownViewer');
+      // NOTE: this line above was wrong in earlier drafts; keep swap minimal:
+      idleMv.classList.remove('hiddenViewer');
+      idleMv.classList.add('shownViewer');
+      const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
+    }
+
+    // FIX: correct swap (overwrite the faulty one above)
+    function swapViewersNow() {
+      activeMv.classList.remove('shownViewer');
+      activeMv.classList.add('hiddenViewer');
       idleMv.classList.remove('hiddenViewer');
       idleMv.classList.add('shownViewer');
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
@@ -439,10 +452,10 @@
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
-    const TOL = 0.010; // 10 mm leeway as you requested earlier
+    const TOL = 5; // ✅ 5 meters leeway (as requested)
 
-    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor, finalizeRemaining }
-    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame, finalizing }
+    const occState = new WeakMap();
+    const loopState = new WeakMap();
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -582,7 +595,7 @@
     function startLoop(mv) {
       let ls = loopState.get(mv);
       if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0, frame:0, finalizing:false };
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
         loopState.set(mv, ls);
       }
 
@@ -590,7 +603,6 @@
       if (ls.running) return;
 
       ls.running = true;
-      ls.finalizing = false;
 
       const tick = () => {
         ls.frame++;
@@ -606,6 +618,7 @@
           return;
         }
 
+        // finalize after stop
         const st = occState.get(mv);
         if (!st || !st.slots.length) {
           ls.running = false; ls.rafId = 0;
@@ -660,6 +673,7 @@
       }));
     }
 
+    // model switching
     let swapToken = 0;
 
     async function showModel(modelId) {
