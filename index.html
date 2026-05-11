@@ -90,9 +90,8 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
       <div class="small">
-        Double-buffer viewer (mvA/mvB).<br>
         Icons + download click behavior unchanged.<br>
-        Annotations are anchored to model + cameraTarget (pan-safe).
+        Camera: initial auto-frame once, then carry-over.
       </div>
     </div>
 
@@ -112,13 +111,11 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
-    // === MODELS (2 annotated GLBs) ===
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" },
     ];
 
-    // === Anchor names (from your console) ===
     const MODEL01_NAMES = [
       "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
       "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -148,7 +145,6 @@
         title: name
       }));
     }
-
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
@@ -160,35 +156,50 @@
     const viewerWrap = document.getElementById('viewerWrap');
     const hotspotTip = document.getElementById('hotspotTip');
 
-    // Active/inactive viewer pointers
     let activeMv = mvA;
     let idleMv = mvB;
-
-    // Selection (black border)
     let selectedId = MODELS[0].id;
+
+    // ===== Tooltip helpers =====
+    function attachTip(el) {
+      el.addEventListener('mouseenter', (e) => {
+        const text = el.dataset.label || "";
+        if (!text) return;
+        hotspotTip.textContent = text;
+        hotspotTip.style.display = 'block';
+        const rect = viewerWrap.getBoundingClientRect();
+        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
+        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
+      });
+      el.addEventListener('mousemove', (e) => {
+        if (hotspotTip.style.display !== 'block') return;
+        const rect = viewerWrap.getBoundingClientRect();
+        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
+        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
+      });
+      el.addEventListener('mouseleave', () => {
+        hotspotTip.style.display = 'none';
+      });
+    }
 
     // ==========================================================
     // ========== ICONS / DOWNLOAD BEHAVIOR (UNCHANGED) ==========
     // ==========================================================
 
-    // Model state (download/progress/blob)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
-    // Download control
     let currentController = null;
     let currentDownloadingId = null;
-    const inFlight = new Map(); // modelId -> Promise<string>
+    const inFlight = new Map();
 
-    // Preload scheduler
     let preloadEnabled = true;
     let preloadTimer = null;
     let resumeRequested = false;
     let preloadRunning = false;
     const preloadQueue = MODELS.map(m => m.id);
 
-    // UI nodes
-    const rowEls = new Map(); // id -> { row, meta }
+    const rowEls = new Map();
     let downloadingVisualId = null;
 
     function paintDownloading(idOrNull) {
@@ -202,9 +213,7 @@
     }
 
     function paintActive() {
-      for (const m of MODELS) {
-        rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
-      }
+      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
     }
 
     function parsePercent(progressText) {
@@ -324,7 +333,6 @@
         st.progressText = "";
         refreshMeta(modelId);
 
-        // Abort previous active download (chosen behavior)
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
@@ -376,20 +384,17 @@
 
         } catch (err) {
           paintDownloading(null);
-
           if (err.name === "AbortError") {
             st.status = "paused";
             refreshMeta(modelId);
             maybeResumePreload();
             throw err;
           }
-
           st.status = "error";
           st.progressText = "";
           refreshMeta(modelId);
           maybeResumePreload();
           throw err;
-
         } finally {
           inFlight.delete(modelId);
         }
@@ -412,15 +417,11 @@
 
         for (const id of preloadQueue) {
           if (!preloadEnabled) return;
-
           const st = state.get(id);
           if (st.status === "done") continue;
 
-          try {
-            await downloadToBlobUrl(id);
-          } catch (e) {
-            if (e.name === "AbortError") return;
-          }
+          try { await downloadToBlobUrl(id); }
+          catch (e) { if (e.name === "AbortError") return; }
         }
       } finally {
         preloadRunning = false;
@@ -428,9 +429,14 @@
     }
 
     // ==========================================================
-    // ========== CAMERA CARRY OVER (UNCHANGED LOGIC) ============
+    // ========== CAMERA CARRY OVER + INITIAL AUTO-FRAME =========
     // ==========================================================
+    // ✅ This is the approved behavior: auto-frame only on first show.
+
+    let cameraReady = false;
+
     function readCamFrom(mv) {
+      if (!cameraReady || !mv || !mv.src) return null;
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
       const f = mv.getFieldOfView?.();
@@ -467,28 +473,6 @@
     // =================== ANNOTATIONS ===========================
     // ==========================================================
 
-    // Tooltip attach
-    function attachTip(el) {
-      el.addEventListener('mouseenter', (e) => {
-        const text = el.dataset.label || "";
-        if (!text) return;
-        hotspotTip.textContent = text;
-        hotspotTip.style.display = 'block';
-        const rect = viewerWrap.getBoundingClientRect();
-        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-      });
-      el.addEventListener('mousemove', (e) => {
-        if (hotspotTip.style.display !== 'block') return;
-        const rect = viewerWrap.getBoundingClientRect();
-        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-      });
-      el.addEventListener('mouseleave', () => {
-        hotspotTip.style.display = 'none';
-      });
-    }
-
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -512,21 +496,19 @@
       return sceneSym ? mv[sceneSym] : null;
     }
 
-    // Occlusion batching knobs (kept light)
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
     const TOL = 5;
 
-    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor, finalizeRemaining }
-    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame }
+    const occState = new WeakMap();
+    const loopState = new WeakMap();
 
     function buildRaycastOccluders(mv, centerV, targetV) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
 
       scene.updateMatrixWorld?.(true);
-
       const shift = centerV.clone().add(targetV);
 
       const occluders = [];
@@ -552,13 +534,9 @@
         }
 
         const m = obj.matrixWorld?.elements;
-        if (m && m.length === 16) {
-          geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
-        }
+        if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
 
-        // Same shift as hotspot space
         geo.translate(shift.x, shift.y, shift.z);
-
         occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })));
       });
 
@@ -570,7 +548,6 @@
       if (!scene || typeof scene.getObjectByName !== "function") return new Map();
 
       scene.updateMatrixWorld?.(true);
-
       const shift = centerV.clone().add(targetV);
       const pointMap = new Map();
 
@@ -588,7 +565,6 @@
 
         const posStr = `${x}m ${y}m ${z}m`;
 
-        // This sets the hotspot position (prevents 0,0,0)
         try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
         catch {
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
@@ -650,7 +626,6 @@
     function runBatch(mv, count) {
       const st = occState.get(mv);
       if (!st || !st.slots.length) return;
-
       for (let i = 0; i < count; i++) {
         const slot = st.slots[st.cursor];
         occludeOne(mv, slot);
@@ -667,7 +642,6 @@
 
       ls.lastMoveTs = performance.now();
       if (ls.running) return;
-
       ls.running = true;
 
       const tick = () => {
@@ -685,7 +659,6 @@
         if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
 
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
-
         const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
         runBatch(mv, toDo);
         st.finalizeRemaining -= toDo;
@@ -712,14 +685,7 @@
         const slots = Array.from(pointMap.keys());
 
         if (occluders && occluders.length && slots.length) {
-          occState.set(mv, {
-            occluders,
-            pointMap,
-            raycaster: new THREE.Raycaster(),
-            slots,
-            cursor: 0,
-            finalizeRemaining: null
-          });
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null });
         } else {
           occState.set(mv, null);
         }
@@ -734,39 +700,41 @@
     }
 
     // ==========================================================
-    // ===== Show model (double-buffer) + annotations hook =======
+    // =================== SHOW MODEL ============================
     // ==========================================================
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // 1) Freeze camera EXACTLY at click time from the active viewer
+      // Camera snapshot ONLY if cameraReady
       const camForThisSwap = readCamFrom(activeMv);
 
       selectedId = modelId;
       paintActive();
 
-      // 2) Determine the exact target src we want to show
       const st = state.get(modelId);
       let targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      // If we already have the blob and:
-      // - the idle viewer already shows it => swap immediately (no waiting for load)
-      // - the active viewer already shows it => do nothing
+      const finalizeSwap = () => {
+        // annotations prepared on idle
+        prepareAnnotationsAndOcclusion(idleMv, modelId);
+        swapViewersNow();
+
+        // ✅ after FIRST successful swap, enable carry-over
+        cameraReady = true;
+
+        startLoop(activeMv);
+      };
+
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
-
         if (activeSrc === targetSrc) return;
 
         if (idleSrc === targetSrc) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-
-          // ✅ ensure annotations are correct BEFORE swap
-          prepareAnnotationsAndOcclusion(idleMv, modelId);
-
-          swapViewersNow();
+          finalizeSwap();
           return;
         }
 
@@ -774,39 +742,26 @@
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-
-              // ✅ ensure annotations are correct BEFORE swap
-              prepareAnnotationsAndOcclusion(idleMv, modelId);
-
-              swapViewersNow();
-            });
-          });
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+            finalizeSwap();
+          }));
         };
-        idleMv.addEventListener('load', onIdleLoad, { once: true });
+        idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
         return;
       }
 
-      // Not downloaded yet: load into idle viewer, then swap on load
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-
-            // ✅ ensure annotations are correct BEFORE swap
-            prepareAnnotationsAndOcclusion(idleMv, modelId);
-
-            swapViewersNow();
-          });
-        });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          finalizeSwap();
+        }));
       };
-      idleMv.addEventListener('load', onIdleLoad, { once: true });
+      idleMv.addEventListener('load', onIdleLoad, { once:true });
 
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
@@ -814,8 +769,7 @@
 
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          prepareAnnotationsAndOcclusion(idleMv, modelId);
-          swapViewersNow();
+          finalizeSwap();
           return;
         }
 
@@ -829,14 +783,15 @@
       showModel(modelId);
     }
 
-    (function init() {
+    // ===== init =====
+    (function init(){
       buildListOnce();
-      // initial load + start preloading
       showModel(selectedId).then(() => {
         resumeRequested = true;
         maybeResumePreload();
       });
     })();
+
   </script>
 </body>
 </html>
