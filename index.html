@@ -72,7 +72,7 @@
       height:100%;
       background:var(--viewer-bg);
 
-      /* ✅ ONLY CHANGE: disable model-viewer hotspot fading */
+      /* keep your previous change */
       --min-hotspot-opacity: 1;
     }
 
@@ -86,13 +86,29 @@
       border-radius: 50%;
       border: 2px solid #000;
       background: rgba(255,255,255,0.65);
-      cursor: default;
+      cursor: pointer;              /* ✅ CHANGE: hand cursor */
       transform: translate(-50%, -50%);
       box-sizing: border-box;
     }
     .hotspot.occluded{
       opacity: 0;
       pointer-events: none;
+    }
+
+    /* ✅ CHANGE: custom tooltip */
+    #hotspotTip{
+      position: absolute;
+      z-index: 50;
+      display: none;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.2;
+      pointer-events: none;
+      max-width: 280px;
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -117,7 +133,9 @@
       </div>
     </div>
 
-    <div class="viewer-wrap">
+    <div class="viewer-wrap" id="viewerWrap">
+      <div id="hotspotTip"></div> <!-- ✅ CHANGE: tooltip element -->
+
       <model-viewer id="mvA" class="viewer shownViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
@@ -172,9 +190,33 @@
     const mvB = document.getElementById('mvB');
     const bgOptions = document.getElementById('bgOptions');
 
+    const viewerWrap = document.getElementById('viewerWrap');   // ✅ tooltip
+    const hotspotTip = document.getElementById('hotspotTip');    // ✅ tooltip
+
     let activeMv = mvA;
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
+
+    // ✅ tooltip helpers (ONLY for hover name)
+    function showTip(text, clientX, clientY){
+      if (!text) return;
+      hotspotTip.textContent = text;
+      hotspotTip.style.display = 'block';
+      const rect = viewerWrap.getBoundingClientRect();
+      const x = clientX - rect.left + 12;
+      const y = clientY - rect.top + 12;
+      hotspotTip.style.left = x + 'px';
+      hotspotTip.style.top = y + 'px';
+    }
+    function moveTip(clientX, clientY){
+      if (hotspotTip.style.display !== 'block') return;
+      const rect = viewerWrap.getBoundingClientRect();
+      hotspotTip.style.left = (clientX - rect.left + 12) + 'px';
+      hotspotTip.style.top  = (clientY - rect.top + 12) + 'px';
+    }
+    function hideTip(){
+      hotspotTip.style.display = 'none';
+    }
 
     // Background
     function applyBackgroundColor(color) {
@@ -423,6 +465,8 @@
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
+
+    // ✅ ONLY CHANGE AREA: add tooltip handlers here
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -430,10 +474,15 @@
         const btn = document.createElement('button');
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
-        btn.title = a.title;
+        btn.title = a.title; // keep title too
         btn.textContent = "";
         btn.dataset.position = '0m 0m 0m';
         btn.dataset.normal = '0m 1m 0m';
+
+        btn.addEventListener('mouseenter', (e) => showTip(a.title, e.clientX, e.clientY));
+        btn.addEventListener('mousemove',  (e) => moveTip(e.clientX, e.clientY));
+        btn.addEventListener('mouseleave', () => hideTip());
+
         mv.appendChild(btn);
       }
     }
@@ -442,7 +491,7 @@
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
-    const TOL = 5; // 5m leeway
+    const TOL = 5; // keep as your current
 
     const occState = new WeakMap();
     const loopState = new WeakMap();
@@ -484,7 +533,6 @@
         }
 
         geo.translate(centerV.x, centerV.y, centerV.z);
-
         occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial()));
       });
 
