@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Focus: ellipse center-region (AP±35m, SI±10m) in X/Z + Y plane (SI = Y).
+        Occlusion: TOL=5m, SURFACE_EPS=5m.
       </div>
     </div>
 
@@ -432,8 +432,6 @@
     // ==========================================================
     const baseCenter = new Map(); // modelId -> Vector3
     const baseTarget = new Map(); // modelId -> Vector3
-
-    // cache AP axis choice per model (X or Z)
     const apAxisByModel = new Map(); // modelId -> 'x' | 'z'
 
     const calibrationQueue = [];
@@ -456,13 +454,9 @@
     }
 
     function chooseApAxisForViewer(mv) {
-      // SI is Y (fixed). AP should be longest bounding axis in X/Z only.
       let dims = null;
       try { dims = mv.getDimensions?.() || null; } catch(_) {}
-      if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) {
-        // fallback: default to Z
-        return 'z';
-      }
+      if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) return 'z';
       return (dims.x >= dims.z) ? 'x' : 'z';
     }
 
@@ -475,10 +469,7 @@
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
 
-      // also capture AP axis choice once we have a loaded model
-      if (!apAxisByModel.has(modelId)) {
-        apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
-      }
+      if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
     async function calibrateModelInHiddenViewer(modelId) {
@@ -525,7 +516,7 @@
     }
 
     // ==========================================================
-    // ========== DOWNLOAD / BLOB (LOCKED) + enqueue calibration
+    // ========== DOWNLOAD / BLOB (LOCKED) =======================
     // ==========================================================
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
@@ -683,10 +674,12 @@
       return new THREE.Vector3(cur.x - base.x, cur.y - base.y, cur.z - base.z);
     }
 
+    // ===== Occlusion knobs =====
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
-    const TOL = 20;
+    const TOL = 5;          // user requested
+    const SURFACE_EPS = 5;  // user requested
 
     const occState = new WeakMap();
     const loopState = new WeakMap();
@@ -805,7 +798,8 @@
       let occluded = false;
       if (hits.length > 0) {
         const hitDist = hits[0].distance;
-        occluded = hitDist < (dist - TOL);
+        // ✅ Only change: add SURFACE_EPS on top of TOL
+        occluded = hitDist < (dist - (TOL + SURFACE_EPS));
       }
 
       const el = activeMv.querySelector(`[slot="${slot}"]`);
@@ -860,7 +854,7 @@
     }
 
     // ==========================================================
-    // =================== FOCUS (ELLIPSE C*) ====================
+    // =================== FOCUS (LOCKED ellipse version) ========
     // ==========================================================
     const focusAnim = new WeakMap();
 
@@ -924,40 +918,35 @@
       focusAnim.set(mv, cur);
     }
 
-    // ellipse half-axes (meters)
-    const ELL_A = 35; // AP ±35m
-    const ELL_B = 10; // SI ±10m (Y)
+    const ELL_A = 35;
+    const ELL_B = 10;
 
     function focusHotspot(slotName){
       const st = occState.get(activeMv);
       if (!st || !st.pointMap) return;
 
-      const P = st.pointMap.get(slotName); // hotspot point
+      const P = st.pointMap.get(slotName);
       if (!P) return;
 
       const C0 = baseCenter.get(currentShownId);
       if (!C0) return;
 
-      // AP axis: X or Z (cached)
       const apKey = apAxisByModel.get(currentShownId) || 'z';
       const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
-      const v = new THREE.Vector3(0,1,0); // SI axis fixed to +Y
+      const v = new THREE.Vector3(0,1,0);
 
-      // Project P to ellipse coordinates around center
       const rel = P.clone().sub(C0);
       let xp = rel.dot(u);
       let yp = rel.dot(v);
 
       const s = (xp*xp)/(ELL_A*ELL_A) + (yp*yp)/(ELL_B*ELL_B);
       if (s > 1e-12 && s > 1) {
-        const k = 1 / Math.sqrt(s); // radial clamp to ellipse boundary
+        const k = 1 / Math.sqrt(s);
         xp *= k;
         yp *= k;
       }
-      // Closest point inside ellipse (in AP–SI plane)
-      const Cstar = C0.clone().add(u.clone().multiplyScalar(xp)).add(v.clone().multiplyScalar(yp));
 
-      // Direction from C* to P (prevents extreme steep for far AP points)
+      const Cstar = C0.clone().add(u.clone().multiplyScalar(xp)).add(v.clone().multiplyScalar(yp));
       const d = P.clone().sub(Cstar);
       if (d.length() < 1e-6) return;
       d.normalize();
@@ -966,7 +955,6 @@
       const target0 = activeMv.getCameraTarget?.();
       if (!orbit0 || !target0) return;
 
-      // zoom rule (unchanged): zoom-in only based on current camera distance to P
       const camPos0 = getCameraPositionHotspotSpace(activeMv);
       if (!camPos0) return;
 
@@ -1014,10 +1002,7 @@
         if (!(baseCenter.has(modelId) && baseTarget.has(modelId))) {
           captureAutoFrameBase(mv, modelId);
         }
-        // also ensure AP axis cached for this model
-        if (!apAxisByModel.has(modelId)) {
-          apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
-        }
+        if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
 
         const delta = getPanDelta();
         const shift = baseCenter.get(modelId).clone().add(delta);
@@ -1130,7 +1115,7 @@
       maybeResumePreload();
     });
 
-    // DEBUG EXPOSE (unchanged)
+    // Debug expose (unchanged)
     window.__dbg = window.__dbg || {};
     window.__dbg.getState = () => ({
       currentShownId,
@@ -1138,9 +1123,7 @@
       baseTarget: baseTarget.get(currentShownId) || null,
       cameraTarget: activeMv.getCameraTarget?.() || null,
       cameraOrbit: activeMv.getCameraOrbit?.() || null,
-      apAxis: apAxisByModel.get(currentShownId) || null,
-      baseCenterSize: baseCenter.size,
-      baseTargetSize: baseTarget.size
+      apAxis: apAxisByModel.get(currentShownId) || null
     });
     window.__dbg.getHotspotPos = (slot) => activeMv.queryHotspot?.(slot)?.position || null;
   </script>
