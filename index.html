@@ -9,6 +9,7 @@
 
   <style>
     :root{ --viewer-bg: #ffffff; }
+
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
 
@@ -71,7 +72,6 @@
       width:100%;
       height:100%;
       background:var(--viewer-bg);
-
       --min-hotspot-opacity: 1;
     }
 
@@ -94,6 +94,7 @@
       pointer-events: none;
     }
 
+    /* Tooltip */
     #hotspotTip{
       position: absolute;
       z-index: 50;
@@ -108,6 +109,69 @@
       max-width: 280px;
       white-space: nowrap;
     }
+
+    /* ===== Toggle annotations UI (NEW) ===== */
+    .toggle-row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin: 4px 0 14px;
+      padding: 8px 0;
+    }
+    .toggle-title{
+      font-size:14px;
+      font-weight:600;
+      margin:0;
+    }
+
+    .switch{
+      position: relative;
+      display:inline-block;
+      width: 52px;
+      height: 30px;
+      flex: 0 0 auto;
+    }
+    .switch input{
+      opacity:0;
+      width:0;
+      height:0;
+    }
+    .slider{
+      position:absolute;
+      cursor:pointer;
+      inset:0;
+      background:#d9d9d9;
+      transition: .2s;
+      border-radius:999px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+    }
+    .slider:before{
+      content:"";
+      position:absolute;
+      height: 24px;
+      width: 24px;
+      left: 3px;
+      top: 3px;
+      background:#fff;
+      transition: .2s;
+      border-radius:50%;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    .switch input:checked + .slider{
+      background:#35c759;
+    }
+    .switch input:checked + .slider:before{
+      transform: translateX(22px);
+    }
+
+    /* When annotations are OFF: hide hotspots + tooltip */
+    .annOff .hotspot{
+      display:none !important;
+    }
+    .annOff #hotspotTip{
+      display:none !important;
+    }
   </style>
 </head>
 
@@ -116,6 +180,15 @@
     <div class="sidebar">
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
+
+      <!-- NEW: Toggle annotations -->
+      <div class="toggle-row">
+        <div class="toggle-title">Toggle annotations</div>
+        <label class="switch" title="Toggle annotations">
+          <input id="annToggle" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
 
       <div class="bg-section">
         <div class="bg-title">Background Color</div>
@@ -191,6 +264,9 @@
     const viewerWrap = document.getElementById('viewerWrap');
     const hotspotTip = document.getElementById('hotspotTip');
 
+    // NEW: toggle annotations
+    const annToggle = document.getElementById('annToggle');
+
     let activeMv = mvA;
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
@@ -211,6 +287,21 @@
     }
     function hideTip(){
       hotspotTip.style.display = 'none';
+    }
+
+    // NEW: apply toggle state
+    function setAnnotationsEnabled(enabled){
+      document.documentElement.classList.toggle('annOff', !enabled);
+      if (!enabled) hideTip();
+      try { localStorage.setItem('annotationsEnabled', enabled ? '1' : '0'); } catch (_) {}
+    }
+    function initAnnotationsToggle(){
+      let saved = null;
+      try { saved = localStorage.getItem('annotationsEnabled'); } catch (_) {}
+      const enabled = (saved == null) ? true : (saved === '1');
+      annToggle.checked = enabled;
+      setAnnotationsEnabled(enabled);
+      annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
     // Background
@@ -461,7 +552,6 @@
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
-    // ✅ ONLY CHANGE: remove native tooltip by NOT setting title
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -470,8 +560,8 @@
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
 
-        // IMPORTANT: no btn.title here (prevents native tooltip glitch)
-        btn.dataset.label = a.title;            // store label here
+        // No native tooltip (prevents browser rectangle)
+        btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
 
         btn.textContent = "";
@@ -486,7 +576,7 @@
       }
     }
 
-    // ===== Occlusion batching knobs =====
+    // ===== Occlusion batching knobs (unchanged) =====
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
@@ -761,8 +851,10 @@
       showModel(modelId);
     }
 
+    // Init
     buildListOnce();
     initBackgroundSelector();
+    initAnnotationsToggle(); // NEW
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
