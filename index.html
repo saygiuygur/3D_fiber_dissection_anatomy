@@ -113,7 +113,7 @@
       </div>
 
       <div class="small">
-        Raycast occlusion updates in real-time while orbiting.
+        Real-time occlusion, but raycasts run every 3 frames (lighter).
       </div>
     </div>
 
@@ -177,10 +177,7 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    // CAMERA: do not touch (your working carry behavior)
-    let hasInitialFraming = false;
-
-    // background
+    // Background
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -189,16 +186,19 @@
       });
     }
     function initBackgroundSelector() {
-      bgOptions.querySelectorAll('.swatch').forEach(btn => btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color)));
+      bgOptions.querySelectorAll('.swatch').forEach(btn =>
+        btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color))
+      );
       let saved = null;
       try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
       const valid = ["#ffffff","#808080","#000000"];
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // download/progress (restored)
+    // Download/progress (unchanged)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
+
     let currentController = null;
     let currentDownloadingId = null;
     const inFlight = new Map();
@@ -414,9 +414,7 @@
       }
     }
 
-    // CAMERA carry functions exist in your file; not used here to avoid touching camera.
-    // We keep the rest of your behavior unchanged.
-
+    // Swap viewers
     function swapViewersNow() {
       activeMv.classList.remove('shownViewer');
       activeMv.classList.add('hiddenViewer');
@@ -425,11 +423,13 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
+    // model-viewer internal scene access (anchors)
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
     }
 
+    // Hotspots
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -448,12 +448,13 @@
       }
     }
 
-    // --------- REALTIME OCCLUSION LOOP ---------
+    // Occlusion state
     const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster }
-    const occLoopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId }
+    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame }
 
     const EPS = 1e-4;
     const TOL = 0.002;
+    const OCCLUSION_EVERY_N_FRAMES = 3; // ✅ performance knob (2 or 4 are also fine)
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -579,11 +580,11 @@
       }
     }
 
-    function startRealtimeOcclusionLoop(mv) {
-      let ls = occLoopState.get(mv);
+    function startRealtimeLoop(mv) {
+      let ls = loopState.get(mv);
       if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0 };
-        occLoopState.set(mv, ls);
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
+        loopState.set(mv, ls);
       }
 
       ls.lastMoveTs = performance.now();
@@ -592,13 +593,19 @@
       ls.running = true;
 
       const tick = () => {
-        runOcclusion(mv);
+        ls.frame++;
+
+        // ✅ Only do heavy occlusion every N frames while moving
+        if (ls.frame % OCCLUSION_EVERY_N_FRAMES === 0) {
+          runOcclusion(mv);
+        }
 
         const now = performance.now();
-        // keep running while user is moving + a short tail after they stop
         if (now - ls.lastMoveTs < 200) {
           ls.rafId = requestAnimationFrame(tick);
         } else {
+          // ✅ final accurate update when you stop
+          runOcclusion(mv);
           ls.running = false;
           ls.rafId = 0;
         }
@@ -623,13 +630,13 @@
         runOcclusion(mv);
 
         if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startRealtimeOcclusionLoop(mv), { passive:true });
+          mv.addEventListener("camera-change", () => startRealtimeLoop(mv), { passive:true });
           mv.__hasOccListener = true;
         }
       }));
     }
 
-    // ---------------- Show model (double buffer; camera untouched) ----------------
+    // Model switching
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -644,7 +651,7 @@
       const finalizeSwap = () => {
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
-        startRealtimeOcclusionLoop(activeMv);
+        startRealtimeLoop(activeMv);
       };
 
       if (targetSrc) {
@@ -681,7 +688,7 @@
       showModel(modelId);
     }
 
-    // ---------------- Init ----------------
+    // Init
     buildListOnce();
     initBackgroundSelector();
     showModel(selectedId).then(() => {
