@@ -38,6 +38,7 @@
     .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
     .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
     .status-icon{ width:20px; height:20px; display:block; }
+
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
     .bg-section{ margin-top:18px; }
@@ -112,8 +113,8 @@
       </div>
 
       <div class="small">
-        True occlusion: dot is hidden if the mesh blocks camera → point (raycast).<br>
-        Uses a cloned raycast-only mesh (stable).
+        True occlusion updates while orbiting.<br>
+        Camera carry (angle+zoom+target) after the first auto-frame.
       </div>
     </div>
 
@@ -129,11 +130,13 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
+    // ---------------- Models ----------------
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" }
     ];
 
+    // ---------------- Anchor names ----------------
     const MODEL01_NAMES = [
       "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
       "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -168,6 +171,7 @@
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
     };
 
+    // ---------------- DOM ----------------
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
@@ -177,7 +181,11 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    // --- Background selector ---
+    // ✅ Camera carry after first auto-frame
+    let hasInitialFraming = false;
+    let latestCamera = null;
+
+    // ---------------- Background selector ----------------
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -193,7 +201,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // --- Download + progress icons ---
+    // ---------------- Download/progress icons ----------------
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -412,7 +420,27 @@
       }
     }
 
-    // ---------- Double buffer swap ----------
+    // ---------------- Camera carry ----------------
+    function readCamera(mv) {
+      const orbit = mv.getCameraOrbit?.();
+      const target = mv.getCameraTarget?.();
+      const fov = mv.getFieldOfView?.();
+      if (!orbit || !target || typeof fov !== "number") return null;
+      return {
+        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov
+      };
+    }
+    function applyCamera(mv, cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") { try { mv.jumpCameraToGoal(); } catch (_) {} }
+    }
+
+    // ---------------- Double buffer swap ----------------
     function swapViewersNow() {
       activeMv.classList.remove('shownViewer');
       activeMv.classList.add('hiddenViewer');
@@ -421,17 +449,16 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ---------- model-viewer internal scene access ----------
+    // ---------------- Internal scene access (for anchors only) ----------------
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
     }
 
-    // ---------- Hotspots (dot only) ----------
+    // ---------------- Hotspots ----------------
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
-
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -447,58 +474,59 @@
       }
     }
 
-    // ---------- True occlusion (raycast-only clone) ----------
-    // Stored per viewer:
-    // { occluders: THREE.Mesh[], pointMap: Map(slotName -> THREE.Vector3 hotspotSpace), raycaster }
-    const occlusionState = new WeakMap();
-    const occlusionTimers = new WeakMap();
+    // ---------------- Occlusion (raycast-only clone) ----------------
+    const occState = new WeakMap();     // mv -> { occluders, pointMap, raycaster }
+    const occTimers = new WeakMap();    // mv -> timeout id
+
+    const EPS = 1e-4;
+    const TOL = 0.002; // 2mm tolerance so surface points become visible when they should
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
 
-      // IMPORTANT: use model-viewer bbox center offset that you already use for hotspots
+      scene.updateMatrixWorld?.(true);
+
       const center = mv.getBoundingBoxCenter?.() || { x:0, y:0, z:0 };
       const centerV = new THREE.Vector3(center.x, center.y, center.z);
 
       const occluders = [];
-      scene.updateMatrixWorld?.(true);
 
       scene.traverse(obj => {
         if (!obj || !obj.isMesh || !obj.geometry) return;
 
-        // clone geometry into our THREE
         const g = obj.geometry;
         const geo = new THREE.BufferGeometry();
 
-        if (g.index) geo.setIndex(new THREE.BufferAttribute(g.index.array.slice ? g.index.array.slice() : g.index.array, 1));
+        if (g.index) {
+          const idxArr = g.index.array;
+          const idxCopy = idxArr.slice ? idxArr.slice() : new idxArr.constructor(idxArr);
+          geo.setIndex(new THREE.BufferAttribute(idxCopy, 1));
+        }
 
         const attrs = g.attributes || {};
         for (const key of Object.keys(attrs)) {
           const a = attrs[key];
           if (!a || !a.array || a.itemSize == null) continue;
-          // copy arrays so THREE owns them
-          const arr = (a.array.slice ? a.array.slice() : new a.array.constructor(a.array));
-          geo.setAttribute(key, new THREE.BufferAttribute(arr, a.itemSize, a.normalized));
+          const arr = a.array;
+          const arrCopy = arr.slice ? arr.slice() : new arr.constructor(arr);
+          geo.setAttribute(key, new THREE.BufferAttribute(arrCopy, a.itemSize, a.normalized));
         }
 
-        // bake world transform into the cloned geometry
+        // apply internal mesh world matrix into our geometry
         const m = obj.matrixWorld?.elements;
         if (m && m.length === 16) {
-          const mat = new THREE.Matrix4();
-          mat.fromArray(m);
+          const mat = new THREE.Matrix4().fromArray(m);
           geo.applyMatrix4(mat);
         }
 
-        // shift into hotspot space (same offset you apply to points)
+        // shift to the same "hotspot space" you use (p + bboxCenter)
         geo.translate(centerV.x, centerV.y, centerV.z);
 
-        // material doesn't matter for raycast
-        const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial());
-        occluders.push(mesh);
+        occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial()));
       });
 
-      return { occluders, centerV };
+      return occluders;
     }
 
     function updateHotspotPositionsAndPointMap(mv, modelId) {
@@ -515,11 +543,9 @@
         const obj = scene.getObjectByName(a.anchor);
         if (!obj) continue;
 
-        // glTF/world position from model-viewer scene
         const p = obj.getWorldPosition ? obj.getWorldPosition(new (obj.position.constructor)()) : null;
         if (!p) continue;
 
-        // hotspot space = p + center (your proven fix)
         const x = p.x + center.x;
         const y = p.y + center.y;
         const z = p.z + center.z;
@@ -544,26 +570,22 @@
       const t = mv.getCameraTarget?.();
       if (!o || !t) return null;
 
-      const theta = o.theta;
-      const phi = o.phi;
-      const r = o.radius;
-
+      const theta = o.theta, phi = o.phi, r = o.radius;
       const sinPhi = Math.sin(phi);
-      const x = t.x + r * sinPhi * Math.sin(theta);
-      const y = t.y + r * Math.cos(phi);
-      const z = t.z + r * sinPhi * Math.cos(theta);
 
-      return new THREE.Vector3(x, y, z);
+      return new THREE.Vector3(
+        t.x + r * sinPhi * Math.sin(theta),
+        t.y + r * Math.cos(phi),
+        t.z + r * sinPhi * Math.cos(theta)
+      );
     }
 
     function runOcclusion(mv) {
-      const st = occlusionState.get(mv);
+      const st = occState.get(mv);
       if (!st) return;
 
       const camPos = getCameraPositionHotspotSpace(mv);
       if (!camPos) return;
-
-      const EPS = 1e-4;
 
       for (const [slot, point] of st.pointMap.entries()) {
         const dir = point.clone().sub(camPos);
@@ -572,10 +594,17 @@
 
         dir.normalize();
         st.raycaster.set(camPos, dir);
-        st.raycaster.far = dist - EPS;
+        st.raycaster.near = 0;
+        st.raycaster.far = dist + EPS;
 
         const hits = st.raycaster.intersectObjects(st.occluders, true);
-        const occluded = hits.length > 0;
+
+        // ✅ key fix: only occluded if nearest hit is meaningfully BEFORE the point
+        let occluded = false;
+        if (hits.length > 0) {
+          const hitDist = hits[0].distance;
+          occluded = hitDist < (dist - TOL);
+        }
 
         const el = mv.querySelector(`[slot="${slot}"]`);
         if (el) el.classList.toggle("occluded", occluded);
@@ -583,33 +612,26 @@
     }
 
     function scheduleOcclusion(mv) {
-      const prev = occlusionTimers.get(mv);
+      const prev = occTimers.get(mv);
       if (prev) clearTimeout(prev);
-      const t = setTimeout(() => runOcclusion(mv), 80);
-      occlusionTimers.set(mv, t);
+      const t = setTimeout(() => runOcclusion(mv), 60);
+      occTimers.set(mv, t);
     }
 
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
 
-      // after model settles
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        // build occluders once per model load in this viewer
-        const occluderPack = buildRaycastOccluders(mv);
-
+        const occluders = buildRaycastOccluders(mv);
         const pointMap = updateHotspotPositionsAndPointMap(mv, modelId);
 
-        if (occluderPack && occluderPack.occluders.length) {
-          occlusionState.set(mv, {
-            occluders: occluderPack.occluders,
-            pointMap,
-            raycaster: new THREE.Raycaster()
-          });
-          runOcclusion(mv);
+        if (occluders && occluders.length) {
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster() });
         } else {
-          // if something fails, don't hide anything
-          occlusionState.set(mv, null);
+          occState.set(mv, null);
         }
+
+        runOcclusion(mv);
 
         if (!mv.__hasOccListener) {
           mv.addEventListener("camera-change", () => scheduleOcclusion(mv), { passive:true });
@@ -618,11 +640,14 @@
       }));
     }
 
-    // ---------- Double-buffer show model ----------
+    // ---------------- Show model (double buffer + camera carry) ----------------
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
+
+      // capture camera at click time (only after first auto-frame)
+      const camForSwap = hasInitialFraming ? readCamera(activeMv) : null;
 
       selectedId = modelId;
       paintActive();
@@ -631,9 +656,20 @@
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
       const finalizeSwap = () => {
+        if (camForSwap) applyCamera(idleMv, camForSwap);
+
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
         scheduleOcclusion(activeMv);
+
+        // after swap, update latestCamera snapshot
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          latestCamera = readCamera(activeMv) || latestCamera;
+          if (!hasInitialFraming) {
+            hasInitialFraming = true;
+            latestCamera = latestCamera || readCamera(activeMv);
+          }
+        }));
       };
 
       if (targetSrc) {
@@ -675,9 +711,11 @@
       showModel(modelId);
     }
 
-    // ---------- init ----------
+    // ---------------- Init ----------------
     buildListOnce();
     initBackgroundSelector();
+
+    // First model: allow auto-frame once by NOT forcing a camera
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
