@@ -302,7 +302,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // Download/progress icons
+    // Download/progress
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -558,6 +558,7 @@
 
     // =================== END LOCKED CAMERA BLOCK =================
 
+    // Scene access
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
@@ -572,11 +573,9 @@
     const occState = new WeakMap();
     const loopState = new WeakMap();
 
-    // ✅ Center cache per viewer (this is “do 1” correctly)
+    // Cache center per viewer, set ONCE after each model load
     const centerCache = new WeakMap(); // mv -> {x,y,z}
-    function getCachedCenter(mv){
-      return centerCache.get(mv) || {x:0,y:0,z:0};
-    }
+    function getCachedCenter(mv){ return centerCache.get(mv) || {x:0,y:0,z:0}; }
 
     // ===== Smooth click focus (perpendicular normal via raycast) =====
     const focusAnim = new WeakMap();
@@ -676,7 +675,6 @@
 
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
-
       const token = (prev?.token ?? 0) + 1;
       focusAnim.set(mv, { rafId: 0, token });
 
@@ -718,6 +716,7 @@
       focusAnim.set(mv, cur);
     }
 
+    // Hotspots (IMPORTANT: data-position / data-normal are the canonical source now)
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -732,6 +731,10 @@
 
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
+
+        // ✅ make positions attribute-based so panning cannot “recompute” them
+        btn.dataset.position = "0m 0m 0m";
+        btn.dataset.normal = "0m 1m 0m";
 
         btn.addEventListener('mouseenter', (e) => showTip(btn.dataset.label, e.clientX, e.clientY));
         btn.addEventListener('mousemove',  (e) => moveTip(e.clientX, e.clientY));
@@ -748,7 +751,7 @@
       }
     }
 
-    // ✅ uses cached center for BOTH occluders and points (stable even after pan)
+    // Occluders: keep your original center-space (because it matched your model-viewer hotspot space)
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
@@ -791,6 +794,7 @@
       return occluders;
     }
 
+    // ✅ IMPORTANT: no mv.updateHotspot(); we only write data-position to the button.
     function updateHotspotPositionsAndPointMap(mv, modelId) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return new Map();
@@ -813,10 +817,11 @@
         const z = p.z + c.z;
 
         const posStr = `${x}m ${y}m ${z}m`;
-        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
-        catch {
-          const el = mv.querySelector(`[slot="${a.slotName}"]`);
-          if (el) el.dataset.position = posStr;
+
+        const el = mv.querySelector(`[slot="${a.slotName}"]`);
+        if (el) {
+          el.dataset.position = posStr;
+          el.dataset.normal = "0m 1m 0m";
         }
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
@@ -825,6 +830,7 @@
       return pointMap;
     }
 
+    // Occlusion logic (unchanged)
     function getCameraPositionHotspotSpace(mv) {
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
@@ -926,7 +932,7 @@
       ensureHotspotElements(mv, modelId);
 
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        // ✅ cache center ONCE per load; never recompute on pan
+        // cache center ONCE per load
         const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
         centerCache.set(mv, c);
 
@@ -949,7 +955,7 @@
       }));
     }
 
-    // ===== Show model (double-buffer) — with cameraReady gate (LOCKED) =====
+    // ===== Model swapping / preload =====
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -961,9 +967,16 @@
       paintActive();
 
       const st = state.get(modelId);
-      let targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
+      const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
       const markCameraReady = () => { cameraReady = true; };
+
+      const finalizeSwap = () => {
+        prepareAnnotationsAndOcclusion(idleMv, modelId);
+        swapViewersNow();
+        markCameraReady();
+        startLoop(activeMv);
+      };
 
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
@@ -973,9 +986,7 @@
 
         if (idleSrc === targetSrc) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          prepareAnnotationsAndOcclusion(idleMv, modelId);
-          swapViewersNow();
-          markCameraReady();
+          finalizeSwap();
           return;
         }
 
@@ -983,18 +994,12 @@
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-              prepareAnnotationsAndOcclusion(idleMv, modelId);
-              swapViewersNow();
-              markCameraReady();
-              startLoop(activeMv);
-            });
-          });
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+            finalizeSwap();
+          }));
         };
-        idleMv.addEventListener('load', onIdleLoad, { once: true });
-
+        idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
         return;
       }
@@ -1003,17 +1008,12 @@
 
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-            prepareAnnotationsAndOcclusion(idleMv, modelId);
-            swapViewersNow();
-            markCameraReady();
-            startLoop(activeMv);
-          });
-        });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          finalizeSwap();
+        }));
       };
-      idleMv.addEventListener('load', onIdleLoad, { once: true });
+      idleMv.addEventListener('load', onIdleLoad, { once:true });
 
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
@@ -1021,10 +1021,7 @@
 
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          prepareAnnotationsAndOcclusion(idleMv, modelId);
-          swapViewersNow();
-          markCameraReady();
-          startLoop(activeMv);
+          finalizeSwap();
           return;
         }
 
