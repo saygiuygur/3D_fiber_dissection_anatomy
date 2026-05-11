@@ -6,7 +6,1001 @@
   <title>3D Fiber Dissection Anatomy</title>
   <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D Fiber Dissection Anatomy</title>
+  <link rel="icon" href="data:," />
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 
+  <style>
+    :root{ --viewer-bg: #ffffff; }
+    body { margin:0; font-family: system-ui, sans-serif; }
+    .wrap { display:flex; height:100vh; }
+
+    .sidebar{
+      width:360px;
+      border-right:1px solid #ddd;
+      padding:12px;
+      overflow:auto;
+      background:#fff;
+    }
+
+    .row{
+      display:flex; align-items:center; justify-content:space-between;
+      width:100%; padding:10px; margin:6px 0;
+      border:1px solid #ddd;
+      border-radius:10px;
+      background:#fff;
+      cursor:pointer;
+      user-select:none;
+      gap:10px;
+      transition: border-color 120ms ease;
+    }
+    .row.active { border-color:#111; }
+    .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
+
+    .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
+    .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
+    .status-icon{ width:20px; height:20px; display:block; }
+    .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
+
+    .toggle-row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin: 4px 0 14px;
+      padding: 8px 0;
+    }
+    .toggle-title{
+      font-size:14px;
+      font-weight:600;
+      margin:0;
+    }
+
+    .switch{
+      position: relative;
+      display:inline-block;
+      width: 52px;
+      height: 30px;
+      flex: 0 0 auto;
+    }
+    .switch input{ opacity:0; width:0; height:0; }
+    .slider{
+      position:absolute;
+      cursor:pointer;
+      inset:0;
+      background:#d9d9d9;
+      transition: .2s;
+      border-radius:999px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+    }
+    .slider:before{
+      content:"";
+      position:absolute;
+      height: 24px;
+      width: 24px;
+      left: 3px;
+      top: 3px;
+      background:#fff;
+      transition: .2s;
+      border-radius:50%;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    .switch input:checked + .slider{ background:#35c759; }
+    .switch input:checked + .slider:before{ transform: translateX(22px); }
+
+    .bg-section{ margin-top:18px; }
+    .bg-title{ font-size:14px; font-weight:600; margin:0 0 10px 0; }
+    .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
+    .swatch{
+      width:26px; height:26px;
+      border-radius:50%;
+      border:1px solid #cfcfcf;
+      cursor:pointer;
+      padding:0;
+      display:inline-block;
+      box-sizing:border-box;
+    }
+    .swatch.white{ background:#ffffff; }
+    .swatch.gray{ background:#808080; }
+    .swatch.black{ background:#000000; }
+    .swatch.selected{ outline:2px solid #111; outline-offset:3px; }
+
+    .viewer-wrap{
+      position: relative;
+      width: calc(100vw - 360px);
+      height: 100vh;
+      background:var(--viewer-bg);
+      overflow:hidden;
+    }
+
+    model-viewer.viewer{
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      background:var(--viewer-bg);
+      --min-hotspot-opacity: 1;
+    }
+
+    .hiddenViewer { visibility: hidden; pointer-events: none; }
+    .shownViewer  { visibility: visible; pointer-events: auto; }
+
+    .hotspot{
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border-radius: 50%;
+      border: 2px solid #000;
+      background: rgba(255,255,255,0.65);
+      cursor: pointer;
+      transform: translate(-50%, -50%);
+      box-sizing: border-box;
+    }
+    .hotspot.occluded{
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #hotspotTip{
+      position: absolute;
+      z-index: 50;
+      display: none;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.2;
+      pointer-events: none;
+      max-width: 280px;
+      white-space: nowrap;
+    }
+
+    .annOff .hotspot{ display:none !important; }
+    .annOff #hotspotTip{ display:none !important; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="sidebar">
+      <h3 style="margin:6px 0 12px;">Models</h3>
+      <div id="list"></div>
+
+      <div class="toggle-row">
+        <div class="toggle-title">Toggle annotations</div>
+        <label class="switch" title="Toggle annotations">
+          <input id="annToggle" type="checkbox" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="bg-section">
+        <div class="bg-title">Background Color</div>
+        <div class="bg-options" id="bgOptions">
+          <button class="swatch white selected" data-color="#ffffff" aria-label="White background" title="White"></button>
+          <button class="swatch gray" data-color="#808080" aria-label="Gray background" title="Gray"></button>
+          <button class="swatch black" data-color="#000000" aria-label="Black background" title="Black"></button>
+        </div>
+      </div>
+
+      <div class="small">
+        Focus works, and base is captured only at true auto-frame time.
+      </div>
+    </div>
+
+    <div class="viewer-wrap" id="viewerWrap">
+      <div id="hotspotTip"></div>
+
+      <model-viewer id="mvA" class="viewer shownViewer"
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+
+      <model-viewer id="mvB" class="viewer hiddenViewer"
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
+
+    const MODELS = [
+      { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
+      { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" }
+    ];
+
+    const MODEL01_NAMES = [
+      "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
+      "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
+      "ParacentralA001","OpticN001","OlfactoryN001","OlfactoryA001","MIFA001","MiddletemporalA001",
+      "MedialOrbitofrontalA001","LateralorbitofrontalA001","LabbeV001","InternalcerebralV001",
+      "InferiorparietalA001","ICA001","GalenV001","FrontopolarACont001","FrontopolarA001",
+      "CentralsulcusA001","CallosomarginalA001","Basalveinofrosenthal001","AnteriortemporalA001",
+      "AnteriorparietalA001","AIFA001","ACA001"
+    ];
+
+    const MODEL02_NAMES = [
+      "Uncus001","Thalamus001","TemporalOperculum001","Sylvianfissure001","Supramarginalgyrus001",
+      "SuperiortemporalSulcus001","SuperiortemporalGyrus001","Superiorparietallobule001","SuperiorFrontalsulcus001",
+      "SuperiorFrontalgyrus001","Preoccipitalnotch001","Precuneus001","Precentralsulcus001","Precentralgyrus001",
+      "Posteriorcalcarinesulcus001","Postcentralgyrus001","Parietooccipitalsulcus001","ParietalOperculum001",
+      "Parahippocampalgyrus001","Paracentrallobule001","MiddletemporalGyrus001","Middlefrontalgyrus001","Marginalsulcus001",
+      "Lingualgyrus001","Lateralventricle001","Isthmusgyrus001","Intraparietalsulcus001","Inferiortemporalsulcus001",
+      "Inferiortemporalgyrus001","InferiorFrontalsulcus001","InferiorFrontalgyrus001","Gyrusrectus001","Fusiformgyrus001",
+      "FrontalOperculum001","Cuneus001","Corpuscallosum001","Collateralsulcus001","Cingulategyrus001","Centralsulcus001",
+      "Anteriorcalcarinesulcus001","Angulargyrus001"
+    ];
+
+    function makeAnnotations(names) {
+      return names.map((name, i) => ({
+        slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
+        anchor: name,
+        title: name
+      }));
+    }
+    const ANNOTATIONS = {
+      "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
+      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
+    };
+
+    const list = document.getElementById('list');
+    const mvA = document.getElementById('mvA');
+    const mvB = document.getElementById('mvB');
+    const viewerWrap = document.getElementById('viewerWrap');
+    const hotspotTip = document.getElementById('hotspotTip');
+    const bgOptions = document.getElementById('bgOptions');
+    const annToggle = document.getElementById('annToggle');
+
+    let activeMv = mvA;
+    let idleMv = mvB;
+    let selectedId = MODELS[0].id;
+    let currentShownId = selectedId;
+
+    // ===== Background selector =====
+    function applyBackgroundColor(color) {
+      document.documentElement.style.setProperty('--viewer-bg', color);
+      try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
+      bgOptions.querySelectorAll('.swatch').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
+      });
+    }
+    function initBackgroundSelector() {
+      bgOptions.querySelectorAll('.swatch').forEach(btn =>
+        btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color))
+      );
+      let saved = null;
+      try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
+      const valid = ["#ffffff","#808080","#000000"];
+      applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
+    }
+
+    // ===== Toggle annotations =====
+    function setAnnotationsEnabled(enabled){
+      document.documentElement.classList.toggle('annOff', !enabled);
+      if (!enabled) hotspotTip.style.display = 'none';
+      try { localStorage.setItem('annotationsEnabled', enabled ? '1' : '0'); } catch (_) {}
+    }
+    function initAnnotationsToggle(){
+      let saved = null;
+      try { saved = localStorage.getItem('annotationsEnabled'); } catch (_) {}
+      const enabled = (saved == null) ? true : (saved === '1');
+      annToggle.checked = enabled;
+      setAnnotationsEnabled(enabled);
+      annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
+    }
+
+    // ===== Tooltip =====
+    function attachTip(el) {
+      el.addEventListener('mouseenter', (e) => {
+        const text = el.dataset.label || "";
+        if (!text) return;
+        hotspotTip.textContent = text;
+        hotspotTip.style.display = 'block';
+        const rect = viewerWrap.getBoundingClientRect();
+        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
+        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
+      });
+      el.addEventListener('mousemove', (e) => {
+        if (hotspotTip.style.display !== 'block') return;
+        const rect = viewerWrap.getBoundingClientRect();
+        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
+        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
+      });
+      el.addEventListener('mouseleave', () => { hotspotTip.style.display = 'none'; });
+    }
+    function hideTip(){ hotspotTip.style.display = 'none'; }
+
+    // ==========================================================
+    // ========== ICONS / DOWNLOAD BEHAVIOR (UNCHANGED) ==========
+    // ==========================================================
+    const state = new Map();
+    MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
+
+    let currentController = null;
+    let currentDownloadingId = null;
+    const inFlight = new Map();
+
+    let preloadEnabled = true;
+    let preloadTimer = null;
+    let resumeRequested = false;
+    let preloadRunning = false;
+    const preloadQueue = MODELS.map(m => m.id);
+
+    const rowEls = new Map();
+    let downloadingVisualId = null;
+
+    function paintDownloading(idOrNull) {
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      downloadingVisualId = idOrNull;
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
+    }
+    function paintActive() {
+      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
+    }
+
+    function parsePercent(progressText) {
+      if (!progressText) return 0;
+      const match = String(progressText).match(/^(\d+)%$/);
+      if (!match) return 0;
+      const n = Number(match[1]);
+      if (Number.isNaN(n)) return 0;
+      return Math.max(0, Math.min(100, n));
+    }
+    function loadingIconSVG(percent) {
+      const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
+          <circle cx="10" cy="10" r="${r}"
+            fill="none" stroke="#1e88e5" stroke-width="2.5" stroke-linecap="round"
+            transform="rotate(-90 10 10)"
+            stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
+        </svg>`;
+    }
+    function doneIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#2e7d32"></circle>
+          <path d="M6 10.2 L8.6 12.8 L14 7.4"
+                fill="none" stroke="#ffffff" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>`;
+    }
+    function pausedIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#ffffff" stroke="#9e9e9e" stroke-width="2"></circle>
+          <rect x="7" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
+          <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
+        </svg>`;
+    }
+    function errorIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#c62828"></circle>
+          <rect x="9.1" y="5.2" width="1.8" height="6.8" rx="0.9" fill="#ffffff"></rect>
+          <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
+        </svg>`;
+    }
+    function refreshMeta(id) {
+      const st = state.get(id);
+      const meta = rowEls.get(id)?.meta;
+      if (!meta) return;
+      if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
+      if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
+      if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
+      if (st.status === "loading") { meta.innerHTML = loadingIconSVG(parsePercent(st.progressText)); return; }
+      meta.innerHTML = "";
+    }
+
+    function buildListOnce() {
+      list.innerHTML = "";
+      for (const m of MODELS) {
+        const row = document.createElement('div');
+        row.className = "row";
+        const name = document.createElement('div');
+        name.className = "name";
+        name.textContent = m.id;
+        const meta = document.createElement('div');
+        meta.className = "meta";
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.addEventListener('click', () => onUserSelect(m.id));
+        list.appendChild(row);
+        rowEls.set(m.id, { row, meta });
+        refreshMeta(m.id);
+      }
+      paintActive();
+      paintDownloading(null);
+    }
+
+    function maybeResumePreload() {
+      if (!preloadEnabled) return;
+      if (!resumeRequested) return;
+      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
+      resumeRequested = false;
+      resumePreload();
+    }
+    function pausePreloadForAWhile() {
+      preloadEnabled = false;
+      if (preloadTimer) clearTimeout(preloadTimer);
+      preloadTimer = setTimeout(() => {
+        preloadEnabled = true;
+        resumeRequested = true;
+        maybeResumePreload();
+      }, 1200);
+    }
+
+    async function downloadToBlobUrl(modelId) {
+      const model = MODELS.find(x => x.id === modelId);
+      const st = state.get(modelId);
+
+      if (st.status === "done" && st.blobUrl) return st.blobUrl;
+      if (inFlight.has(modelId)) return inFlight.get(modelId);
+
+      const p = (async () => {
+        paintDownloading(modelId);
+        st.status = "loading";
+        st.progressText = "";
+        refreshMeta(modelId);
+
+        if (currentController) {
+          currentController.abort();
+          if (currentDownloadingId && currentDownloadingId !== modelId) {
+            const prev = state.get(currentDownloadingId);
+            if (prev && prev.status === "loading") {
+              prev.status = "paused";
+              refreshMeta(currentDownloadingId);
+            }
+          }
+        }
+
+        currentController = new AbortController();
+        currentDownloadingId = modelId;
+
+        try {
+          const res = await fetch(model.url, { signal: currentController.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+          const total = Number(res.headers.get("Content-Length")) || null;
+          const reader = res.body.getReader();
+          let received = 0;
+          const chunks = [];
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            received += value.byteLength;
+
+            st.progressText = total
+              ? `${Math.floor((received / total) * 100)}%`
+              : `${(received / (1024*1024)).toFixed(1)} MB`;
+            refreshMeta(modelId);
+          }
+
+          const blob = new Blob(chunks, { type: "model/gltf-binary" });
+          const blobUrl = URL.createObjectURL(blob);
+
+          st.status = "done";
+          st.progressText = "";
+          st.blobUrl = blobUrl;
+          refreshMeta(modelId);
+
+          paintDownloading(null);
+          maybeResumePreload();
+          return blobUrl;
+
+        } catch (err) {
+          paintDownloading(null);
+          if (err.name === "AbortError") {
+            st.status = "paused";
+            refreshMeta(modelId);
+            maybeResumePreload();
+            throw err;
+          }
+          st.status = "error";
+          st.progressText = "";
+          refreshMeta(modelId);
+          maybeResumePreload();
+          throw err;
+        } finally {
+          inFlight.delete(modelId);
+        }
+      })();
+
+      inFlight.set(modelId, p);
+      return p;
+    }
+
+    async function resumePreload() {
+      if (!preloadEnabled) return;
+      if (preloadRunning) return;
+      preloadRunning = true;
+      try {
+        if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
+          resumeRequested = true;
+          return;
+        }
+        for (const id of preloadQueue) {
+          if (!preloadEnabled) return;
+          const st = state.get(id);
+          if (st.status === "done") continue;
+          try { await downloadToBlobUrl(id); }
+          catch (e) { if (e.name === "AbortError") return; }
+        }
+      } finally {
+        preloadRunning = false;
+      }
+    }
+
+    // ==========================================================
+    // ========== CAMERA CARRY OVER + AUTO-FRAME (UNCHANGED) =====
+    // ==========================================================
+    let cameraReady = false;
+
+    function readCamFrom(mv) {
+      if (!cameraReady || !mv || !mv.src) return null;
+      const o = mv.getCameraOrbit?.();
+      const t = mv.getCameraTarget?.();
+      const f = mv.getFieldOfView?.();
+      if (!o || !t || typeof f !== "number") return null;
+      return {
+        orbit: { theta: o.theta, phi: o.phi, radius: o.radius },
+        target: { x: t.x, y: t.y, z: t.z },
+        fov: f
+      };
+    }
+
+    function applyCamTo(mv, cam) {
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
+      if (typeof mv.jumpCameraToGoal === "function") {
+        try { mv.jumpCameraToGoal(); } catch (_) {}
+      }
+    }
+
+    function swapViewersNow() {
+      activeMv.classList.remove('shownViewer');
+      activeMv.classList.add('hiddenViewer');
+      idleMv.classList.remove('hiddenViewer');
+      idleMv.classList.add('shownViewer');
+      const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
+    }
+
+    // ==========================================================
+    // =================== ANNOTATIONS + FOCUS ===================
+    // ==========================================================
+    function clearHotspots(mv) {
+      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
+    }
+
+    // Base captured ONLY from true auto-frame state
+    const baseCenter = new Map();
+    const baseTarget = new Map();
+
+    function getPanDelta() {
+      const base = baseTarget.get(currentShownId);
+      const cur = activeMv.getCameraTarget?.();
+      if (!base || !cur) return new THREE.Vector3(0,0,0);
+      return new THREE.Vector3(cur.x - base.x, cur.y - base.y, cur.z - base.z);
+    }
+
+    function captureAutoframeBaseOnce(mv, modelId) {
+      if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
+      const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
+      const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
+      if (!baseCenter.has(modelId)) baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
+      if (!baseTarget.has(modelId)) baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
+    }
+
+    // Occlusion batching
+    const RAYS_PER_BATCH = 5;
+    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
+    const EPS = 1e-4;
+    const TOL = 5;
+
+    const occState = new WeakMap();
+    const loopState = new WeakMap();
+
+    function getMvScene(mv) {
+      const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
+      return sceneSym ? mv[sceneSym] : null;
+    }
+
+    function buildRaycastOccluders(mv, shift) {
+      const scene = getMvScene(mv);
+      if (!scene || typeof scene.traverse !== "function") return null;
+      scene.updateMatrixWorld?.(true);
+
+      const occluders = [];
+      scene.traverse(obj => {
+        if (!obj || !obj.isMesh || !obj.geometry) return;
+
+        const g = obj.geometry;
+        const geo = new THREE.BufferGeometry();
+
+        if (g.index) {
+          const idxArr = g.index.array;
+          const idxCopy = idxArr.slice ? idxArr.slice() : new idxArr.constructor(idxArr);
+          geo.setIndex(new THREE.BufferAttribute(idxCopy, 1));
+        }
+
+        const attrs = g.attributes || {};
+        for (const key of Object.keys(attrs)) {
+          const a = attrs[key];
+          if (!a || !a.array || a.itemSize == null) continue;
+          const arr = a.array;
+          const arrCopy = arr.slice ? arr.slice() : new arr.constructor(arr);
+          geo.setAttribute(key, new THREE.BufferAttribute(arrCopy, a.itemSize, a.normalized));
+        }
+
+        const m = obj.matrixWorld?.elements;
+        if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
+
+        geo.translate(shift.x, shift.y, shift.z);
+        occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })));
+      });
+
+      return occluders;
+    }
+
+    function updateHotspotsAndPointMap(mv, modelId, shift) {
+      const scene = getMvScene(mv);
+      if (!scene || typeof scene.getObjectByName !== "function") return new Map();
+
+      scene.updateMatrixWorld?.(true);
+
+      const pointMap = new Map();
+      const anns = ANNOTATIONS[modelId] || [];
+
+      for (const a of anns) {
+        const obj = scene.getObjectByName(a.anchor);
+        if (!obj) continue;
+
+        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
+        if (!p) continue;
+
+        const x = p.x + shift.x;
+        const y = p.y + shift.y;
+        const z = p.z + shift.z;
+
+        const posStr = `${x}m ${y}m ${z}m`;
+
+        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
+        catch {
+          const el = mv.querySelector(`[slot="${a.slotName}"]`);
+          if (el) el.dataset.position = posStr;
+        }
+
+        pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
+      }
+
+      return pointMap;
+    }
+
+    function getCameraPositionHotspotSpace(mv) {
+      const o = mv.getCameraOrbit?.();
+      const t = mv.getCameraTarget?.();
+      if (!o || !t) return null;
+      const theta = o.theta, phi = o.phi, r = o.radius;
+      const sinPhi = Math.sin(phi);
+      return new THREE.Vector3(
+        t.x + r * sinPhi * Math.sin(theta),
+        t.y + r * Math.cos(phi),
+        t.z + r * sinPhi * Math.cos(theta)
+      );
+    }
+
+    function occludeOne(mv, slot) {
+      const st = occState.get(mv);
+      if (!st) return;
+
+      const camPos = getCameraPositionHotspotSpace(mv);
+      if (!camPos) return;
+
+      const point = st.pointMap.get(slot);
+      if (!point) return;
+
+      const dir = point.clone().sub(camPos);
+      const dist = dir.length();
+      if (dist < EPS) return;
+
+      dir.normalize();
+      st.raycaster.set(camPos, dir);
+      st.raycaster.near = 0;
+      st.raycaster.far = dist + EPS;
+
+      const hits = st.raycaster.intersectObjects(st.occluders, true);
+
+      let occluded = false;
+      if (hits.length > 0) {
+        const hitDist = hits[0].distance;
+        occluded = hitDist < (dist - TOL);
+      }
+
+      const el = mv.querySelector(`[slot="${slot}"]`);
+      if (el) el.classList.toggle("occluded", occluded);
+    }
+
+    function runBatch(mv, count) {
+      const st = occState.get(mv);
+      if (!st || !st.slots.length) return;
+      for (let i = 0; i < count; i++) {
+        const slot = st.slots[st.cursor];
+        occludeOne(mv, slot);
+        st.cursor = (st.cursor + 1) % st.slots.length;
+      }
+    }
+
+    function startLoop(mv) {
+      let ls = loopState.get(mv);
+      if (!ls) {
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
+        loopState.set(mv, ls);
+      }
+
+      ls.lastMoveTs = performance.now();
+      if (ls.running) return;
+      ls.running = true;
+
+      const tick = () => {
+        ls.frame++;
+        const now = performance.now();
+        const moving = (now - ls.lastMoveTs) < 200;
+
+        if (moving) {
+          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) runBatch(mv, RAYS_PER_BATCH);
+          ls.rafId = requestAnimationFrame(tick);
+          return;
+        }
+
+        const st = occState.get(mv);
+        if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
+
+        if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
+        const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
+        runBatch(mv, toDo);
+        st.finalizeRemaining -= toDo;
+
+        if (st.finalizeRemaining > 0) ls.rafId = requestAnimationFrame(tick);
+        else { st.finalizeRemaining = null; ls.running = false; ls.rafId = 0; }
+      };
+
+      ls.rafId = requestAnimationFrame(tick);
+    }
+
+    // Focus animation (same as your working focus)
+    const focusAnim = new WeakMap();
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function easeInOutCubic(t){
+      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
+    }
+
+    function focusOnSlot(mv, slotName){
+      const st = occState.get(mv);
+      if (!st || !st.pointMap) return;
+      const P = st.pointMap.get(slotName);
+      if (!P) return;
+
+      const o0 = mv.getCameraOrbit?.();
+      const t0 = mv.getCameraTarget?.();
+      if (!o0 || !t0) return;
+
+      const theta = o0.theta, phi = o0.phi, r0 = o0.radius;
+      const sinPhi = Math.sin(phi);
+      const camPos = new THREE.Vector3(
+        t0.x + r0 * sinPhi * Math.sin(theta),
+        t0.y + r0 * Math.cos(phi),
+        t0.z + r0 * sinPhi * Math.cos(theta)
+      );
+
+      const distToPoint = camPos.distanceTo(P);
+      const rMin = 0.01;
+      const desired = Math.max(rMin, distToPoint * 0.65);
+      const r1 = Math.min(r0, desired);
+
+      const tStart = new THREE.Vector3(t0.x, t0.y, t0.z);
+      const tEnd = P.clone();
+
+      const prev = focusAnim.get(mv);
+      if (prev?.rafId) cancelAnimationFrame(prev.rafId);
+      const token = (prev?.token ?? 0) + 1;
+      focusAnim.set(mv, { rafId: 0, token });
+
+      const duration = 520;
+      const start = performance.now();
+
+      const tick = (now) => {
+        const cur = focusAnim.get(mv);
+        if (!cur || cur.token !== token) return;
+
+        const tt = clamp((now - start) / duration, 0, 1);
+        const e = easeInOutCubic(tt);
+
+        const tx = lerp(tStart.x, tEnd.x, e);
+        const ty = lerp(tStart.y, tEnd.y, e);
+        const tz = lerp(tStart.z, tEnd.z, e);
+        const rr = lerp(r0, r1, e);
+
+        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
+        mv.cameraOrbit  = `${theta}rad ${phi}rad ${rr}m`;
+
+        if (tt < 1) {
+          cur.rafId = requestAnimationFrame(tick);
+          focusAnim.set(mv, cur);
+        } else {
+          if (typeof mv.jumpCameraToGoal === "function") {
+            try { mv.jumpCameraToGoal(); } catch (_) {}
+          }
+          cur.rafId = 0;
+          focusAnim.set(mv, cur);
+        }
+      };
+
+      const cur = focusAnim.get(mv);
+      cur.rafId = requestAnimationFrame(tick);
+      focusAnim.set(mv, cur);
+    }
+
+    function ensureHotspotElements(mv, modelId) {
+      clearHotspots(mv);
+      const anns = ANNOTATIONS[modelId] || [];
+      for (const a of anns) {
+        const btn = document.createElement('button');
+        btn.className = 'hotspot';
+        btn.setAttribute('slot', a.slotName);
+        btn.dataset.label = a.title;
+        btn.setAttribute('aria-label', a.title);
+        attachTip(btn);
+
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTip();
+          focusOnSlot(mv, a.slotName);
+        });
+
+        mv.appendChild(btn);
+      }
+    }
+
+    function prepareAnnotationsAndOcclusion(mv, modelId) {
+      ensureHotspotElements(mv, modelId);
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const delta = getPanDelta();
+        const shift = baseCenter.get(modelId).clone().add(delta);
+
+        const occluders = buildRaycastOccluders(mv, shift);
+        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
+        const slots = Array.from(pointMap.keys());
+
+        if (occluders && occluders.length && slots.length) {
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null });
+        } else {
+          occState.set(mv, null);
+        }
+
+        runBatch(mv, RAYS_PER_BATCH);
+
+        if (!mv.__hasOccListener) {
+          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
+          mv.__hasOccListener = true;
+        }
+      }));
+    }
+
+    // ==========================================================
+    // =================== SHOW MODEL ============================
+    // ==========================================================
+    let swapToken = 0;
+
+    async function showModel(modelId) {
+      const token = ++swapToken;
+
+      const camForThisSwap = readCamFrom(activeMv);
+
+      selectedId = modelId;
+      paintActive();
+
+      const st = state.get(modelId);
+      const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
+
+      const finalizeSwap = () => {
+        prepareAnnotationsAndOcclusion(idleMv, modelId);
+        swapViewersNow();
+        currentShownId = modelId;
+        cameraReady = true;
+        startLoop(activeMv);
+      };
+
+      // IMPORTANT FIX:
+      // If base for this model is missing, DO NOT applyCamTo BEFORE src.
+      // We let it auto-frame, capture base, then apply cam (still hidden), then swap.
+      const needsBase = !(baseCenter.has(modelId) && baseTarget.has(modelId));
+
+      const onIdleLoad = () => {
+        if (token !== swapToken) return;
+
+        // Capture base immediately at true auto-frame time
+        captureAutoframeBaseOnce(idleMv, modelId);
+
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          // Now apply carried camera (still hidden)
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          finalizeSwap();
+        }));
+      };
+
+      if (targetSrc) {
+        const activeSrc = activeMv.src || "";
+        const idleSrc = idleMv.src || "";
+        if (activeSrc === targetSrc) return;
+
+        if (idleSrc === targetSrc) {
+          if (needsBase) captureAutoframeBaseOnce(idleMv, modelId);
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          finalizeSwap();
+          return;
+        }
+
+        idleMv.addEventListener('load', onIdleLoad, { once:true });
+
+        // only pre-apply camera if base already exists
+        if (!needsBase && camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+
+        idleMv.src = targetSrc;
+        return;
+      }
+
+      idleMv.addEventListener('load', onIdleLoad, { once:true });
+
+      // only pre-apply camera if base already exists
+      if (!needsBase && camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+
+      try {
+        const blobUrl = await downloadToBlobUrl(modelId);
+        if (token !== swapToken) return;
+
+        if ((idleMv.src || "") === blobUrl) {
+          if (needsBase) captureAutoframeBaseOnce(idleMv, modelId);
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          finalizeSwap();
+          return;
+        }
+
+        idleMv.src = blobUrl;
+      } catch (_) {}
+    }
+
+    function onUserSelect(modelId) {
+      const st = state.get(modelId);
+      if (!(st.status === "done" && st.blobUrl)) pausePreloadForAWhile();
+      showModel(modelId);
+    }
+
+    // init
+    buildListOnce();
+    initBackgroundSelector();
+    initAnnotationsToggle();
+
+    // first model
+    showModel(selectedId).then(() => {
+      resumeRequested = true;
+      maybeResumePreload();
+    });
+  </script>
+</body>
+</html>
   <style>
     :root{ --viewer-bg:#ffffff; }
 
