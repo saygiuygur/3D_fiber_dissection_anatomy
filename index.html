@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Debug build: exposes __dbg.getState() and __dbg.getHotspotPos(slot).
+        Debug build: use <b>__dbg.getState()</b> and <b>__dbg.getHotspotPos(slot)</b>.
       </div>
     </div>
 
@@ -789,7 +789,7 @@
         occluded = hitDist < (dist - TOL);
       }
 
-      const el = mv.querySelector(`[slot="${slot}"]`);
+      const el = activeMv.querySelector(`[slot="${slot}"]`);
       if (el) el.classList.toggle("occluded", occluded);
     }
 
@@ -840,8 +840,6 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // NOTE: focus method currently not modified here (debug build only)
-
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -889,7 +887,6 @@
     // ==========================================================
     // =================== SHOW MODEL (LOCKED) ===================
     // ==========================================================
-    let cameraReady = false;
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -980,14 +977,23 @@
     // ========== DEBUG EXPOSE (ONLY ADDITION) ===================
     // ==========================================================
     window.__dbg = window.__dbg || {};
+
     window.__dbg.getState = () => ({
       currentShownId,
       baseCenter: baseCenter.get(currentShownId) || null,
       baseTarget: baseTarget.get(currentShownId) || null,
       cameraTarget: activeMv.getCameraTarget?.() || null,
-      cameraOrbit: activeMv.getCameraOrbit?.() || null
+      cameraOrbit: activeMv.getCameraOrbit?.() || null,
+      baseCenterSize: baseCenter.size,
+      baseTargetSize: baseTarget.size
     });
+
     window.__dbg.getHotspotPos = (slot) => activeMv.queryHotspot?.(slot)?.position || null;
+
+    window.__dbg.listBases = () => ({
+      centers: Array.from(baseCenter.entries()).map(([k,v]) => ({ id:k, x:v.x, y:v.y, z:v.z })),
+      targets: Array.from(baseTarget.entries()).map(([k,v]) => ({ id:k, x:v.x, y:v.y, z:v.z })),
+    });
   </script>
 </body>
 </html>
