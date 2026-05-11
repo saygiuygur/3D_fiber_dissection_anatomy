@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Focus restored + debug: <b>__dbg.getState()</b> and <b>__dbg.getHotspotPos(slot)</b>.
+        Focus direction now uses <b>P - C</b> (hotspot minus calibrated center).
       </div>
     </div>
 
@@ -252,7 +252,7 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // ===== Background selector (LOCKED) =====
+    // Background selector (LOCKED)
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -270,7 +270,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (LOCKED) =====
+    // Toggle annotations (LOCKED)
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hotspotTip.style.display = 'none';
@@ -285,7 +285,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // ===== Tooltip (LOCKED) =====
+    // Tooltip (LOCKED)
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -306,9 +306,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // ==========================================================
-    // ========== ICONS / DOWNLOAD BEHAVIOR (LOCKED) ==========
-    // ==========================================================
+    // Download icons / behavior (LOCKED)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -427,11 +425,9 @@
       }, 1200);
     }
 
-    // ==========================================================
-    // ========== CALIBRATION QUEUE (LOCKED) =====================
-    // ==========================================================
-    const baseCenter = new Map(); // modelId -> Vector3
-    const baseTarget = new Map(); // modelId -> Vector3
+    // Calibration (LOCKED)
+    const baseCenter = new Map();
+    const baseTarget = new Map();
 
     const calibrationQueue = [];
     const calibrationQueued = new Set();
@@ -505,9 +501,6 @@
       }
     }
 
-    // ==========================================================
-    // ========== DOWNLOAD / BLOB (LOCKED) + enqueue calibration
-    // ==========================================================
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -614,9 +607,7 @@
       }
     }
 
-    // ==========================================================
-    // ========== CAMERA CARRY OVER + AUTO-FRAME (LOCKED) ========
-    // ==========================================================
+    // Camera carry-over (LOCKED)
     let cameraReady = false;
 
     function readCamFrom(mv) {
@@ -650,9 +641,7 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ==========================================================
-    // =================== ANNOTATIONS + OCCLUSION =================
-    // ==========================================================
+    // Annotations + occlusion (LOCKED)
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -840,9 +829,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ==========================================================
-    // =================== FOCUS (RESTORED) ======================
-    // ==========================================================
+    // ===== Focus (ONLY CHANGE IS DIRECTION = P - C) =====
     const focusAnim = new WeakMap();
 
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
@@ -909,33 +896,30 @@
       const st = occState.get(activeMv);
       if (!st || !st.pointMap) return;
 
-      const P = st.pointMap.get(slotName); // shifted hotspot point
+      const P = st.pointMap.get(slotName); // hotspot point (shifted)
       if (!P) return;
+
+      const C = baseCenter.get(currentShownId); // calibrated center (fixed)
+      if (!C) return;
 
       const orbit0 = activeMv.getCameraOrbit?.();
       const target0 = activeMv.getCameraTarget?.();
       if (!orbit0 || !target0) return;
 
-      const delta = getPanDelta();
-      const C0 = baseCenter.get(currentShownId);
-      if (!C0) return;
-
-      // stable direction in unshifted space
-      const P0 = P.clone().sub(delta);
-      const d = P0.clone().sub(C0);
+      // ✅ ONLY CHANGE: direction uses P - C (NO delta math)
+      const d = P.clone().sub(C);
       if (d.length() < 1e-6) return;
       d.normalize();
 
-      // zoom rule (zoom-in only)
+      // zoom rule (unchanged): zoom-in only based on current camera distance to P
       const camPos0 = getCameraPositionHotspotSpace(activeMv);
       if (!camPos0) return;
-      const distToPoint = camPos0.distanceTo(P);
 
+      const distToPoint = camPos0.distanceTo(P);
       const r0 = orbit0.radius;
       const desiredR = Math.max(0.01, distToPoint * 0.65);
       const r1 = Math.min(r0, desiredR);
 
-      // place camera on ray from point outward
       const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
       const off = camPos1.clone().sub(P);
       const o1 = orbitFromOffset(off);
@@ -957,7 +941,6 @@
         btn.setAttribute('aria-label', a.title);
         attachTip(btn);
 
-        // ✅ focus restored here
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -999,9 +982,7 @@
       }));
     }
 
-    // ==========================================================
-    // =================== SHOW MODEL (LOCKED) ===================
-    // ==========================================================
+    // Show model (LOCKED)
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -1088,9 +1069,7 @@
       maybeResumePreload();
     });
 
-    // ==========================================================
-    // ========== DEBUG EXPOSE (ONLY ADDITION) ===================
-    // ==========================================================
+    // DEBUG EXPOSE (unchanged)
     window.__dbg = window.__dbg || {};
     window.__dbg.getState = () => ({
       currentShownId,
