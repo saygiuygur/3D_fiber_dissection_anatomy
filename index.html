@@ -72,8 +72,6 @@
       width:100%;
       height:100%;
       background:var(--viewer-bg);
-
-      /* keep: disable model-viewer hotspot fading */
       --min-hotspot-opacity: 1;
     }
 
@@ -96,7 +94,6 @@
       pointer-events: none;
     }
 
-    /* Tooltip */
     #hotspotTip{
       position: absolute;
       z-index: 50;
@@ -112,7 +109,6 @@
       white-space: nowrap;
     }
 
-    /* Toggle annotations UI */
     .toggle-row{
       display:flex;
       align-items:center;
@@ -256,7 +252,6 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    // Tooltip
     function showTip(text, clientX, clientY){
       if (!text) return;
       hotspotTip.textContent = text;
@@ -273,7 +268,6 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // Toggle annotations
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hideTip();
@@ -288,7 +282,6 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // Background
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -519,8 +512,13 @@
       }
     }
 
-    // ===== Camera helpers (FROM your known-good version) =====
+    // ✅ Camera gate (ONLY CHANGE for this request)
+    let cameraReady = false;
+
     function readCamFrom(mv) {
+      // gate: only after first show and only if viewer has a src
+      if (!cameraReady || !mv || !mv.src) return null;
+
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
       const f = mv.getFieldOfView?.();
@@ -570,7 +568,6 @@
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
 
-        // no native tooltip
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
 
@@ -788,31 +785,23 @@
       }));
     }
 
-    // ===== Show model (double-buffer) — EXACT known-good camera behavior =====
+    // ===== Show model (double-buffer) — with cameraReady gate =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // 1) Freeze camera EXACTLY at click time from the active viewer
+      // camera snapshot only after first show
       const camForThisSwap = readCamFrom(activeMv);
 
       selectedId = modelId;
       paintActive();
 
-      // 2) Determine the exact target src we want to show
       const st = state.get(modelId);
-      let targetSrc = null;
+      let targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      if (st.status === "done" && st.blobUrl) {
-        targetSrc = st.blobUrl;
-      } else {
-        targetSrc = null;
-      }
+      const markCameraReady = () => { cameraReady = true; };
 
-      // If we already have the blob and:
-      // - idle already shows it => swap immediately
-      // - active already shows it => do nothing
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
@@ -821,11 +810,12 @@
 
         if (idleSrc === targetSrc) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          prepareAnnotationsAndOcclusion(idleMv, modelId);
           swapViewersNow();
+          markCameraReady();
           return;
         }
 
-        // Prepare idle and load it (old model stays visible)
         if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
         const onIdleLoad = () => {
@@ -835,6 +825,7 @@
               if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
               prepareAnnotationsAndOcclusion(idleMv, modelId);
               swapViewersNow();
+              markCameraReady();
               startLoop(activeMv);
             });
           });
@@ -845,7 +836,6 @@
         return;
       }
 
-      // 3) Not downloaded yet: load into idle viewer, then swap on load
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
       const onIdleLoad = () => {
@@ -855,6 +845,7 @@
             if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
             prepareAnnotationsAndOcclusion(idleMv, modelId);
             swapViewersNow();
+            markCameraReady();
             startLoop(activeMv);
           });
         });
@@ -865,18 +856,18 @@
         const blobUrl = await downloadToBlobUrl(modelId);
         if (token !== swapToken) return;
 
+        // if already set (cache weirdness), swap immediately
         if ((idleMv.src || "") === blobUrl) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           prepareAnnotationsAndOcclusion(idleMv, modelId);
           swapViewersNow();
+          markCameraReady();
           startLoop(activeMv);
           return;
         }
 
         idleMv.src = blobUrl;
-      } catch (_) {
-        // ignore
-      }
+      } catch (_) {}
     }
 
     function onUserSelect(modelId) {
