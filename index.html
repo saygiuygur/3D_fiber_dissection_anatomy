@@ -9,7 +9,6 @@
 
   <style>
     :root{ --viewer-bg: #ffffff; }
-
     body { margin:0; font-family: system-ui, sans-serif; }
     .wrap { display:flex; height:100vh; }
 
@@ -113,7 +112,8 @@
       </div>
 
       <div class="small">
-        Raycast occlusion updates while orbiting (every 12 frames).
+        Occlusion batching: 10 rays per batch, batches only every 6 frames while moving.<br>
+        When you stop, it quickly finalizes all points (still 10 per frame).
       </div>
     </div>
 
@@ -177,7 +177,7 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    // background
+    // Background
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -195,7 +195,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // download/progress
+    // Download/progress icons (kept)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -264,7 +264,8 @@
     }
     function refreshMeta(id) {
       const st = state.get(id);
-      const meta = rowEls.get(id).meta;
+      const meta = rowEls.get(id)?.meta;
+      if (!meta) return;
       if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
       if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
       if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
@@ -444,12 +445,15 @@
       }
     }
 
-    const occState = new WeakMap();
-    const loopState = new WeakMap();
+    // ===== Occlusion batching settings (your request) =====
+    const RAYS_PER_BATCH = 10;
+    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
 
-    const EPS2 = 1e-4;
-    const TOL2 = 0.002;
-    const OCCLUSION_EVERY_N_FRAMES = 12;
+    const EPS = 1e-4;
+    const TOL = 0.002;
+
+    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor }
+    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame, finalizing }
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -517,9 +521,8 @@
         const z = p.z + center.z;
 
         const posStr = `${x}m ${y}m ${z}m`;
-        try {
-          mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" });
-        } catch (_) {
+        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
+        catch {
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
           if (el) el.dataset.position = posStr;
         }
@@ -545,40 +548,52 @@
       );
     }
 
-    function runOcclusion(mv) {
+    function occludeOne(mv, slot) {
       const st = occState.get(mv);
       if (!st) return;
 
       const camPos = getCameraPositionHotspotSpace(mv);
       if (!camPos) return;
 
-      for (const [slot, point] of st.pointMap.entries()) {
-        const dir = point.clone().sub(camPos);
-        const dist = dir.length();
-        if (dist < EPS2) continue;
+      const point = st.pointMap.get(slot);
+      if (!point) return;
 
-        dir.normalize();
-        st.raycaster.set(camPos, dir);
-        st.raycaster.near = 0;
-        st.raycaster.far = dist + EPS2;
+      const dir = point.clone().sub(camPos);
+      const dist = dir.length();
+      if (dist < EPS) return;
 
-        const hits = st.raycaster.intersectObjects(st.occluders, true);
+      dir.normalize();
+      st.raycaster.set(camPos, dir);
+      st.raycaster.near = 0;
+      st.raycaster.far = dist + EPS;
 
-        let occluded = false;
-        if (hits.length > 0) {
-          const hitDist = hits[0].distance;
-          occluded = hitDist < (dist - TOL2);
-        }
+      const hits = st.raycaster.intersectObjects(st.occluders, true);
 
-        const el = mv.querySelector(`[slot="${slot}"]`);
-        if (el) el.classList.toggle("occluded", occluded);
+      let occluded = false;
+      if (hits.length > 0) {
+        const hitDist = hits[0].distance;
+        occluded = hitDist < (dist - TOL);
+      }
+
+      const el = mv.querySelector(`[slot="${slot}"]`);
+      if (el) el.classList.toggle("occluded", occluded);
+    }
+
+    function runBatch(mv, count) {
+      const st = occState.get(mv);
+      if (!st || !st.slots.length) return;
+
+      for (let i = 0; i < count; i++) {
+        const slot = st.slots[st.cursor];
+        occludeOne(mv, slot);
+        st.cursor = (st.cursor + 1) % st.slots.length;
       }
     }
 
-    function startRealtimeLoop(mv) {
+    function startLoop(mv) {
       let ls = loopState.get(mv);
       if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0, finalizing:false };
         loopState.set(mv, ls);
       }
 
@@ -586,19 +601,48 @@
       if (ls.running) return;
 
       ls.running = true;
+      ls.finalizing = false;
 
       const tick = () => {
         ls.frame++;
 
-        if (ls.frame % OCCLUSION_EVERY_N_FRAMES === 0) {
-          runOcclusion(mv);
+        const now = performance.now();
+        const moving = (now - ls.lastMoveTs) < 200;
+
+        if (moving) {
+          // While moving: do batch only every N frames
+          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) {
+            runBatch(mv, RAYS_PER_BATCH);
+          }
+          ls.rafId = requestAnimationFrame(tick);
+          return;
         }
 
-        const now = performance.now();
-        if (now - ls.lastMoveTs < 200) {
+        // Not moving anymore: finalize quickly (10 per frame, every frame) until full pass is done
+        if (!ls.finalizing) {
+          ls.finalizing = true;
+          // start finalize from current cursor position
+        }
+
+        const st = occState.get(mv);
+        if (!st || !st.slots.length) {
+          ls.running = false; ls.rafId = 0;
+          return;
+        }
+
+        // We consider finalize "done" once we’ve wrapped around at least once.
+        // Track wraps by counting how many slots processed since finalize start.
+        if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
+
+        const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
+        runBatch(mv, toDo);
+        st.finalizeRemaining -= toDo;
+
+        if (st.finalizeRemaining > 0) {
           ls.rafId = requestAnimationFrame(tick);
         } else {
-          runOcclusion(mv);
+          // cleanup finalize marker
+          st.finalizeRemaining = null;
           ls.running = false;
           ls.rafId = 0;
         }
@@ -614,22 +658,32 @@
         const occluders = buildRaycastOccluders(mv);
         const pointMap = updateHotspotPositionsAndPointMap(mv, modelId);
 
-        if (occluders && occluders.length) {
-          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster() });
+        const slots = Array.from(pointMap.keys());
+
+        if (occluders && occluders.length && slots.length) {
+          occState.set(mv, {
+            occluders,
+            pointMap,
+            raycaster: new THREE.Raycaster(),
+            slots,
+            cursor: 0,
+            finalizeRemaining: null
+          });
         } else {
           occState.set(mv, null);
         }
 
-        runOcclusion(mv);
+        // Do an initial quick batch so it looks correct immediately
+        runBatch(mv, RAYS_PER_BATCH);
 
         if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startRealtimeLoop(mv), { passive:true });
+          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
           mv.__hasOccListener = true;
         }
       }));
     }
 
-    // model switching
+    // Model switching (camera logic unchanged)
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -644,12 +698,13 @@
       const finalizeSwap = () => {
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
-        startRealtimeLoop(activeMv);
+        startLoop(activeMv);
       };
 
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
+
         if (activeSrc === targetSrc) return;
         if (idleSrc === targetSrc) { finalizeSwap(); return; }
 
@@ -681,7 +736,7 @@
       showModel(modelId);
     }
 
-    // init
+    // Init
     buildListOnce();
     initBackgroundSelector();
     showModel(selectedId).then(() => {
