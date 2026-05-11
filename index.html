@@ -72,6 +72,7 @@
       width:100%;
       height:100%;
       background:var(--viewer-bg);
+
       --min-hotspot-opacity: 1;
     }
 
@@ -157,12 +158,8 @@
       border-radius:50%;
       box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     }
-    .switch input:checked + .slider{
-      background:#35c759;
-    }
-    .switch input:checked + .slider:before{
-      transform: translateX(22px);
-    }
+    .switch input:checked + .slider{ background:#35c759; }
+    .switch input:checked + .slider:before{ transform: translateX(22px); }
 
     .annOff .hotspot{ display:none !important; }
     .annOff #hotspotTip{ display:none !important; }
@@ -311,31 +308,30 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Camera carry-over (FIXED: skip on first load) =====
+    // ===== Camera carry-over (robust, no 1-frame turn, no bottom start) =====
+    let hasValidCamera = false;
+    let latestCamera = null;
+
     function readCamera(mv){
-      // ✅ only snapshot if this viewer actually has a model src
-      if (!mv || !mv.src) return null;
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
-      const f = mv.getFieldOfView?.();
       if (!o || !t) return null;
-      return {
-        theta: o.theta, phi: o.phi, radius: o.radius,
-        tx: t.x, ty: t.y, tz: t.z,
-        fov: (typeof f === 'number') ? f : null
-      };
+      return { theta:o.theta, phi:o.phi, radius:o.radius, tx:t.x, ty:t.y, tz:t.z };
     }
     function applyCamera(mv, cam){
-      // ✅ only apply if we actually captured a camera
       if (!cam) return;
-      mv.cameraOrbit = `${cam.theta}rad ${cam.phi}rad ${cam.radius}m`;
+      mv.cameraOrbit  = `${cam.theta}rad ${cam.phi}rad ${cam.radius}m`;
       mv.cameraTarget = `${cam.tx}m ${cam.ty}m ${cam.tz}m`;
-      if (cam.fov != null) {
-        try { mv.fieldOfView = `${cam.fov}deg`; } catch (_) {}
-      }
     }
 
-    // Download / preload (unchanged)
+    function updateLatestCameraFromActive(){
+      const cam = readCamera(activeMv);
+      if (!cam) return;
+      latestCamera = cam;
+      hasValidCamera = true;
+    }
+
+    // Download/progress icons (unchanged)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -360,9 +356,57 @@
       for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
     }
 
+    function parsePercent(progressText) {
+      const match = String(progressText || "").match(/^(\d+)%$/);
+      if (!match) return 0;
+      const n = Number(match[1]);
+      return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    }
+    function loadingIconSVG(percent) {
+      const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
+          <circle cx="10" cy="10" r="${r}"
+            fill="none" stroke="#1e88e5" stroke-width="2.5" stroke-linecap="round"
+            transform="rotate(-90 10 10)"
+            stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
+        </svg>`;
+    }
+    function doneIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#2e7d32"></circle>
+          <path d="M6 10.2 L8.6 12.8 L14 7.4"
+                fill="none" stroke="#ffffff" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>`;
+    }
+    function pausedIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#ffffff" stroke="#9e9e9e" stroke-width="2"></circle>
+          <rect x="7" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
+          <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
+        </svg>`;
+    }
+    function errorIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#c62828"></circle>
+          <rect x="9.1" y="5.2" width="1.8" height="6.8" rx="0.9" fill="#ffffff"></rect>
+          <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
+        </svg>`;
+    }
     function refreshMeta(id) {
-      // keep your existing meta code if present in your current file
-      // (unchanged – omitted here for brevity)
+      const st = state.get(id);
+      const meta = rowEls.get(id)?.meta;
+      if (!meta) return;
+      if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
+      if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
+      if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
+      if (st.status === "loading") { meta.innerHTML = loadingIconSVG(parsePercent(st.progressText)); return; }
+      meta.innerHTML = "";
     }
 
     function buildListOnce() {
@@ -380,6 +424,7 @@
         row.addEventListener('click', () => onUserSelect(m.id));
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
+        refreshMeta(m.id);
       }
       paintActive();
       paintDownloading(null);
@@ -411,12 +456,17 @@
       const p = (async () => {
         paintDownloading(modelId);
         st.status = "loading";
+        st.progressText = "";
+        refreshMeta(modelId);
 
         if (currentController) {
           currentController.abort();
           if (currentDownloadingId && currentDownloadingId !== modelId) {
             const prev = state.get(currentDownloadingId);
-            if (prev && prev.status === "loading") prev.status = "paused";
+            if (prev && prev.status === "loading") {
+              prev.status = "paused";
+              refreshMeta(currentDownloadingId);
+            }
           }
         }
 
@@ -427,19 +477,29 @@
           const res = await fetch(model.url, { signal: currentController.signal });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+          const total = Number(res.headers.get("Content-Length")) || null;
           const reader = res.body.getReader();
+          let received = 0;
           const chunks = [];
+
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             chunks.push(value);
+            received += value.byteLength;
+            if (total) {
+              st.progressText = `${Math.floor((received / total) * 100)}%`;
+              refreshMeta(modelId);
+            }
           }
 
           const blob = new Blob(chunks, { type: "model/gltf-binary" });
           const blobUrl = URL.createObjectURL(blob);
 
           st.status = "done";
+          st.progressText = "";
           st.blobUrl = blobUrl;
+          refreshMeta(modelId);
 
           paintDownloading(null);
           maybeResumePreload();
@@ -449,10 +509,13 @@
           paintDownloading(null);
           if (err.name === "AbortError") {
             st.status = "paused";
+            refreshMeta(modelId);
             maybeResumePreload();
             throw err;
           }
           st.status = "error";
+          st.progressText = "";
+          refreshMeta(modelId);
           maybeResumePreload();
           throw err;
         } finally {
@@ -516,7 +579,7 @@
       }
     }
 
-    // Occlusion (unchanged from your working file)
+    // Occlusion batching (unchanged)
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
@@ -651,6 +714,7 @@
     function runBatch(mv, count) {
       const st = occState.get(mv);
       if (!st || !st.slots.length) return;
+
       for (let i = 0; i < count; i++) {
         const slot = st.slots[st.cursor];
         occludeOne(mv, slot);
@@ -673,25 +737,37 @@
 
       const tick = () => {
         ls.frame++;
+
         const now = performance.now();
         const moving = (now - ls.lastMoveTs) < 200;
 
         if (moving) {
-          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) runBatch(mv, RAYS_PER_BATCH);
+          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) {
+            runBatch(mv, RAYS_PER_BATCH);
+          }
           ls.rafId = requestAnimationFrame(tick);
           return;
         }
 
         const st = occState.get(mv);
-        if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
+        if (!st || !st.slots.length) {
+          ls.running = false; ls.rafId = 0;
+          return;
+        }
 
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
+
         const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
         runBatch(mv, toDo);
         st.finalizeRemaining -= toDo;
 
-        if (st.finalizeRemaining > 0) ls.rafId = requestAnimationFrame(tick);
-        else { st.finalizeRemaining = null; ls.running = false; ls.rafId = 0; }
+        if (st.finalizeRemaining > 0) {
+          ls.rafId = requestAnimationFrame(tick);
+        } else {
+          st.finalizeRemaining = null;
+          ls.running = false;
+          ls.rafId = 0;
+        }
       };
 
       ls.rafId = requestAnimationFrame(tick);
@@ -706,7 +782,14 @@
         const slots = Array.from(pointMap.keys());
 
         if (occluders && occluders.length && slots.length) {
-          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null });
+          occState.set(mv, {
+            occluders,
+            pointMap,
+            raycaster: new THREE.Raycaster(),
+            slots,
+            cursor: 0,
+            finalizeRemaining: null
+          });
         } else {
           occState.set(mv, null);
         }
@@ -714,7 +797,11 @@
         runBatch(mv, RAYS_PER_BATCH);
 
         if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
+          mv.addEventListener("camera-change", () => {
+            // keep camera saved live while you move
+            updateLatestCameraFromActive();
+            startLoop(mv);
+          }, { passive:true });
           mv.__hasOccListener = true;
         }
       }));
@@ -725,34 +812,50 @@
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // ✅ FIX: snapshot only if there is an actually loaded previous model
-      const camSnapshot = readCamera(activeMv);
-
       selectedId = modelId;
       paintActive();
 
       const st = state.get(modelId);
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      const finalizeSwap = () => {
-        // ✅ apply only if we captured a real camera
-        applyCamera(idleMv, camSnapshot);
+      // Keep idle hidden until fully ready (prevents "turn" glitch)
+      const finalizeSwap = async () => {
+        // Apply camera ONLY after we have a valid one (never on first load)
+        if (hasValidCamera && latestCamera) {
+          applyCamera(idleMv, latestCamera);
+          await new Promise(requestAnimationFrame);
+          applyCamera(idleMv, latestCamera); // apply again to override any late auto-frame
+          await new Promise(requestAnimationFrame); // ensure stable frame
+        }
 
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
+
+        // after swap, refresh camera cache immediately
+        updateLatestCameraFromActive();
+
         startLoop(activeMv);
       };
 
-      const onIdleLoad = () => {
+      const onIdleLoad = async () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => requestAnimationFrame(finalizeSwap));
+        // wait one frame so model-viewer has internal scene ready
+        await new Promise(requestAnimationFrame);
+
+        // On FIRST EVER model load, let it auto-frame, then store camera
+        if (!hasValidCamera) {
+          // give it one frame to settle auto-frame, then save
+          await new Promise(requestAnimationFrame);
+          updateLatestCameraFromActive();
+        }
+
+        await finalizeSwap();
       };
 
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
         if (activeSrc === targetSrc) return;
-        if (idleSrc === targetSrc) { onIdleLoad(); return; }
 
         idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
@@ -774,10 +877,12 @@
       showModel(modelId);
     }
 
-    // Init
+    // Background + annotations toggle init
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
+
+    // start
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
