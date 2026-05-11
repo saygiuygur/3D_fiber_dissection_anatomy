@@ -73,6 +73,7 @@
       height:100%;
       background:var(--viewer-bg);
 
+      /* keep: disable model-viewer hotspot fading */
       --min-hotspot-opacity: 1;
     }
 
@@ -95,6 +96,7 @@
       pointer-events: none;
     }
 
+    /* Tooltip */
     #hotspotTip{
       position: absolute;
       z-index: 50;
@@ -110,7 +112,7 @@
       white-space: nowrap;
     }
 
-    /* Toggle annotations UI */
+    /* ===== Toggle annotations UI ===== */
     .toggle-row{
       display:flex;
       align-items:center;
@@ -132,11 +134,7 @@
       height: 30px;
       flex: 0 0 auto;
     }
-    .switch input{
-      opacity:0;
-      width:0;
-      height:0;
-    }
+    .switch input{ opacity:0; width:0; height:0; }
     .slider{
       position:absolute;
       cursor:pointer;
@@ -161,6 +159,7 @@
     .switch input:checked + .slider{ background:#35c759; }
     .switch input:checked + .slider:before{ transform: translateX(22px); }
 
+    /* When OFF: hide hotspots + tooltip */
     .annOff .hotspot{ display:none !important; }
     .annOff #hotspotTip{ display:none !important; }
   </style>
@@ -172,6 +171,7 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
 
+      <!-- Toggle annotations -->
       <div class="toggle-row">
         <div class="toggle-title">Toggle annotations</div>
         <label class="switch" title="Toggle annotations">
@@ -250,6 +250,7 @@
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
     const bgOptions = document.getElementById('bgOptions');
+
     const viewerWrap = document.getElementById('viewerWrap');
     const hotspotTip = document.getElementById('hotspotTip');
     const annToggle = document.getElementById('annToggle');
@@ -258,7 +259,7 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    // Tooltip
+    /* Tooltip */
     function showTip(text, clientX, clientY){
       if (!text) return;
       hotspotTip.textContent = text;
@@ -275,7 +276,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // Toggle annotations
+    /* Toggle annotations */
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hideTip();
@@ -290,7 +291,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // Background
+    /* Background */
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -308,30 +309,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Camera carry-over (robust, no 1-frame turn, no bottom start) =====
-    let hasValidCamera = false;
-    let latestCamera = null;
-
-    function readCamera(mv){
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      if (!o || !t) return null;
-      return { theta:o.theta, phi:o.phi, radius:o.radius, tx:t.x, ty:t.y, tz:t.z };
-    }
-    function applyCamera(mv, cam){
-      if (!cam) return;
-      mv.cameraOrbit  = `${cam.theta}rad ${cam.phi}rad ${cam.radius}m`;
-      mv.cameraTarget = `${cam.tx}m ${cam.ty}m ${cam.tz}m`;
-    }
-
-    function updateLatestCameraFromActive(){
-      const cam = readCamera(activeMv);
-      if (!cam) return;
-      latestCamera = cam;
-      hasValidCamera = true;
-    }
-
-    // Download/progress icons (unchanged)
+    /* Download/progress icons */
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -414,14 +392,18 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
+
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
+
         const meta = document.createElement('div');
         meta.className = "meta";
+
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
+
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
@@ -561,6 +543,7 @@
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
+    /* Hotspots: keep tooltip system, no native title tooltip */
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -568,6 +551,7 @@
         const btn = document.createElement('button');
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
+
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
 
@@ -579,7 +563,7 @@
       }
     }
 
-    // Occlusion batching (unchanged)
+    // ===== Occlusion batching knobs =====
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
@@ -725,7 +709,7 @@
     function startLoop(mv) {
       let ls = loopState.get(mv);
       if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0, frame:0, finalizing:false };
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
         loopState.set(mv, ls);
       }
 
@@ -733,7 +717,6 @@
       if (ls.running) return;
 
       ls.running = true;
-      ls.finalizing = false;
 
       const tick = () => {
         ls.frame++;
@@ -742,18 +725,13 @@
         const moving = (now - ls.lastMoveTs) < 200;
 
         if (moving) {
-          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) {
-            runBatch(mv, RAYS_PER_BATCH);
-          }
+          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) runBatch(mv, RAYS_PER_BATCH);
           ls.rafId = requestAnimationFrame(tick);
           return;
         }
 
         const st = occState.get(mv);
-        if (!st || !st.slots.length) {
-          ls.running = false; ls.rafId = 0;
-          return;
-        }
+        if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
 
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
 
@@ -761,13 +739,8 @@
         runBatch(mv, toDo);
         st.finalizeRemaining -= toDo;
 
-        if (st.finalizeRemaining > 0) {
-          ls.rafId = requestAnimationFrame(tick);
-        } else {
-          st.finalizeRemaining = null;
-          ls.running = false;
-          ls.rafId = 0;
-        }
+        if (st.finalizeRemaining > 0) ls.rafId = requestAnimationFrame(tick);
+        else { st.finalizeRemaining = null; ls.running = false; ls.rafId = 0; }
       };
 
       ls.rafId = requestAnimationFrame(tick);
@@ -782,14 +755,7 @@
         const slots = Array.from(pointMap.keys());
 
         if (occluders && occluders.length && slots.length) {
-          occState.set(mv, {
-            occluders,
-            pointMap,
-            raycaster: new THREE.Raycaster(),
-            slots,
-            cursor: 0,
-            finalizeRemaining: null
-          });
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null });
         } else {
           occState.set(mv, null);
         }
@@ -797,11 +763,7 @@
         runBatch(mv, RAYS_PER_BATCH);
 
         if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => {
-            // keep camera saved live while you move
-            updateLatestCameraFromActive();
-            startLoop(mv);
-          }, { passive:true });
+          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
           mv.__hasOccListener = true;
         }
       }));
@@ -809,6 +771,8 @@
 
     let swapToken = 0;
 
+    /* IMPORTANT: camera behavior is exactly like the reference code:
+       - no camera snapshot/carry-over logic at all */
     async function showModel(modelId) {
       const token = ++swapToken;
 
@@ -818,44 +782,22 @@
       const st = state.get(modelId);
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      // Keep idle hidden until fully ready (prevents "turn" glitch)
-      const finalizeSwap = async () => {
-        // Apply camera ONLY after we have a valid one (never on first load)
-        if (hasValidCamera && latestCamera) {
-          applyCamera(idleMv, latestCamera);
-          await new Promise(requestAnimationFrame);
-          applyCamera(idleMv, latestCamera); // apply again to override any late auto-frame
-          await new Promise(requestAnimationFrame); // ensure stable frame
-        }
-
+      const finalizeSwap = () => {
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
-
-        // after swap, refresh camera cache immediately
-        updateLatestCameraFromActive();
-
         startLoop(activeMv);
       };
 
-      const onIdleLoad = async () => {
+      const onIdleLoad = () => {
         if (token !== swapToken) return;
-        // wait one frame so model-viewer has internal scene ready
-        await new Promise(requestAnimationFrame);
-
-        // On FIRST EVER model load, let it auto-frame, then store camera
-        if (!hasValidCamera) {
-          // give it one frame to settle auto-frame, then save
-          await new Promise(requestAnimationFrame);
-          updateLatestCameraFromActive();
-        }
-
-        await finalizeSwap();
+        requestAnimationFrame(() => requestAnimationFrame(() => finalizeSwap()));
       };
 
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
         if (activeSrc === targetSrc) return;
+        if (idleSrc === targetSrc) { finalizeSwap(); return; }
 
         idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
@@ -877,12 +819,10 @@
       showModel(modelId);
     }
 
-    // Background + annotations toggle init
+    /* init */
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
-
-    // start
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
