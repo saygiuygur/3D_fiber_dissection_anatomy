@@ -88,6 +88,7 @@
     .bg-section{ margin-top:18px; }
     .bg-title{ font-size:14px; font-weight:600; margin:0 0 10px 0; }
     .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
+
     .swatch{
       width:26px; height:26px;
       border-radius:50%;
@@ -182,7 +183,7 @@
       </div>
 
       <div class="small">
-        Bottom override: if camera Y is below baseCenter Y → force-show 5 closest hotspots.
+        Bottom override: if camera Y &lt; baseCenter Y → show 5 closest hotspots.
       </div>
     </div>
 
@@ -191,7 +192,6 @@
 
       <model-viewer id="mvA" class="viewer shownViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
-
       <model-viewer id="mvB" class="viewer hiddenViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
     </div>
@@ -200,6 +200,9 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
+    // =========================
+    // MODELS
+    // =========================
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" }
@@ -234,11 +237,15 @@
         title: name
       }));
     }
+
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
-      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
+      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
     };
 
+    // =========================
+    // DOM
+    // =========================
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
@@ -252,7 +259,9 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // ===== Background selector (LOCKED) =====
+    // =========================
+    // BACKGROUND (LOCKED)
+    // =========================
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -270,7 +279,9 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (LOCKED) =====
+    // =========================
+    // ANNOTATION TOGGLE (LOCKED)
+    // =========================
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hotspotTip.style.display = 'none';
@@ -285,7 +296,9 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // ===== Tooltip (LOCKED) =====
+    // =========================
+    // TOOLTIP (LOCKED)
+    // =========================
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -306,9 +319,9 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // ==========================================================
-    // ========== ICONS / DOWNLOAD BEHAVIOR (LOCKED) ==========
-    // ==========================================================
+    // =========================
+    // DOWNLOAD STATE + ICONS (LOCKED)
+    // =========================
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -335,12 +348,10 @@
     }
 
     function parsePercent(progressText) {
-      if (!progressText) return 0;
-      const match = String(progressText).match(/^(\d+)%$/);
+      const match = String(progressText || "").match(/^(\d+)%$/);
       if (!match) return 0;
       const n = Number(match[1]);
-      if (Number.isNaN(n)) return 0;
-      return Math.max(0, Math.min(100, n));
+      return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
     }
     function loadingIconSVG(percent) {
       const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
@@ -427,101 +438,9 @@
       }, 1200);
     }
 
-    // ==========================================================
-    // ========== CALIBRATION QUEUE (LOCKED) =====================
-    // ==========================================================
-    const baseCenter = new Map();
-    const baseTarget = new Map();
-    const apAxisByModel = new Map();
-
-    const calibrationQueue = [];
-    const calibrationQueued = new Set();
-    let calibrationRunning = false;
-
-    let swapInProgress = false;
-    function isSwapBusy(){ return swapInProgress; }
-
-    function enqueueCalibration(modelId) {
-      if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
-      if (calibrationQueued.has(modelId)) return;
-      calibrationQueued.add(modelId);
-      calibrationQueue.push(modelId);
-      runCalibrationQueueSoon();
-    }
-
-    function runCalibrationQueueSoon() {
-      setTimeout(runCalibrationQueue, 0);
-    }
-
-    function chooseApAxisForViewer(mv) {
-      let dims = null;
-      try { dims = mv.getDimensions?.() || null; } catch(_) {}
-      if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) return 'z';
-      return (dims.x >= dims.z) ? 'x' : 'z';
-    }
-
-    function captureAutoFrameBase(mv, modelId) {
-      if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
-
-      const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
-      const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
-
-      if (!baseCenter.has(modelId)) baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
-      if (!baseTarget.has(modelId)) baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
-
-      if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
-    }
-
-    async function calibrateModelInHiddenViewer(modelId) {
-      const st = state.get(modelId);
-      if (!st || st.status !== "done" || !st.blobUrl) return;
-      if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
-
-      const blobUrl = st.blobUrl;
-
-      if ((idleMv.src || "") === blobUrl) {
-        await new Promise(requestAnimationFrame);
-        await new Promise(requestAnimationFrame);
-        captureAutoFrameBase(idleMv, modelId);
-        return;
-      }
-
-      await new Promise((resolve) => {
-        const onLoad = () => resolve();
-        idleMv.addEventListener('load', onLoad, { once: true });
-        idleMv.src = blobUrl;
-      });
-
-      await new Promise(requestAnimationFrame);
-      await new Promise(requestAnimationFrame);
-
-      captureAutoFrameBase(idleMv, modelId);
-    }
-
-    async function runCalibrationQueue() {
-      if (calibrationRunning) return;
-      if (isSwapBusy()) return;
-
-      calibrationRunning = true;
-      try {
-        while (calibrationQueue.length) {
-          if (isSwapBusy()) return;
-          const id = calibrationQueue.shift();
-          calibrationQueued.delete(id);
-          try { await calibrateModelInHiddenViewer(id); } catch(_) {}
-        }
-      } finally {
-        calibrationRunning = false;
-      }
-    }
-
-    // ==========================================================
-    // ========== DOWNLOAD / BLOB (LOCKED) =======================
-    // ==========================================================
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
-
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
@@ -557,7 +476,6 @@
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             chunks.push(value);
             received += value.byteLength;
 
@@ -574,26 +492,27 @@
           st.progressText = "";
           st.blobUrl = blobUrl;
           refreshMeta(modelId);
+
           paintDownloading(null);
-
-          enqueueCalibration(modelId);
-
           maybeResumePreload();
           return blobUrl;
 
         } catch (err) {
           paintDownloading(null);
+
           if (err.name === "AbortError") {
             st.status = "paused";
             refreshMeta(modelId);
             maybeResumePreload();
             throw err;
           }
+
           st.status = "error";
           st.progressText = "";
           refreshMeta(modelId);
           maybeResumePreload();
           throw err;
+
         } finally {
           inFlight.delete(modelId);
         }
@@ -624,9 +543,9 @@
       }
     }
 
-    // ==========================================================
-    // ========== CAMERA CARRY OVER + AUTO-FRAME (LOCKED) ========
-    // ==========================================================
+    // =========================
+    // CAMERA CARRY OVER (LOCKED)
+    // =========================
     let cameraReady = false;
 
     function readCamFrom(mv) {
@@ -660,11 +579,75 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ==========================================================
-    // =================== ANNOTATIONS + OCCLUSION =================
-    // ==========================================================
+    // =========================
+    // MODEL CALIBRATION (LOCKED)
+    // =========================
+    const baseCenter = new Map(); // modelId -> Vector3
+    const baseTarget = new Map(); // modelId -> Vector3
+    const apAxisByModel = new Map(); // modelId -> 'x' | 'z'
+
+    function chooseApAxisForViewer(mv) {
+      let dims = null;
+      try { dims = mv.getDimensions?.() || null; } catch(_) {}
+      if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) return 'z';
+      return (dims.x >= dims.z) ? 'x' : 'z';
+    }
+
+    function captureAutoFrameBase(mv, modelId) {
+      if (!(baseCenter.has(modelId) && baseTarget.has(modelId))) {
+        const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
+        const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
+        if (!baseCenter.has(modelId)) baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
+        if (!baseTarget.has(modelId)) baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
+      }
+      if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+    }
+
+    // =========================
+    // HOTSPOTS
+    // =========================
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
+    }
+
+    function ensureHotspotElements(mv, modelId) {
+      clearHotspots(mv);
+      const anns = ANNOTATIONS[modelId] || [];
+      for (const a of anns) {
+        const btn = document.createElement('button');
+        btn.className = 'hotspot';
+        btn.setAttribute('slot', a.slotName);
+        btn.dataset.label = a.title;
+        btn.setAttribute('aria-label', a.title);
+        attachTip(btn);
+
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTip();
+          focusHotspot(a.slotName);
+        });
+
+        mv.appendChild(btn);
+      }
+    }
+
+    // =========================
+    // OCCLUSION (with bottom override)
+    // =========================
+    const RAYS_PER_BATCH = 5;
+    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
+    const EPS = 1e-4;
+    const TOL = 5;
+
+    const FORCE_VISIBLE_K = 5; // your rule
+
+    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor, finalizeRemaining, forcedVisible? }
+    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame }
+
+    function getMvScene(mv) {
+      const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
+      return sceneSym ? mv[sceneSym] : null;
     }
 
     function getPanDelta() {
@@ -674,29 +657,13 @@
       return new THREE.Vector3(cur.x - base.x, cur.y - base.y, cur.z - base.z);
     }
 
-    // ===== Occlusion knobs =====
-    const RAYS_PER_BATCH = 5;
-    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
-    const EPS = 1e-4;
-    const TOL = 5;
-
-    // Bottom override knobs (requested)
-    const FORCE_VISIBLE_K = 5;
-
-    const occState = new WeakMap();
-    const loopState = new WeakMap();
-
-    function getMvScene(mv) {
-      const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
-      return sceneSym ? mv[sceneSym] : null;
-    }
-
     function buildRaycastOccluders(mv, shift) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
-      scene.updateMatrixWorld?.(true);
 
+      scene.updateMatrixWorld?.(true);
       const occluders = [];
+
       scene.traverse(obj => {
         if (!obj || !obj.isMesh || !obj.geometry) return;
 
@@ -731,6 +698,7 @@
     function updateHotspotsAndPointMap(mv, modelId, shift) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return new Map();
+
       scene.updateMatrixWorld?.(true);
 
       const pointMap = new Map();
@@ -748,7 +716,6 @@
         const z = p.z + shift.z;
 
         const posStr = `${x}m ${y}m ${z}m`;
-
         try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
         catch {
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
@@ -757,7 +724,6 @@
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
       }
-
       return pointMap;
     }
 
@@ -776,7 +742,6 @@
       );
     }
 
-    // Compute forced-visible set once per frame for the active viewer
     function updateForcedVisible(mv) {
       const st = occState.get(mv);
       if (!st || !st.pointMap) return;
@@ -785,14 +750,7 @@
       const C0 = baseCenter.get(currentShownId);
       if (!camPos || !C0) return;
 
-      const below = camPos.y < C0.y; // ✅ "below base directly"
-
-      // frame stamp set by startLoop
-      const stamp = st._frameStamp || 0;
-      if (st._forcedStamp === stamp && st._forcedBelow === below) return;
-
-      st._forcedStamp = stamp;
-      st._forcedBelow = below;
+      const below = camPos.y < C0.y; // BELOW BASE DIRECTLY (your exact request)
 
       if (!below) {
         st.forcedVisible = null;
@@ -818,7 +776,7 @@
 
       updateForcedVisible(mv);
 
-      // forced-visible override when below baseCenter.y
+      // forced visible
       if (st.forcedVisible && st.forcedVisible.has(slot)) {
         const el = mv.querySelector(`[slot="${slot}"]`);
         if (el) el.classList.remove("occluded");
@@ -855,6 +813,7 @@
     function runBatch(mv, count) {
       const st = occState.get(mv);
       if (!st || !st.slots.length) return;
+
       for (let i = 0; i < count; i++) {
         const slot = st.slots[st.cursor];
         occludeOne(mv, slot);
@@ -871,14 +830,11 @@
 
       ls.lastMoveTs = performance.now();
       if (ls.running) return;
+
       ls.running = true;
 
       const tick = () => {
         ls.frame++;
-
-        // stamp frame for forced-visible cache
-        const st = occState.get(mv);
-        if (st) st._frameStamp = (st._frameStamp || 0) + 1;
 
         const now = performance.now();
         const moving = (now - ls.lastMoveTs) < 200;
@@ -891,6 +847,7 @@
           return;
         }
 
+        const st = occState.get(mv);
         if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
 
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
@@ -911,10 +868,12 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ==========================================================
-    // =================== FOCUS (ELLIPSE C* LOCKED) =============
-    // ==========================================================
+    // =========================
+    // FOCUS (ELLIPSE LOCKED)
+    // =========================
     const focusAnim = new WeakMap();
+    const ELL_A = 35;
+    const ELL_B = 10;
 
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
@@ -976,9 +935,6 @@
       focusAnim.set(mv, cur);
     }
 
-    const ELL_A = 35;
-    const ELL_B = 10;
-
     function focusHotspot(slotName){
       const st = occState.get(activeMv);
       if (!st || !st.pointMap) return;
@@ -991,7 +947,7 @@
 
       const apKey = apAxisByModel.get(currentShownId) || 'z';
       const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
-      const v = new THREE.Vector3(0,1,0);
+      const v = new THREE.Vector3(0,1,0); // SI = Y
 
       const rel = P.clone().sub(C0);
       let xp = rel.dot(u);
@@ -1031,36 +987,12 @@
       );
     }
 
-    function ensureHotspotElements(mv, modelId) {
-      clearHotspots(mv);
-      const anns = ANNOTATIONS[modelId] || [];
-      for (const a of anns) {
-        const btn = document.createElement('button');
-        btn.className = 'hotspot';
-        btn.setAttribute('slot', a.slotName);
-        btn.dataset.label = a.title;
-        btn.setAttribute('aria-label', a.title);
-        attachTip(btn);
-
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          hideTip();
-          focusHotspot(a.slotName);
-        });
-
-        mv.appendChild(btn);
-      }
-    }
-
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
 
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (!(baseCenter.has(modelId) && baseTarget.has(modelId))) {
-          captureAutoFrameBase(mv, modelId);
-        }
-        if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+        // ensure calibration exists
+        captureAutoFrameBase(mv, modelId);
 
         const delta = getPanDelta();
         const shift = baseCenter.get(modelId).clone().add(delta);
@@ -1070,7 +1002,7 @@
         const slots = Array.from(pointMap.keys());
 
         if (occluders && occluders.length && slots.length) {
-          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null, _frameStamp: 0 });
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null, forcedVisible: null });
         } else {
           occState.set(mv, null);
         }
@@ -1084,38 +1016,15 @@
       }));
     }
 
-    // ==========================================================
-    // =================== SHOW MODEL (LOCKED) ===================
-    // ==========================================================
+    // =========================
+    // MODEL SWAP (LOCKED)
+    // =========================
     let swapToken = 0;
-    let cameraReady = false;
-
-    function applyCamTo(mv, cam) {
-      if (!cam) return;
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
-    }
-    function readCamFrom(mv) {
-      if (!cameraReady || !mv || !mv.src) return null;
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      const f = mv.getFieldOfView?.();
-      if (!o || !t || typeof f !== "number") return null;
-      return {
-        orbit: { theta: o.theta, phi: o.phi, radius: o.radius },
-        target: { x: t.x, y: t.y, z: t.z },
-        fov: f
-      };
-    }
 
     async function showModel(modelId) {
       const token = ++swapToken;
-      swapInProgress = true;
 
+      // freeze camera at click time
       const camForThisSwap = readCamFrom(activeMv);
 
       selectedId = modelId;
@@ -1130,15 +1039,13 @@
         currentShownId = modelId;
         cameraReady = true;
         startLoop(activeMv);
-        swapInProgress = false;
-        runCalibrationQueueSoon();
       };
 
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
 
-        if (activeSrc === targetSrc) { swapInProgress = false; return; }
+        if (activeSrc === targetSrc) return;
 
         if (idleSrc === targetSrc) {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
@@ -1146,8 +1053,10 @@
           return;
         }
 
+        if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+
         const onIdleLoad = () => {
-          if (token !== swapToken) { swapInProgress = false; return; }
+          if (token !== swapToken) return;
           requestAnimationFrame(() => requestAnimationFrame(() => {
             if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
             finalizeSwap();
@@ -1155,13 +1064,15 @@
         };
         idleMv.addEventListener('load', onIdleLoad, { once:true });
 
-        if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
         idleMv.src = targetSrc;
         return;
       }
 
+      // not downloaded yet
+      if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+
       const onIdleLoad = () => {
-        if (token !== swapToken) { swapInProgress = false; return; }
+        if (token !== swapToken) return;
         requestAnimationFrame(() => requestAnimationFrame(() => {
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           finalizeSwap();
@@ -1169,15 +1080,18 @@
       };
       idleMv.addEventListener('load', onIdleLoad, { once:true });
 
-      if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
-        if (token !== swapToken) { swapInProgress = false; return; }
+        if (token !== swapToken) return;
+
+        if ((idleMv.src || "") === blobUrl) {
+          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+          finalizeSwap();
+          return;
+        }
+
         idleMv.src = blobUrl;
-      } catch (_) {
-        swapInProgress = false;
-      }
+      } catch (_) {}
     }
 
     function onUserSelect(modelId) {
@@ -1186,7 +1100,9 @@
       showModel(modelId);
     }
 
-    // init
+    // =========================
+    // INIT
+    // =========================
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
@@ -1196,7 +1112,7 @@
       maybeResumePreload();
     });
 
-    // Debug expose (unchanged)
+    // Debug helpers (optional)
     window.__dbg = window.__dbg || {};
     window.__dbg.getState = () => ({
       currentShownId,
