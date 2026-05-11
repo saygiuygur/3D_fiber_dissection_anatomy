@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Focus method: center-to-point line (no raycasts).
+        Focus method: center-to-point line (fixed center, consistent).
       </div>
     </div>
 
@@ -838,7 +838,7 @@
     }
 
     // ==========================================================
-    // ========== RADIAL CENTER-LINE FOCUS (IMPLEMENTED) ==========
+    // ========== CENTER-LINE FOCUS (FIXED) =======================
     // ==========================================================
     const focusAnim = new WeakMap(); // mv -> { rafId, token }
 
@@ -909,40 +909,24 @@
       const st = occState.get(mv);
       if (!st || !st.pointMap) return;
 
-      const P = st.pointMap.get(slotName);
+      const P = st.pointMap.get(slotName);          // shifted visible point
       if (!P) return;
 
       const orbit0 = mv.getCameraOrbit?.();
       const target0 = mv.getCameraTarget?.();
       if (!orbit0 || !target0) return;
 
-      // Center C in the SAME hotspot space as P:
-      // C = baseCenter(currentShown) + panDelta
-      const delta = getPanDelta();
-      const bc = baseCenter.get(currentShownId);
-      if (!bc) return;
-      const C = bc.clone().add(delta);
+      const delta = getPanDelta();                  // pan delta (shift)
+      const C0 = baseCenter.get(currentShownId);    // TRUE fixed calibrated center (unshifted)
+      if (!C0) return;
 
-      // Direction from center to point
-      const d = P.clone().sub(C);
-      if (d.length() < 1e-6) {
-        // fallback: keep angle, just target to P
-        const r0 = orbit0.radius;
-        const camPos0 = getCameraPositionHotspotSpace(mv);
-        if (!camPos0) return;
-        const dist = camPos0.distanceTo(P);
-        const desiredR = Math.max(0.01, dist * 0.65);
-        const r1 = Math.min(r0, desiredR);
-
-        animateCamera(mv,
-          {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
-          {theta: orbit0.theta, phi: orbit0.phi, radius: r1, target: P.clone()}
-        );
-        return;
-      }
+      // ✅ FIX: compute direction in UN-SHIFTED space
+      const P0 = P.clone().sub(delta);              // unshift the clicked point
+      const d = P0.clone().sub(C0);                 // center -> point
+      if (d.length() < 1e-6) return;
       d.normalize();
 
-      // Use the same radius logic you already like (zoom in only)
+      // radius rule (zoom-in only, same as before)
       const camPos0 = getCameraPositionHotspotSpace(mv);
       if (!camPos0) return;
       const distToPoint = camPos0.distanceTo(P);
@@ -951,7 +935,7 @@
       const desiredR = Math.max(0.01, distToPoint * 0.65);
       const r1 = Math.min(r0, desiredR);
 
-      // Place camera on the radial line: P + d * r1
+      // camera on the line: P + d * r1  (d is stable now)
       const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
       const off = camPos1.clone().sub(P);
       const o1 = orbitFromOffset(off);
