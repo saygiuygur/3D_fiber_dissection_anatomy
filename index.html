@@ -274,18 +274,14 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
-
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
-
         const meta = document.createElement('div');
         meta.className = "meta";
-
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
-
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
@@ -314,7 +310,6 @@
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
-
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
@@ -352,7 +347,6 @@
             if (done) break;
             chunks.push(value);
             received += value.byteLength;
-
             if (total) {
               st.progressText = `${Math.floor((received / total) * 100)}%`;
               refreshMeta(modelId);
@@ -441,15 +435,14 @@
       }
     }
 
-    // ===== Occlusion batching (requested) =====
+    // ===== Occlusion batching knobs =====
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
-
     const EPS = 1e-4;
-    const TOL = 0.002;
+    const TOL = 0.010; // 10 mm leeway as you requested earlier
 
-    const occState = new WeakMap();
-    const loopState = new WeakMap();
+    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor, finalizeRemaining }
+    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame, finalizing }
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -613,7 +606,6 @@
           return;
         }
 
-        // finalize quickly after stop (5 per frame, every frame)
         const st = occState.get(mv);
         if (!st || !st.slots.length) {
           ls.running = false; ls.rafId = 0;
@@ -659,7 +651,6 @@
           occState.set(mv, null);
         }
 
-        // initial small batch
         runBatch(mv, RAYS_PER_BATCH);
 
         if (!mv.__hasOccListener) {
@@ -669,7 +660,6 @@
       }));
     }
 
-    // model switching
     let swapToken = 0;
 
     async function showModel(modelId) {
