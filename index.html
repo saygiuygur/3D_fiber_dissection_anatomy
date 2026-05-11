@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Focus direction now uses <b>P - C</b> (hotspot minus calibrated center).
+        Focus: ellipse center-region (AP±35m, SI±10m) in X/Z + Y plane (SI = Y).
       </div>
     </div>
 
@@ -252,7 +252,7 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // Background selector (LOCKED)
+    // ===== Background selector (LOCKED) =====
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -270,7 +270,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // Toggle annotations (LOCKED)
+    // ===== Toggle annotations (LOCKED) =====
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hotspotTip.style.display = 'none';
@@ -285,7 +285,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // Tooltip (LOCKED)
+    // ===== Tooltip (LOCKED) =====
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -306,7 +306,9 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // Download icons / behavior (LOCKED)
+    // ==========================================================
+    // ========== ICONS / DOWNLOAD BEHAVIOR (LOCKED) ==========
+    // ==========================================================
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -425,9 +427,14 @@
       }, 1200);
     }
 
-    // Calibration (LOCKED)
-    const baseCenter = new Map();
-    const baseTarget = new Map();
+    // ==========================================================
+    // ========== CALIBRATION QUEUE (LOCKED) =====================
+    // ==========================================================
+    const baseCenter = new Map(); // modelId -> Vector3
+    const baseTarget = new Map(); // modelId -> Vector3
+
+    // cache AP axis choice per model (X or Z)
+    const apAxisByModel = new Map(); // modelId -> 'x' | 'z'
 
     const calibrationQueue = [];
     const calibrationQueued = new Set();
@@ -448,6 +455,17 @@
       setTimeout(runCalibrationQueue, 0);
     }
 
+    function chooseApAxisForViewer(mv) {
+      // SI is Y (fixed). AP should be longest bounding axis in X/Z only.
+      let dims = null;
+      try { dims = mv.getDimensions?.() || null; } catch(_) {}
+      if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) {
+        // fallback: default to Z
+        return 'z';
+      }
+      return (dims.x >= dims.z) ? 'x' : 'z';
+    }
+
     function captureAutoFrameBase(mv, modelId) {
       if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
 
@@ -456,6 +474,11 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
+
+      // also capture AP axis choice once we have a loaded model
+      if (!apAxisByModel.has(modelId)) {
+        apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+      }
     }
 
     async function calibrateModelInHiddenViewer(modelId) {
@@ -501,6 +524,9 @@
       }
     }
 
+    // ==========================================================
+    // ========== DOWNLOAD / BLOB (LOCKED) + enqueue calibration
+    // ==========================================================
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -607,7 +633,9 @@
       }
     }
 
-    // Camera carry-over (LOCKED)
+    // ==========================================================
+    // ========== CAMERA CARRY OVER + AUTO-FRAME (LOCKED) ========
+    // ==========================================================
     let cameraReady = false;
 
     function readCamFrom(mv) {
@@ -641,7 +669,9 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // Annotations + occlusion (LOCKED)
+    // ==========================================================
+    // =================== ANNOTATIONS + OCCLUSION =================
+    // ==========================================================
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -829,7 +859,9 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ===== Focus (ONLY CHANGE IS DIRECTION = P - C) =====
+    // ==========================================================
+    // =================== FOCUS (ELLIPSE C*) ====================
+    // ==========================================================
     const focusAnim = new WeakMap();
 
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
@@ -892,24 +924,47 @@
       focusAnim.set(mv, cur);
     }
 
+    // ellipse half-axes (meters)
+    const ELL_A = 35; // AP ±35m
+    const ELL_B = 10; // SI ±10m (Y)
+
     function focusHotspot(slotName){
       const st = occState.get(activeMv);
       if (!st || !st.pointMap) return;
 
-      const P = st.pointMap.get(slotName); // hotspot point (shifted)
+      const P = st.pointMap.get(slotName); // hotspot point
       if (!P) return;
 
-      const C = baseCenter.get(currentShownId); // calibrated center (fixed)
-      if (!C) return;
+      const C0 = baseCenter.get(currentShownId);
+      if (!C0) return;
+
+      // AP axis: X or Z (cached)
+      const apKey = apAxisByModel.get(currentShownId) || 'z';
+      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
+      const v = new THREE.Vector3(0,1,0); // SI axis fixed to +Y
+
+      // Project P to ellipse coordinates around center
+      const rel = P.clone().sub(C0);
+      let xp = rel.dot(u);
+      let yp = rel.dot(v);
+
+      const s = (xp*xp)/(ELL_A*ELL_A) + (yp*yp)/(ELL_B*ELL_B);
+      if (s > 1e-12 && s > 1) {
+        const k = 1 / Math.sqrt(s); // radial clamp to ellipse boundary
+        xp *= k;
+        yp *= k;
+      }
+      // Closest point inside ellipse (in AP–SI plane)
+      const Cstar = C0.clone().add(u.clone().multiplyScalar(xp)).add(v.clone().multiplyScalar(yp));
+
+      // Direction from C* to P (prevents extreme steep for far AP points)
+      const d = P.clone().sub(Cstar);
+      if (d.length() < 1e-6) return;
+      d.normalize();
 
       const orbit0 = activeMv.getCameraOrbit?.();
       const target0 = activeMv.getCameraTarget?.();
       if (!orbit0 || !target0) return;
-
-      // ✅ ONLY CHANGE: direction uses P - C (NO delta math)
-      const d = P.clone().sub(C);
-      if (d.length() < 1e-6) return;
-      d.normalize();
 
       // zoom rule (unchanged): zoom-in only based on current camera distance to P
       const camPos0 = getCameraPositionHotspotSpace(activeMv);
@@ -959,6 +1014,10 @@
         if (!(baseCenter.has(modelId) && baseTarget.has(modelId))) {
           captureAutoFrameBase(mv, modelId);
         }
+        // also ensure AP axis cached for this model
+        if (!apAxisByModel.has(modelId)) {
+          apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+        }
 
         const delta = getPanDelta();
         const shift = baseCenter.get(modelId).clone().add(delta);
@@ -982,7 +1041,9 @@
       }));
     }
 
-    // Show model (LOCKED)
+    // ==========================================================
+    // =================== SHOW MODEL (LOCKED) ===================
+    // ==========================================================
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -1077,14 +1138,11 @@
       baseTarget: baseTarget.get(currentShownId) || null,
       cameraTarget: activeMv.getCameraTarget?.() || null,
       cameraOrbit: activeMv.getCameraOrbit?.() || null,
+      apAxis: apAxisByModel.get(currentShownId) || null,
       baseCenterSize: baseCenter.size,
       baseTargetSize: baseTarget.size
     });
     window.__dbg.getHotspotPos = (slot) => activeMv.queryHotspot?.(slot)?.position || null;
-    window.__dbg.listBases = () => ({
-      centers: Array.from(baseCenter.entries()).map(([k,v]) => ({ id:k, x:v.x, y:v.y, z:v.z })),
-      targets: Array.from(baseTarget.entries()).map(([k,v]) => ({ id:k, x:v.x, y:v.y, z:v.z })),
-    });
   </script>
 </body>
 </html>
