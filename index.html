@@ -71,6 +71,9 @@
       width:100%;
       height:100%;
       background:var(--viewer-bg);
+
+      /* ✅ ONLY CHANGE: disable model-viewer hotspot fading */
+      --min-hotspot-opacity: 1;
     }
 
     .hiddenViewer { visibility: hidden; pointer-events: none; }
@@ -439,10 +442,10 @@
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
-    const TOL = 5; // 5 m leeway
+    const TOL = 5; // 5m leeway
 
-    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor, finalizeRemaining }
-    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame, finalizing }
+    const occState = new WeakMap();
+    const loopState = new WeakMap();
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -660,6 +663,7 @@
       }));
     }
 
+    // model switching
     let swapToken = 0;
 
     async function showModel(modelId) {
