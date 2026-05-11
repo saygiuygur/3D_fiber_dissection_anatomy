@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Calibration: each model auto-frames once in the hidden viewer to lock base coordinates.
+        Perpendicular focus: uses raycast normal and moves camera to be fully orthogonal to surface.
       </div>
     </div>
 
@@ -252,7 +252,7 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // ===== Background selector (UNCHANGED) =====
+    // ===== Background selector (unchanged) =====
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -270,7 +270,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (UNCHANGED) =====
+    // ===== Toggle annotations (unchanged) =====
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hotspotTip.style.display = 'none';
@@ -285,7 +285,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // ===== Tooltip (unchanged behavior) =====
+    // ===== Tooltip =====
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -428,14 +428,17 @@
     }
 
     // ==========================================================
-    // ========== CALIBRATION QUEUE (NEW) ========================
+    // ========== CALIBRATION QUEUE (LOCKED) =====================
     // ==========================================================
-    const baseCenter = new Map(); // modelId -> THREE.Vector3
-    const baseTarget = new Map(); // modelId -> THREE.Vector3
+    const baseCenter = new Map();
+    const baseTarget = new Map();
 
     const calibrationQueue = [];
     const calibrationQueued = new Set();
     let calibrationRunning = false;
+
+    let swapInProgress = false;
+    function isSwapBusy(){ return swapInProgress; }
 
     function enqueueCalibration(modelId) {
       if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
@@ -446,12 +449,7 @@
     }
 
     function runCalibrationQueueSoon() {
-      // run in idle time so it won't compete with user interactions
       setTimeout(runCalibrationQueue, 0);
-    }
-
-    function isSwapBusy() {
-      return swapInProgress;
     }
 
     function captureAutoFrameBase(mv, modelId) {
@@ -469,11 +467,8 @@
       if (!st || st.status !== "done" || !st.blobUrl) return;
       if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
 
-      // We only touch the HIDDEN viewer
-      // and we do NOT apply any carried camera during calibration.
       const blobUrl = st.blobUrl;
 
-      // If idle already has this src loaded and it is calibrated, just capture and return.
       if ((idleMv.src || "") === blobUrl) {
         await new Promise(requestAnimationFrame);
         await new Promise(requestAnimationFrame);
@@ -481,14 +476,12 @@
         return;
       }
 
-      // Load model in hidden viewer, allow native auto-frame
       await new Promise((resolve) => {
         const onLoad = () => resolve();
         idleMv.addEventListener('load', onLoad, { once: true });
         idleMv.src = blobUrl;
       });
 
-      // Wait for auto-frame to settle
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
 
@@ -497,28 +490,21 @@
 
     async function runCalibrationQueue() {
       if (calibrationRunning) return;
-      if (isSwapBusy()) return; // don't fight with swaps
+      if (isSwapBusy()) return;
 
       calibrationRunning = true;
       try {
         while (calibrationQueue.length) {
-          if (isSwapBusy()) return; // stop immediately if user swaps
+          if (isSwapBusy()) return;
           const id = calibrationQueue.shift();
           calibrationQueued.delete(id);
-          try {
-            await calibrateModelInHiddenViewer(id);
-          } catch (_) {
-            // ignore calibration errors; user can still load normally
-          }
+          try { await calibrateModelInHiddenViewer(id); } catch(_) {}
         }
       } finally {
         calibrationRunning = false;
       }
     }
 
-    // ==========================================================
-    // ========== DOWNLOAD / BLOB (UNCHANGED) + enqueue calibration
-    // ==========================================================
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -575,10 +561,8 @@
           st.progressText = "";
           st.blobUrl = blobUrl;
           refreshMeta(modelId);
-
           paintDownloading(null);
 
-          // NEW: schedule calibration once blob exists
           enqueueCalibration(modelId);
 
           maybeResumePreload();
@@ -628,7 +612,7 @@
     }
 
     // ==========================================================
-    // ========== CAMERA CARRY OVER + AUTO-FRAME (UNCHANGED) =====
+    // ========== CAMERA CARRY OVER + AUTO-FRAME (LOCKED) ========
     // ==========================================================
     let cameraReady = false;
 
@@ -664,7 +648,7 @@
     }
 
     // ==========================================================
-    // =================== ANNOTATIONS + FOCUS ===================
+    // ================= ANNOTATIONS + OCCLUSION =================
     // ==========================================================
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
@@ -764,8 +748,10 @@
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
       if (!o || !t) return null;
+
       const theta = o.theta, phi = o.phi, r = o.radius;
       const sinPhi = Math.sin(phi);
+
       return new THREE.Vector3(
         t.x + r * sinPhi * Math.sin(theta),
         t.y + r * Math.cos(phi),
@@ -851,46 +837,111 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus (unchanged from your stable version)
-    const focusAnim = new WeakMap();
+    // ==========================================================
+    // ========== PERPENDICULAR FOCUS (NEW) =======================
+    // ==========================================================
+    const focusAnim = new WeakMap(); // mv -> { rafId, token }
+
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
     function easeInOutCubic(t){
       return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
     }
+    function lerpAngleRad(a, b, t){
+      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
+      return a + d * t;
+    }
 
-    function focusOnSlot(mv, slotName){
+    function orbitFromOffset(off) {
+      const r = off.length();
+      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
+      const phi = Math.acos(clamp(off.y / r, -1, 1));
+      const theta = Math.atan2(off.x, off.z);
+      return { theta, phi, radius: r };
+    }
+
+    function focusOnSlotPerpendicular(mv, slotName){
       const st = occState.get(mv);
-      if (!st || !st.pointMap) return;
+      if (!st || !st.pointMap || !st.occluders) return;
+
       const P = st.pointMap.get(slotName);
       if (!P) return;
 
-      const o0 = mv.getCameraOrbit?.();
-      const t0 = mv.getCameraTarget?.();
-      if (!o0 || !t0) return;
+      const orbit0 = mv.getCameraOrbit?.();
+      const target0 = mv.getCameraTarget?.();
+      if (!orbit0 || !target0) return;
 
-      const theta = o0.theta, phi = o0.phi, r0 = o0.radius;
-      const sinPhi = Math.sin(phi);
-      const camPos = new THREE.Vector3(
-        t0.x + r0 * sinPhi * Math.sin(theta),
-        t0.y + r0 * Math.cos(phi),
-        t0.z + r0 * sinPhi * Math.cos(theta)
+      const camPos0 = getCameraPositionHotspotSpace(mv);
+      if (!camPos0) return;
+
+      // Raycast from camera -> point to find surface + normal
+      const dirToP = P.clone().sub(camPos0);
+      const distToP = dirToP.length();
+      if (distToP < 1e-6) return;
+      dirToP.normalize();
+
+      st.raycaster.set(camPos0, dirToP);
+      st.raycaster.near = 0;
+      st.raycaster.far = distToP + 1e-3;
+
+      const hits = st.raycaster.intersectObjects(st.occluders, true);
+
+      // Fallback: if no hit, do old focus (keep angle, target to P)
+      if (!hits || !hits.length || !hits[0].point) {
+        // simple stable focus fallback
+        const r0 = orbit0.radius;
+        const desired = Math.max(0.01, distToP * 0.65);
+        const r1 = Math.min(r0, desired);
+        animateCamera(mv,
+          {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
+          {theta: orbit0.theta, phi: orbit0.phi, radius: r1, target: P.clone()}
+        );
+        return;
+      }
+
+      const hit = hits[0];
+      const surfacePoint = hit.point.clone();
+
+      // Normal (best effort)
+      let N = null;
+      if (hit.face && hit.face.normal) {
+        N = hit.face.normal.clone().normalize();
+      }
+      if (!N) {
+        // If face normal missing, approximate by pointing from surface to camera
+        N = camPos0.clone().sub(surfacePoint).normalize();
+      }
+
+      // Ensure N faces camera
+      const camSide = camPos0.clone().sub(surfacePoint).normalize();
+      if (camSide.dot(N) < 0) N.multiplyScalar(-1);
+
+      // Choose radius: zoom in a bit but not too much
+      const r0 = orbit0.radius;
+      const dSurf = camPos0.distanceTo(surfacePoint);
+      const desiredR = Math.max(0.01, dSurf * 0.60);
+      const r1 = Math.min(r0, desiredR);
+
+      // Perpendicular camera position: surfacePoint + N * r1
+      const camPos1 = surfacePoint.clone().add(N.clone().multiplyScalar(r1));
+      const off = camPos1.clone().sub(surfacePoint);
+
+      const o1 = orbitFromOffset(off);
+
+      animateCamera(mv,
+        {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
+        {theta: o1.theta, phi: o1.phi, radius: r1, target: surfacePoint}
       );
+    }
 
-      const distToPoint = camPos.distanceTo(P);
-      const rMin = 0.01;
-      const desired = Math.max(rMin, distToPoint * 0.65);
-      const r1 = Math.min(r0, desired);
-
-      const tStart = new THREE.Vector3(t0.x, t0.y, t0.z);
-      const tEnd = P.clone();
-
+    function animateCamera(mv, from, to) {
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
+
       const token = (prev?.token ?? 0) + 1;
       focusAnim.set(mv, { rafId: 0, token });
 
-      const duration = 520;
+      const duration = 560;
       const start = performance.now();
 
       const tick = (now) => {
@@ -900,13 +951,16 @@
         const tt = clamp((now - start) / duration, 0, 1);
         const e = easeInOutCubic(tt);
 
-        const tx = lerp(tStart.x, tEnd.x, e);
-        const ty = lerp(tStart.y, tEnd.y, e);
-        const tz = lerp(tStart.z, tEnd.z, e);
-        const rr = lerp(r0, r1, e);
+        const tx = lerp(from.target.x, to.target.x, e);
+        const ty = lerp(from.target.y, to.target.y, e);
+        const tz = lerp(from.target.z, to.target.z, e);
+
+        const th = lerpAngleRad(from.theta, to.theta, e);
+        const ph = lerpAngleRad(from.phi,   to.phi,   e);
+        const rr = lerp(from.radius, to.radius, e);
 
         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
-        mv.cameraOrbit  = `${theta}rad ${phi}rad ${rr}m`;
+        mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
 
         if (tt < 1) {
           cur.rafId = requestAnimationFrame(tick);
@@ -940,7 +994,7 @@
           e.preventDefault();
           e.stopPropagation();
           hideTip();
-          focusOnSlot(mv, a.slotName);
+          focusOnSlotPerpendicular(mv, a.slotName);
         });
 
         mv.appendChild(btn);
@@ -951,11 +1005,10 @@
       ensureHotspotElements(mv, modelId);
 
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        // If base is still missing for some reason, capture from current (fallback)
         if (!(baseCenter.has(modelId) && baseTarget.has(modelId))) {
           captureAutoFrameBase(mv, modelId);
         }
-        // shift = baseCenter(modelId) + panDelta(currentShown)
+
         const delta = getPanDelta();
         const shift = baseCenter.get(modelId).clone().add(delta);
 
@@ -979,10 +1032,9 @@
     }
 
     // ==========================================================
-    // =================== SHOW MODEL ============================
+    // =================== SHOW MODEL (LOCKED) ===================
     // ==========================================================
     let swapToken = 0;
-    let swapInProgress = false;
 
     async function showModel(modelId) {
       const token = ++swapToken;
@@ -1003,8 +1055,6 @@
         cameraReady = true;
         startLoop(activeMv);
         swapInProgress = false;
-
-        // after swap, let calibration continue if queued
         runCalibrationQueueSoon();
       };
 
