@@ -112,7 +112,7 @@
       white-space: nowrap;
     }
 
-    /* ===== Toggle annotations UI ===== */
+    /* Toggle annotations UI */
     .toggle-row{
       display:flex;
       align-items:center;
@@ -159,7 +159,6 @@
     .switch input:checked + .slider{ background:#35c759; }
     .switch input:checked + .slider:before{ transform: translateX(22px); }
 
-    /* When OFF: hide hotspots + tooltip */
     .annOff .hotspot{ display:none !important; }
     .annOff #hotspotTip{ display:none !important; }
   </style>
@@ -171,7 +170,6 @@
       <h3 style="margin:6px 0 12px;">Models</h3>
       <div id="list"></div>
 
-      <!-- Toggle annotations -->
       <div class="toggle-row">
         <div class="toggle-title">Toggle annotations</div>
         <label class="switch" title="Toggle annotations">
@@ -259,7 +257,7 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    /* Tooltip */
+    // Tooltip
     function showTip(text, clientX, clientY){
       if (!text) return;
       hotspotTip.textContent = text;
@@ -276,7 +274,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    /* Toggle annotations */
+    // Toggle annotations
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) hideTip();
@@ -291,7 +289,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    /* Background */
+    // Background
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -309,7 +307,22 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    /* Download/progress icons */
+    // ===== Camera logic (ONLY FIRST LOAD auto-frame, then carry over) =====
+    let hasEverShownAModel = false;
+
+    function readCamera(mv){
+      const o = mv.getCameraOrbit?.();
+      const t = mv.getCameraTarget?.();
+      if (!o || !t) return null;
+      return { theta:o.theta, phi:o.phi, radius:o.radius, tx:t.x, ty:t.y, tz:t.z };
+    }
+    function applyCamera(mv, cam){
+      if (!cam) return;
+      mv.cameraOrbit = `${cam.theta}rad ${cam.phi}rad ${cam.radius}m`;
+      mv.cameraTarget = `${cam.tx}m ${cam.ty}m ${cam.tz}m`;
+    }
+
+    // Download/progress icons
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -392,18 +405,14 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
-
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
-
         const meta = document.createElement('div');
         meta.className = "meta";
-
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
-
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
@@ -543,7 +552,6 @@
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
-    /* Hotspots: keep tooltip system, no native title tooltip */
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -552,6 +560,7 @@
         btn.className = 'hotspot';
         btn.setAttribute('slot', a.slotName);
 
+        // no native tooltip
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
 
@@ -725,13 +734,18 @@
         const moving = (now - ls.lastMoveTs) < 200;
 
         if (moving) {
-          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) runBatch(mv, RAYS_PER_BATCH);
+          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) {
+            runBatch(mv, RAYS_PER_BATCH);
+          }
           ls.rafId = requestAnimationFrame(tick);
           return;
         }
 
         const st = occState.get(mv);
-        if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
+        if (!st || !st.slots.length) {
+          ls.running = false; ls.rafId = 0;
+          return;
+        }
 
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
 
@@ -739,8 +753,13 @@
         runBatch(mv, toDo);
         st.finalizeRemaining -= toDo;
 
-        if (st.finalizeRemaining > 0) ls.rafId = requestAnimationFrame(tick);
-        else { st.finalizeRemaining = null; ls.running = false; ls.rafId = 0; }
+        if (st.finalizeRemaining > 0) {
+          ls.rafId = requestAnimationFrame(tick);
+        } else {
+          st.finalizeRemaining = null;
+          ls.running = false;
+          ls.rafId = 0;
+        }
       };
 
       ls.rafId = requestAnimationFrame(tick);
@@ -771,10 +790,11 @@
 
     let swapToken = 0;
 
-    /* IMPORTANT: camera behavior is exactly like the reference code:
-       - no camera snapshot/carry-over logic at all */
     async function showModel(modelId) {
       const token = ++swapToken;
+
+      // snapshot camera ONLY after first model has been shown
+      const camSnapshot = hasEverShownAModel ? readCamera(activeMv) : null;
 
       selectedId = modelId;
       paintActive();
@@ -782,10 +802,20 @@
       const st = state.get(modelId);
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-      const finalizeSwap = () => {
+      const finalizeSwap = async () => {
+        // carry camera ONLY after first model has been shown
+        if (camSnapshot) {
+          applyCamera(idleMv, camSnapshot);
+          // buffer frame (as before)
+          await new Promise(requestAnimationFrame);
+        }
+
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
         startLoop(activeMv);
+
+        // after first successful show, enable camera carry forever
+        hasEverShownAModel = true;
       };
 
       const onIdleLoad = () => {
@@ -819,7 +849,7 @@
       showModel(modelId);
     }
 
-    /* init */
+    // init
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
