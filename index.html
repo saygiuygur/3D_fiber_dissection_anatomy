@@ -77,7 +77,7 @@
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
-    /* Dot-only hotspot */
+    /* Dot-only marker */
     .hotspot{
       width: 14px;
       height: 14px;
@@ -88,10 +88,6 @@
       cursor: default;
       transform: translate(-50%, -50%);
       box-sizing: border-box;
-    }
-    .hotspot.occluded{
-      opacity: 0;
-      pointer-events: none;
     }
   </style>
 </head>
@@ -112,32 +108,27 @@
       </div>
 
       <div class="small">
-        Hotspots are hidden when truly occluded (raycast).<br>
-        Loading icons restored.
+        First load: auto-frame once.<br>
+        Then camera is preserved across model switches.<br>
+        Dots have no labels; hover shows the name.
       </div>
     </div>
 
     <div class="viewer-wrap">
       <model-viewer id="mvA" class="viewer shownViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1">
-      </model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+
       <model-viewer id="mvB" class="viewer hiddenViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1">
-      </model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
     </div>
   </div>
 
-  <!-- IMPORTANT: use module so we can import THREE reliably -->
-  <script type="module">
-    import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
-
-    // ---------------- Models ----------------
+  <script>
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" }
     ];
 
-    // ---------------- Anchor names ----------------
     const MODEL01_NAMES = [
       "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
       "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -167,12 +158,12 @@
         title: name
       }));
     }
+
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
     };
 
-    // ---------------- DOM ----------------
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
@@ -180,9 +171,30 @@
 
     let activeMv = mvA;
     let idleMv = mvB;
+
     let selectedId = MODELS[0].id;
 
-    // ---------------- Download + UI state (restored) ----------------
+    // camera carry AFTER first auto-frame
+    let hasInitialFraming = false;
+    let savedCamera = null; // {orbit:{theta,phi,radius}, target:{x,y,z}, fov}
+
+    // ---------- Background selector ----------
+    function applyBackgroundColor(color) {
+      document.documentElement.style.setProperty('--viewer-bg', color);
+      try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
+      bgOptions.querySelectorAll('.swatch').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
+      });
+    }
+    function initBackgroundSelector() {
+      bgOptions.querySelectorAll('.swatch').forEach(btn => btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color)));
+      let saved = null;
+      try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
+      const valid = ["#ffffff","#808080","#000000"];
+      applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
+    }
+
+    // ---------- Download/progress state ----------
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -199,25 +211,15 @@
     const rowEls = new Map();
     let downloadingVisualId = null;
 
-    // ---- background selector ----
-    function applyBackgroundColor(color) {
-      document.documentElement.style.setProperty('--viewer-bg', color);
-      try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
-      bgOptions.querySelectorAll('.swatch').forEach(btn => {
-        btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
-      });
+    function paintDownloading(idOrNull) {
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      downloadingVisualId = idOrNull;
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
     }
-    function initBackgroundSelector() {
-      bgOptions.querySelectorAll('.swatch').forEach(btn => {
-        btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color));
-      });
-      let saved = null;
-      try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
-      const valid = ["#ffffff","#808080","#000000"];
-      applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
+    function paintActive() {
+      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
     }
 
-    // ---- loading icons ----
     function parsePercent(progressText) {
       const match = String(progressText || "").match(/^(\d+)%$/);
       if (!match) return 0;
@@ -226,9 +228,7 @@
     }
 
     function loadingIconSVG(percent) {
-      const r = 7;
-      const c = 2 * Math.PI * r;
-      const offset = c * (1 - percent / 100);
+      const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
       return `
         <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
@@ -273,15 +273,6 @@
       meta.innerHTML = "";
     }
 
-    // ---- list UI ----
-    function paintDownloading(idOrNull) {
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
-      downloadingVisualId = idOrNull;
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
-    }
-    function paintActive() {
-      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
-    }
     function buildListOnce() {
       list.innerHTML = "";
       for (const m of MODELS) {
@@ -307,7 +298,6 @@
       paintDownloading(null);
     }
 
-    // ---- preload helpers ----
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -325,10 +315,10 @@
       }, 1200);
     }
 
-    // ---- download ----
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
+
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
@@ -367,8 +357,10 @@
             chunks.push(value);
             received += value.byteLength;
 
-            st.progressText = total ? `${Math.floor((received / total) * 100)}%` : "";
-            refreshMeta(modelId);
+            if (total) {
+              st.progressText = `${Math.floor((received / total) * 100)}%`;
+              refreshMeta(modelId);
+            }
           }
 
           const blob = new Blob(chunks, { type: "model/gltf-binary" });
@@ -422,29 +414,27 @@
       }
     }
 
-    // ---------------- Camera math ----------------
-    function readCameraOrbit(mv) {
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      if (!o || !t) return null;
-      return { theta:o.theta, phi:o.phi, radius:o.radius, target:{x:t.x,y:t.y,z:t.z} };
-    }
-    function orbitToPosition({theta, phi, radius, target}) {
-      const sinPhi = Math.sin(phi);
+    // ---------- Camera helpers ----------
+    function readCamera(mv) {
+      const orbit = mv.getCameraOrbit?.();
+      const target = mv.getCameraTarget?.();
+      const fov = mv.getFieldOfView?.();
+      if (!orbit || !target || typeof fov !== "number") return null;
       return {
-        x: target.x + radius * sinPhi * Math.sin(theta),
-        y: target.y + radius * Math.cos(phi),
-        z: target.z + radius * sinPhi * Math.cos(theta)
+        orbit: { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov
       };
     }
-    function applyCamTo(mv, cam) {
+
+    function applyCamera(mv, cam) {
       if (!cam) return;
-      mv.cameraOrbit = `${cam.theta}rad ${cam.phi}rad ${cam.radius}m`;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
       mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+      mv.fieldOfView = `${cam.fov}deg`;
       if (typeof mv.jumpCameraToGoal === "function") { try { mv.jumpCameraToGoal(); } catch (_) {} }
     }
 
-    // ---------------- Double buffer swap ----------------
     function swapViewersNow() {
       activeMv.classList.remove('shownViewer');
       activeMv.classList.add('hiddenViewer');
@@ -453,15 +443,11 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // ---------------- Scene access ----------------
+    // ---------- Annotations (your working bbox center offset) ----------
     function getThreeScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
     }
-
-    // ---------------- Hotspots + occlusion ----------------
-    const occlusionData = new WeakMap();
-    const occlusionTimers = new WeakMap();
 
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
@@ -482,22 +468,25 @@
       }
     }
 
-    function updateHotspotsPositions(mv, modelId) {
+    function updateHotspotsFromAnchors(mv, modelId) {
+      const anns = ANNOTATIONS[modelId] || [];
+      if (!anns.length) return;
+
       const scene = getThreeScene(mv);
       if (!scene || typeof scene.getObjectByName !== 'function') return;
+
       if (typeof scene.updateMatrixWorld === 'function') scene.updateMatrixWorld(true);
 
       const center = mv.getBoundingBoxCenter?.() || { x: 0, y: 0, z: 0 };
-      const anns = ANNOTATIONS[modelId] || [];
 
       for (const a of anns) {
         const obj = scene.getObjectByName(a.anchor);
         if (!obj) continue;
 
-        const p = new THREE.Vector3();
+        const V3 = obj.position.constructor;
+        const p = new V3();
         obj.getWorldPosition(p);
 
-        // hotspot-space = glTF-space + bbox center offset (your working fix)
         const x = p.x + center.x;
         const y = p.y + center.y;
         const z = p.z + center.z;
@@ -506,107 +495,51 @@
         try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
         catch {
           const el = mv.querySelector(`[slot="${a.slotName}"]`);
-          if (el) el.dataset.position = posStr;
+          if (el) { el.dataset.position = posStr; el.dataset.normal = "0m 1m 0m"; }
         }
       }
     }
 
-    function prepareOcclusionData(mv, modelId) {
-      const scene = getThreeScene(mv);
-      if (!scene || typeof scene.traverse !== 'function') {
-        occlusionData.set(mv, null);
-        return;
-      }
-      if (typeof scene.updateMatrixWorld === 'function') scene.updateMatrixWorld(true);
-
-      // collect meshes
-      const meshes = [];
-      scene.traverse(o => { if (o && o.isMesh) meshes.push(o); });
-
-      // store glTF-space positions per slot
-      const anns = ANNOTATIONS[modelId] || [];
-      const positionsGltf = new Map();
-      for (const a of anns) {
-        const obj = scene.getObjectByName?.(a.anchor);
-        if (!obj) continue;
-        const p = new THREE.Vector3();
-        obj.getWorldPosition(p);
-        positionsGltf.set(a.slotName, p.clone());
-      }
-
-      occlusionData.set(mv, { meshes, positionsGltf, modelId });
-    }
-
-    function runOcclusion(mv) {
-      const data = occlusionData.get(mv);
-      if (!data) return;
-      const { meshes, positionsGltf } = data;
-      if (!meshes?.length || !positionsGltf?.size) return;
-
-      const cam = readCameraOrbit(mv);
-      if (!cam) return;
-
-      const center = mv.getBoundingBoxCenter?.() || { x: 0, y: 0, z: 0 };
-
-      // camera in hotspot-space -> convert to glTF-space by subtracting center
-      const camHot = orbitToPosition(cam);
-      const origin = new THREE.Vector3(camHot.x - center.x, camHot.y - center.y, camHot.z - center.z);
-
-      const raycaster = new THREE.Raycaster();
-      const EPS = 1e-4;
-
-      for (const [slotName, point] of positionsGltf.entries()) {
-        const dir = point.clone().sub(origin);
-        const dist = dir.length();
-        if (dist < EPS) continue;
-
-        dir.normalize();
-        raycaster.set(origin, dir);
-        raycaster.far = dist - EPS;
-
-        const hits = raycaster.intersectObjects(meshes, true);
-        const occluded = hits.length > 0;
-
-        const el = mv.querySelector(`[slot="${slotName}"]`);
-        if (el) el.classList.toggle("occluded", occluded);
-      }
-    }
-
-    function scheduleOcclusion(mv) {
-      const prev = occlusionTimers.get(mv);
-      if (prev) clearTimeout(prev);
-      const t = setTimeout(() => runOcclusion(mv), 80);
-      occlusionTimers.set(mv, t);
-    }
-
     function prepareAnnotationsForViewer(mv, modelId) {
       ensureHotspotElements(mv, modelId);
-
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        updateHotspotsPositions(mv, modelId);
-        prepareOcclusionData(mv, modelId);
-        runOcclusion(mv);
+        updateHotspotsFromAnchors(mv, modelId);
       }));
-
-      // avoid duplicate listeners
-      if (!mv.__hasOcclusionListener) {
-        mv.addEventListener("camera-change", () => scheduleOcclusion(mv), { passive:true });
-        mv.__hasOcclusionListener = true;
-      }
     }
 
-    // ---------------- show model ----------------
+    // ---------- Show model ----------
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
-      const cam = readCameraOrbit(activeMv);
+
+      // Capture camera from active view only AFTER initial framing exists
+      const camForSwap = hasInitialFraming ? readCamera(activeMv) : null;
 
       selectedId = modelId;
       paintActive();
 
       const st = state.get(modelId);
       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
+
+      const finalizeSwap = () => {
+        // if we have a camera already, carry it
+        if (camForSwap) applyCamera(idleMv, camForSwap);
+
+        // annotations AFTER settle
+        prepareAnnotationsForViewer(idleMv, modelId);
+
+        // swap visible
+        swapViewersNow();
+
+        // On the very first successful display, capture centered camera AFTER settle
+        if (!hasInitialFraming) {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            savedCamera = readCamera(activeMv);
+            hasInitialFraming = true;
+          }));
+        }
+      };
 
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
@@ -615,48 +548,31 @@
         if (activeSrc === targetSrc) return;
 
         if (idleSrc === targetSrc) {
-          if (cam) applyCamTo(idleMv, cam);
-          prepareAnnotationsForViewer(idleMv, modelId);
-          swapViewersNow();
-          scheduleOcclusion(activeMv);
+          finalizeSwap();
           return;
         }
 
-        if (cam) applyCamTo(idleMv, cam);
-
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            if (cam) applyCamTo(idleMv, cam);
-            prepareAnnotationsForViewer(idleMv, modelId);
-            swapViewersNow();
-            scheduleOcclusion(activeMv);
-          }));
+          requestAnimationFrame(() => requestAnimationFrame(() => finalizeSwap()));
         };
-        idleMv.addEventListener("load", onIdleLoad, { once:true });
+        idleMv.addEventListener('load', onIdleLoad, { once:true });
 
         idleMv.src = targetSrc;
         return;
       }
 
-      if (cam) applyCamTo(idleMv, cam);
-
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (cam) applyCamTo(idleMv, cam);
-          prepareAnnotationsForViewer(idleMv, modelId);
-          swapViewersNow();
-          scheduleOcclusion(activeMv);
-        }));
+        requestAnimationFrame(() => requestAnimationFrame(() => finalizeSwap()));
       };
-      idleMv.addEventListener("load", onIdleLoad, { once:true });
+      idleMv.addEventListener('load', onIdleLoad, { once:true });
 
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
         if (token !== swapToken) return;
         idleMv.src = blobUrl;
-      } catch {}
+      } catch (_) {}
     }
 
     function onUserSelect(modelId) {
@@ -665,9 +581,11 @@
       showModel(modelId);
     }
 
-    // ---------------- init ----------------
+    // ---------- INIT ----------
     buildListOnce();
     initBackgroundSelector();
+
+    // First model: let model-viewer auto-frame (no camera forcing)
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
