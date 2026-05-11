@@ -92,7 +92,7 @@
         Click annotation dot to focus (smooth).<br>
         Icons + download behavior unchanged.<br>
         Camera carry-over + initial auto-frame unchanged.<br>
-        PanDelta now uses cameraTarget GOAL (fix).
+        Base annotation origin captured ONLY at auto-frame time.
       </div>
     </div>
 
@@ -162,6 +162,7 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
+    // === base captured ONLY at auto-frame time (never overwritten) ===
     const baseCenter = new Map(); // modelId -> THREE.Vector3
     const baseTarget = new Map(); // modelId -> THREE.Vector3
 
@@ -452,38 +453,10 @@
     // ==========================================================
     // =================== ANNOTATIONS ===========================
     // ==========================================================
-
-    // NEW: parse cameraTarget goal string like "1m 2m 3m"
-    function parseTargetString(s) {
-      if (!s || typeof s !== "string") return null;
-      const parts = s.trim().split(/\s+/);
-      if (parts.length < 3) return null;
-      const nums = parts.slice(0,3).map(p => Number(String(p).replace("m","")));
-      if (nums.some(n => !Number.isFinite(n))) return null;
-      return new THREE.Vector3(nums[0], nums[1], nums[2]);
-    }
-
-    function getCameraTargetGoal(mv) {
-      // Prefer goal string (stable), fallback to getCameraTarget()
-      const v = parseTargetString(mv.cameraTarget);
-      if (v) return v;
-      const t = mv.getCameraTarget?.();
-      if (t) return new THREE.Vector3(t.x, t.y, t.z);
-      return new THREE.Vector3(0,0,0);
-    }
-
-    function getPanDelta() {
-      const base = baseTarget.get(currentShownId);
-      if (!base) return new THREE.Vector3(0,0,0);
-      const curGoal = getCameraTargetGoal(activeMv);
-      return curGoal.clone().sub(base);
-    }
-
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
-    // occlusion batching (unchanged)
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
@@ -491,6 +464,14 @@
 
     const occState = new WeakMap();
     const loopState = new WeakMap();
+
+    // Pan delta always measured vs the model's AUTOFAME baseTarget
+    function getPanDelta() {
+      const base = baseTarget.get(currentShownId);
+      const cur = activeMv.getCameraTarget?.();
+      if (!base || !cur) return new THREE.Vector3(0,0,0);
+      return new THREE.Vector3(cur.x - base.x, cur.y - base.y, cur.z - base.z);
+    }
 
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
@@ -662,19 +643,8 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    function captureBaseForModelIfMissing(mv, modelId) {
-      if (!baseCenter.has(modelId)) {
-        const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
-        baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
-      }
-      if (!baseTarget.has(modelId)) {
-        // ✅ store GOAL target (stable)
-        baseTarget.set(modelId, getCameraTargetGoal(mv));
-      }
-    }
-
-    // ===== Focus feature (same as before) =====
-    const focusAnim = new WeakMap(); // mv -> { rafId, token }
+    // ===== Focus feature (kept) =====
+    const focusAnim = new WeakMap();
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
     function easeInOutCubic(t){
@@ -769,12 +739,22 @@
       }
     }
 
+    // ✅ CORE CHANGE: capture baseCenter/baseTarget ONLY when model auto-frames (hidden idle viewer, BEFORE applyCamTo)
+    function captureAutoframeBaseOnce(mv, modelId) {
+      if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
+
+      const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
+      const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
+
+      if (!baseCenter.has(modelId)) baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
+      if (!baseTarget.has(modelId)) baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
+    }
+
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
 
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        captureBaseForModelIfMissing(mv, modelId);
-
+        // shift = baseCenter(modelId) + panDelta(currentShownId)
         const delta = getPanDelta();
         const shift = baseCenter.get(modelId).clone().add(delta);
 
@@ -821,6 +801,21 @@
         startLoop(activeMv);
       };
 
+      // helper: when idle loads, capture auto-frame base BEFORE applying carried camera
+      const onIdleLoadFactory = () => {
+        return () => {
+          if (token !== swapToken) return;
+
+          // Capture base at auto-frame time ONLY ONCE
+          captureAutoframeBaseOnce(idleMv, modelId);
+
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
+            finalizeSwap();
+          }));
+        };
+      };
+
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
@@ -828,6 +823,8 @@
         if (activeSrc === targetSrc) return;
 
         if (idleSrc === targetSrc) {
+          // IMPORTANT: if first time for this model and idle already has src,
+          // we still need to ensure base exists. But base capture should have happened when it first loaded.
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           finalizeSwap();
           return;
@@ -835,13 +832,7 @@
 
         if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
-        const onIdleLoad = () => {
-          if (token !== swapToken) return;
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-            finalizeSwap();
-          }));
-        };
+        const onIdleLoad = onIdleLoadFactory();
         idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
         return;
@@ -849,13 +840,7 @@
 
       if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
 
-      const onIdleLoad = () => {
-        if (token !== swapToken) return;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
-          finalizeSwap();
-        }));
-      };
+      const onIdleLoad = onIdleLoadFactory();
       idleMv.addEventListener('load', onIdleLoad, { once:true });
 
       try {
@@ -863,6 +848,8 @@
         if (token !== swapToken) return;
 
         if ((idleMv.src || "") === blobUrl) {
+          // If it was already set, ensure base is captured (if not already)
+          captureAutoframeBaseOnce(idleMv, modelId);
           if (camForThisSwap) applyCamTo(idleMv, camForThisSwap);
           finalizeSwap();
           return;
