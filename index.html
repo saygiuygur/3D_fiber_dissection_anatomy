@@ -57,7 +57,7 @@
       border-radius: 50%;
       border: 2px solid #000;
       background: rgba(255,255,255,0.65);
-      cursor: pointer; /* clickable now */
+      cursor: pointer;
       transform: translate(-50%, -50%);
       box-sizing: border-box;
     }
@@ -91,7 +91,8 @@
       <div class="small">
         Click annotation dot to focus (smooth).<br>
         Icons + download behavior unchanged.<br>
-        Camera carry-over + initial auto-frame unchanged.
+        Camera carry-over + initial auto-frame unchanged.<br>
+        PanDelta now uses cameraTarget GOAL (fix).
       </div>
     </div>
 
@@ -161,11 +162,10 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // ===== base transforms per modelId (captured once) =====
     const baseCenter = new Map(); // modelId -> THREE.Vector3
     const baseTarget = new Map(); // modelId -> THREE.Vector3
 
-    // ===== Tooltip helpers =====
+    // ===== Tooltip =====
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -182,9 +182,7 @@
         hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
         hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
       });
-      el.addEventListener('mouseleave', () => {
-        hotspotTip.style.display = 'none';
-      });
+      el.addEventListener('mouseleave', () => { hotspotTip.style.display = 'none'; });
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
@@ -276,18 +274,14 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
-
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
-
         const meta = document.createElement('div');
         meta.className = "meta";
-
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
-
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
@@ -459,6 +453,32 @@
     // =================== ANNOTATIONS ===========================
     // ==========================================================
 
+    // NEW: parse cameraTarget goal string like "1m 2m 3m"
+    function parseTargetString(s) {
+      if (!s || typeof s !== "string") return null;
+      const parts = s.trim().split(/\s+/);
+      if (parts.length < 3) return null;
+      const nums = parts.slice(0,3).map(p => Number(String(p).replace("m","")));
+      if (nums.some(n => !Number.isFinite(n))) return null;
+      return new THREE.Vector3(nums[0], nums[1], nums[2]);
+    }
+
+    function getCameraTargetGoal(mv) {
+      // Prefer goal string (stable), fallback to getCameraTarget()
+      const v = parseTargetString(mv.cameraTarget);
+      if (v) return v;
+      const t = mv.getCameraTarget?.();
+      if (t) return new THREE.Vector3(t.x, t.y, t.z);
+      return new THREE.Vector3(0,0,0);
+    }
+
+    function getPanDelta() {
+      const base = baseTarget.get(currentShownId);
+      if (!base) return new THREE.Vector3(0,0,0);
+      const curGoal = getCameraTargetGoal(activeMv);
+      return curGoal.clone().sub(base);
+    }
+
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -469,15 +489,8 @@
     const EPS = 1e-4;
     const TOL = 5;
 
-    const occState = new WeakMap(); // mv -> { pointMap, ... }
+    const occState = new WeakMap();
     const loopState = new WeakMap();
-
-    function getPanDelta() {
-      const base = baseTarget.get(currentShownId);
-      const cur = activeMv.getCameraTarget?.();
-      if (!base || !cur) return new THREE.Vector3(0,0,0);
-      return new THREE.Vector3(cur.x - base.x, cur.y - base.y, cur.z - base.z);
-    }
 
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
@@ -655,14 +668,13 @@
         baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
       }
       if (!baseTarget.has(modelId)) {
-        const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
-        baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
+        // ✅ store GOAL target (stable)
+        baseTarget.set(modelId, getCameraTargetGoal(mv));
       }
     }
 
-    // ===== Focus feature (NEW, stable): animate target + gentle zoom-in =====
+    // ===== Focus feature (same as before) =====
     const focusAnim = new WeakMap(); // mv -> { rafId, token }
-
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
     function easeInOutCubic(t){
@@ -679,7 +691,6 @@
       const t0 = mv.getCameraTarget?.();
       if (!o0 || !t0) return;
 
-      // current camera pos
       const theta = o0.theta, phi = o0.phi, r0 = o0.radius;
       const sinPhi = Math.sin(phi);
       const camPos = new THREE.Vector3(
@@ -689,19 +700,15 @@
       );
 
       const distToPoint = camPos.distanceTo(P);
-
-      // gentle zoom in only (never zoom out)
-      const rMin = 0.01; // tiny safe minimum in your units
+      const rMin = 0.01;
       const desired = Math.max(rMin, distToPoint * 0.65);
       const r1 = Math.min(r0, desired);
 
       const tStart = new THREE.Vector3(t0.x, t0.y, t0.z);
       const tEnd = P.clone();
 
-      // cancel previous anim
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
-
       const token = (prev?.token ?? 0) + 1;
       focusAnim.set(mv, { rafId: 0, token });
 
@@ -749,10 +756,8 @@
         btn.setAttribute('slot', a.slotName);
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
-
         attachTip(btn);
 
-        // ✅ focus on click
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -812,7 +817,7 @@
         prepareAnnotationsAndOcclusion(idleMv, modelId);
         swapViewersNow();
         currentShownId = modelId;
-        cameraReady = true; // after first swap
+        cameraReady = true;
         startLoop(activeMv);
       };
 
@@ -880,7 +885,6 @@
         maybeResumePreload();
       });
     })();
-
   </script>
 </body>
 </html>
