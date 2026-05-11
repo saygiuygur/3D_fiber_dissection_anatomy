@@ -512,8 +512,10 @@
       }
     }
 
-    // ===== CAMERA CARRY-OVER + INITIAL AUTO-FRAME (DO NOT CHANGE) =====
-    // (This block is the "locked" behavior you approved.)
+    // ============================================================
+    // ===== CAMERA CARRY-OVER + INITIAL AUTO-FRAME (LOCKED) =======
+    // ============================================================
+    // DO NOT CHANGE THIS BLOCK.
 
     let cameraReady = false;
 
@@ -551,19 +553,28 @@
       idleMv = tmp;
     }
 
-    // ===== END CAMERA LOCKED BLOCK =====
+    // =================== END LOCKED CAMERA BLOCK =================
 
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
     }
 
+    // ===== Occlusion batching knobs =====
+    const RAYS_PER_BATCH = 5;
+    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
+    const EPS = 1e-4;
+    const TOL = 5;
+
+    const occState = new WeakMap();
+    const loopState = new WeakMap();
+
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
-    // ===== Smooth focus on annotation (NEW) =====
-    const focusAnim = new WeakMap(); // mv -> { rafId, cancelToken }
+    // ===== Smooth focus on annotation (PERPENDICULAR NORMAL via RAYCAST) =====
+    const focusAnim = new WeakMap(); // mv -> { rafId, token }
 
     function easeInOutCubic(t){
       return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
@@ -571,14 +582,10 @@
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a, b, t){ return a + (b - a) * t; }
 
-    function getCameraPositionFromOrbitTarget(orbit, target){
-      const theta = orbit.theta, phi = orbit.phi, r = orbit.radius;
-      const sinPhi = Math.sin(phi);
-      return new THREE.Vector3(
-        target.x + r * sinPhi * Math.sin(theta),
-        target.y + r * Math.cos(phi),
-        target.z + r * sinPhi * Math.cos(theta)
-      );
+    function lerpAngleRad(a, b, t){
+      // shortest-path interpolation in radians
+      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
+      return a + d * t;
     }
 
     function computeModelDiagonal(mv){
@@ -589,48 +596,113 @@
       } catch { return null; }
     }
 
+    function cameraPosFromOrbitTarget(orbit, target){
+      const theta = orbit.theta, phi = orbit.phi, r = orbit.radius;
+      const sinPhi = Math.sin(phi);
+      return new THREE.Vector3(
+        target.x + r * sinPhi * Math.sin(theta),
+        target.y + r * Math.cos(phi),
+        target.z + r * sinPhi * Math.cos(theta)
+      );
+    }
+
+    function orbitFromOffset(dx, dy, dz){
+      const r = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
+      const phi = Math.acos(clamp(dy / r, -1, 1));
+      const theta = Math.atan2(dx, dz);
+      return { theta, phi, radius: r };
+    }
+
     function focusOnSlot(mv, slotName){
       const st = occState.get(mv);
-      if (!st || !st.pointMap) return;
-      const p = st.pointMap.get(slotName);
-      if (!p) return;
+      if (!st || !st.pointMap || !st.occluders || !st.raycaster) return;
+
+      const P = st.pointMap.get(slotName);
+      if (!P) return;
 
       const orbit0 = mv.getCameraOrbit?.();
       const target0 = mv.getCameraTarget?.();
       if (!orbit0 || !target0) return;
 
-      // cancel previous animation (if any)
+      const camPos0 = cameraPosFromOrbitTarget(orbit0, target0);
+
+      // Raycast from camera toward the annotation point, against occluder meshes
+      const dir = P.clone().sub(camPos0);
+      const distToP = dir.length();
+      if (distToP < 1e-6) return;
+      dir.normalize();
+
+      st.raycaster.set(camPos0, dir);
+      st.raycaster.near = 0;
+      st.raycaster.far = distToP + 1e-3;
+
+      const hits = st.raycaster.intersectObjects(st.occluders, true);
+
+      // If no hit, fallback to old behavior (pan only + gentle zoom, keep angle)
+      let usePerp = false;
+      let surfacePoint = P.clone();
+      let N = null;
+
+      if (hits && hits.length) {
+        const h = hits[0];
+        if (h.point) surfacePoint = h.point.clone();
+
+        // Get a normal (three gives face.normal; since occluders are baked in world space,
+        // face.normal aligns with world orientation)
+        if (h.face && h.face.normal) {
+          N = h.face.normal.clone().normalize();
+          usePerp = true;
+        }
+      }
+
+      // Adaptive gentle zoom (never zoom out)
+      const diag = computeModelDiagonal(mv);
+      const rMin = diag ? (0.03 * diag) : 1;
+      const r0 = orbit0.radius;
+
+      // use distance from camera to the SURFACE point (more accurate)
+      const dSurf = camPos0.distanceTo(surfacePoint);
+      const rTarget = clamp(0.6 * dSurf, rMin, r0);
+      const r1 = lerp(r0, rTarget, 0.35);
+
+      // Determine target (focus point)
+      const tStart = { x: target0.x, y: target0.y, z: target0.z };
+      const tEnd   = { x: surfacePoint.x, y: surfacePoint.y, z: surfacePoint.z };
+
+      // Determine orbit end
+      let oStart = { theta: orbit0.theta, phi: orbit0.phi, radius: r0 };
+      let oEnd;
+
+      if (usePerp && N) {
+        // Make sure normal points toward the camera side (avoid flipping behind)
+        const camSide = camPos0.clone().sub(surfacePoint).normalize();
+        if (camSide.dot(N) < 0) N.multiplyScalar(-1);
+
+        // Desired camera position: along normal at radius r1
+        const camPos1 = surfacePoint.clone().add(N.clone().multiplyScalar(r1));
+
+        const off = camPos1.clone().sub(surfacePoint);
+        oEnd = orbitFromOffset(off.x, off.y, off.z);
+        oEnd.radius = r1; // ensure exact
+      } else {
+        // fallback: keep same angles, just change radius
+        oEnd = { theta: orbit0.theta, phi: orbit0.phi, radius: r1 };
+      }
+
+      // cancel previous anim
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
 
-      const camPos0 = getCameraPositionFromOrbitTarget(orbit0, target0);
-      const distToPoint = camPos0.distanceTo(p);
+      const token = (prev?.token ?? 0) + 1;
+      focusAnim.set(mv, { rafId: 0, token });
 
-      const diag = computeModelDiagonal(mv);
-      const rMin = diag ? (0.03 * diag) : 1; // safe fallback in your scale
-      const r0 = orbit0.radius;
-
-      // your rule: rTarget = clamp(0.6*d, rMin, r0)  (never zoom out)
-      const rTarget = clamp(0.6 * distToPoint, rMin, r0);
-
-      // gentle: move only part-way
-      const r1 = lerp(r0, rTarget, 0.35);
-
-      const theta = orbit0.theta;
-      const phi   = orbit0.phi;
-
-      const tStart = { x: target0.x, y: target0.y, z: target0.z };
-      const tEnd   = { x: p.x,       y: p.y,       z: p.z       };
-
-      const durationMs = 520;
+      const durationMs = 560;
       const startTime = performance.now();
-
-      const token = (prev?.cancelToken ?? 0) + 1;
-      focusAnim.set(mv, { rafId: 0, cancelToken: token });
 
       const tick = (now) => {
         const cur = focusAnim.get(mv);
-        if (!cur || cur.cancelToken !== token) return;
+        if (!cur || cur.token !== token) return;
 
         const t = clamp((now - startTime) / durationMs, 0, 1);
         const e = easeInOutCubic(t);
@@ -638,10 +710,13 @@
         const tx = lerp(tStart.x, tEnd.x, e);
         const ty = lerp(tStart.y, tEnd.y, e);
         const tz = lerp(tStart.z, tEnd.z, e);
-        const rr = lerp(r0, r1, e);
+
+        const th = lerpAngleRad(oStart.theta, oEnd.theta, e);
+        const ph = lerpAngleRad(oStart.phi,   oEnd.phi,   e);
+        const rr = lerp(oStart.radius, oEnd.radius, e);
 
         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
-        mv.cameraOrbit  = `${theta}rad ${phi}rad ${rr}m`;
+        mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
 
         if (t < 1) {
           cur.rafId = requestAnimationFrame(tick);
@@ -660,7 +735,6 @@
       focusAnim.set(mv, cur);
     }
 
-    // Hotspots: keep tooltip system, no native title tooltip + CLICK FOCUS
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -676,7 +750,7 @@
         btn.addEventListener('mousemove',  (e) => moveTip(e.clientX, e.clientY));
         btn.addEventListener('mouseleave', () => hideTip());
 
-        // NEW: click to focus (smooth)
+        // click = perpendicular focus
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -687,15 +761,6 @@
         mv.appendChild(btn);
       }
     }
-
-    // ===== Occlusion batching knobs =====
-    const RAYS_PER_BATCH = 5;
-    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
-    const EPS = 1e-4;
-    const TOL = 5;
-
-    const occState = new WeakMap();
-    const loopState = new WeakMap();
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -729,11 +794,10 @@
         }
 
         const m = obj.matrixWorld?.elements;
-        if (m && m.length === 16) {
-          geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
-        }
+        if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
 
         geo.translate(centerV.x, centerV.y, centerV.z);
+
         occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial()));
       });
 
@@ -770,7 +834,6 @@
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
       }
-
       return pointMap;
     }
 
