@@ -182,7 +182,7 @@
       </div>
 
       <div class="small">
-        Focus method: center-to-point line (fixed center, consistent).
+        Debug build: exposes __dbg.getState() and __dbg.getHotspotPos(slot).
       </div>
     </div>
 
@@ -505,6 +505,9 @@
       }
     }
 
+    // ==========================================================
+    // ========== DOWNLOAD / BLOB (LOCKED) + enqueue calibration
+    // ==========================================================
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
@@ -648,7 +651,7 @@
     }
 
     // ==========================================================
-    // ================= ANNOTATIONS + OCCLUSION =================
+    // =================== ANNOTATIONS + OCCLUSION =================
     // ==========================================================
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
@@ -837,114 +840,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ==========================================================
-    // ========== CENTER-LINE FOCUS (FIXED) =======================
-    // ==========================================================
-    const focusAnim = new WeakMap(); // mv -> { rafId, token }
-
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-    function lerp(a,b,t){ return a + (b-a)*t; }
-    function easeInOutCubic(t){
-      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
-    }
-    function lerpAngleRad(a, b, t){
-      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
-      return a + d * t;
-    }
-
-    function orbitFromOffset(off) {
-      const r = off.length();
-      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
-      const phi = Math.acos(clamp(off.y / r, -1, 1));
-      const theta = Math.atan2(off.x, off.z);
-      return { theta, phi, radius: r };
-    }
-
-    function animateCamera(mv, from, to) {
-      const prev = focusAnim.get(mv);
-      if (prev?.rafId) cancelAnimationFrame(prev.rafId);
-
-      const token = (prev?.token ?? 0) + 1;
-      focusAnim.set(mv, { rafId: 0, token });
-
-      const duration = 560;
-      const start = performance.now();
-
-      const tick = (now) => {
-        const cur = focusAnim.get(mv);
-        if (!cur || cur.token !== token) return;
-
-        const tt = clamp((now - start) / duration, 0, 1);
-        const e = easeInOutCubic(tt);
-
-        const tx = lerp(from.target.x, to.target.x, e);
-        const ty = lerp(from.target.y, to.target.y, e);
-        const tz = lerp(from.target.z, to.target.z, e);
-
-        const th = lerpAngleRad(from.theta, to.theta, e);
-        const ph = lerpAngleRad(from.phi,   to.phi,   e);
-        const rr = lerp(from.radius, to.radius, e);
-
-        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
-        mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
-
-        if (tt < 1) {
-          cur.rafId = requestAnimationFrame(tick);
-          focusAnim.set(mv, cur);
-        } else {
-          if (typeof mv.jumpCameraToGoal === "function") {
-            try { mv.jumpCameraToGoal(); } catch (_) {}
-          }
-          cur.rafId = 0;
-          focusAnim.set(mv, cur);
-        }
-      };
-
-      const cur = focusAnim.get(mv);
-      cur.rafId = requestAnimationFrame(tick);
-      focusAnim.set(mv, cur);
-    }
-
-    function focusOnSlotRadial(mv, slotName){
-      const st = occState.get(mv);
-      if (!st || !st.pointMap) return;
-
-      const P = st.pointMap.get(slotName);          // shifted visible point
-      if (!P) return;
-
-      const orbit0 = mv.getCameraOrbit?.();
-      const target0 = mv.getCameraTarget?.();
-      if (!orbit0 || !target0) return;
-
-      const delta = getPanDelta();                  // pan delta (shift)
-      const C0 = baseCenter.get(currentShownId);    // TRUE fixed calibrated center (unshifted)
-      if (!C0) return;
-
-      // ✅ FIX: compute direction in UN-SHIFTED space
-      const P0 = P.clone().sub(delta);              // unshift the clicked point
-      const d = P0.clone().sub(C0);                 // center -> point
-      if (d.length() < 1e-6) return;
-      d.normalize();
-
-      // radius rule (zoom-in only, same as before)
-      const camPos0 = getCameraPositionHotspotSpace(mv);
-      if (!camPos0) return;
-      const distToPoint = camPos0.distanceTo(P);
-
-      const r0 = orbit0.radius;
-      const desiredR = Math.max(0.01, distToPoint * 0.65);
-      const r1 = Math.min(r0, desiredR);
-
-      // camera on the line: P + d * r1  (d is stable now)
-      const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
-      const off = camPos1.clone().sub(P);
-      const o1 = orbitFromOffset(off);
-
-      animateCamera(mv,
-        {theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x,target0.y,target0.z)},
-        {theta: o1.theta, phi: o1.phi, radius: r1, target: P.clone()}
-      );
-    }
+    // NOTE: focus method currently not modified here (debug build only)
 
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
@@ -956,14 +852,6 @@
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
         attachTip(btn);
-
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          hideTip();
-          focusOnSlotRadial(mv, a.slotName);
-        });
-
         mv.appendChild(btn);
       }
     }
@@ -1001,6 +889,7 @@
     // ==========================================================
     // =================== SHOW MODEL (LOCKED) ===================
     // ==========================================================
+    let cameraReady = false;
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -1086,6 +975,19 @@
       resumeRequested = true;
       maybeResumePreload();
     });
+
+    // ==========================================================
+    // ========== DEBUG EXPOSE (ONLY ADDITION) ===================
+    // ==========================================================
+    window.__dbg = window.__dbg || {};
+    window.__dbg.getState = () => ({
+      currentShownId,
+      baseCenter: baseCenter.get(currentShownId) || null,
+      baseTarget: baseTarget.get(currentShownId) || null,
+      cameraTarget: activeMv.getCameraTarget?.() || null,
+      cameraOrbit: activeMv.getCameraOrbit?.() || null
+    });
+    window.__dbg.getHotspotPos = (slot) => activeMv.queryHotspot?.(slot)?.position || null;
   </script>
 </body>
 </html>
