@@ -37,7 +37,6 @@
     .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
     .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
     .status-icon{ width:20px; height:20px; display:block; }
-
     .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
     .bg-section{ margin-top:18px; }
@@ -77,7 +76,6 @@
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
-    /* Dot-only marker */
     .hotspot{
       width: 14px;
       height: 14px;
@@ -112,15 +110,13 @@
       </div>
 
       <div class="small">
-        Occlusion batching: 10 rays per batch, batches only every 6 frames while moving.<br>
-        When you stop, it quickly finalizes all points (still 10 per frame).
+        Occlusion batching: <b>5 rays per batch</b>, batches every <b>6 frames</b> while moving.
       </div>
     </div>
 
     <div class="viewer-wrap">
       <model-viewer id="mvA" class="viewer shownViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
-
       <model-viewer id="mvB" class="viewer hiddenViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
     </div>
@@ -195,7 +191,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // Download/progress icons (kept)
+    // Download/progress icons
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
     let currentController = null;
@@ -445,15 +441,15 @@
       }
     }
 
-    // ===== Occlusion batching settings (your request) =====
-    const RAYS_PER_BATCH = 10;
+    // ===== Occlusion batching (requested) =====
+    const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
 
     const EPS = 1e-4;
     const TOL = 0.002;
 
-    const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor }
-    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame, finalizing }
+    const occState = new WeakMap();
+    const loopState = new WeakMap();
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -610,7 +606,6 @@
         const moving = (now - ls.lastMoveTs) < 200;
 
         if (moving) {
-          // While moving: do batch only every N frames
           if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) {
             runBatch(mv, RAYS_PER_BATCH);
           }
@@ -618,20 +613,13 @@
           return;
         }
 
-        // Not moving anymore: finalize quickly (10 per frame, every frame) until full pass is done
-        if (!ls.finalizing) {
-          ls.finalizing = true;
-          // start finalize from current cursor position
-        }
-
+        // finalize quickly after stop (5 per frame, every frame)
         const st = occState.get(mv);
         if (!st || !st.slots.length) {
           ls.running = false; ls.rafId = 0;
           return;
         }
 
-        // We consider finalize "done" once we’ve wrapped around at least once.
-        // Track wraps by counting how many slots processed since finalize start.
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
 
         const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
@@ -641,7 +629,6 @@
         if (st.finalizeRemaining > 0) {
           ls.rafId = requestAnimationFrame(tick);
         } else {
-          // cleanup finalize marker
           st.finalizeRemaining = null;
           ls.running = false;
           ls.rafId = 0;
@@ -657,7 +644,6 @@
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const occluders = buildRaycastOccluders(mv);
         const pointMap = updateHotspotPositionsAndPointMap(mv, modelId);
-
         const slots = Array.from(pointMap.keys());
 
         if (occluders && occluders.length && slots.length) {
@@ -673,7 +659,7 @@
           occState.set(mv, null);
         }
 
-        // Do an initial quick batch so it looks correct immediately
+        // initial small batch
         runBatch(mv, RAYS_PER_BATCH);
 
         if (!mv.__hasOccListener) {
@@ -683,7 +669,7 @@
       }));
     }
 
-    // Model switching (camera logic unchanged)
+    // model switching
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -704,7 +690,6 @@
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
-
         if (activeSrc === targetSrc) return;
         if (idleSrc === targetSrc) { finalizeSwap(); return; }
 
@@ -736,7 +721,7 @@
       showModel(modelId);
     }
 
-    // Init
+    // init
     buildListOnce();
     initBackgroundSelector();
     showModel(selectedId).then(() => {
