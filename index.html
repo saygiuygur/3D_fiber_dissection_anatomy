@@ -13,14 +13,22 @@
     .wrap { display:flex; height:100vh; }
 
     .sidebar{
-      width:360px; border-right:1px solid #ddd; padding:12px; overflow:auto; background:#fff;
+      width:360px;
+      border-right:1px solid #ddd;
+      padding:12px;
+      overflow:auto;
+      background:#fff;
     }
 
     .row{
       display:flex; align-items:center; justify-content:space-between;
       width:100%; padding:10px; margin:6px 0;
-      border:1px solid #ddd; border-radius:10px;
-      background:#fff; cursor:pointer; user-select:none; gap:10px;
+      border:1px solid #ddd;
+      border-radius:10px;
+      background:#fff;
+      cursor:pointer;
+      user-select:none;
+      gap:10px;
       transition: border-color 120ms ease;
     }
     .row.active { border-color:#111; }
@@ -36,8 +44,13 @@
     .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
 
     .swatch{
-      width:26px; height:26px; border-radius:50%;
-      border:1px solid #cfcfcf; cursor:pointer; padding:0; display:inline-block; box-sizing:border-box;
+      width:26px; height:26px;
+      border-radius:50%;
+      border:1px solid #cfcfcf;
+      cursor:pointer;
+      padding:0;
+      display:inline-block;
+      box-sizing:border-box;
     }
     .swatch.white{ background:#ffffff; }
     .swatch.gray{ background:#808080; }
@@ -53,8 +66,10 @@
     }
 
     model-viewer.viewer{
-      position:absolute; inset:0;
-      width:100%; height:100%;
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
       background:var(--viewer-bg);
     }
 
@@ -62,7 +77,9 @@
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
     .hotspot{
-      width: 14px; height: 14px; padding: 0;
+      width: 14px;
+      height: 14px;
+      padding: 0;
       border-radius: 50%;
       border: 2px solid #000;
       background: rgba(255,255,255,0.65);
@@ -93,15 +110,13 @@
       </div>
 
       <div class="small">
-        Occlusion batching: 5 rays/batch, batches every 6 frames while moving.<br>
-        Leeway (TOL) = 5 meters.
+        Occlusion batching: <b>5 rays per batch</b>, batches every <b>6 frames</b> while moving.
       </div>
     </div>
 
     <div class="viewer-wrap">
       <model-viewer id="mvA" class="viewer shownViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
-
       <model-viewer id="mvB" class="viewer hiddenViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
     </div>
@@ -144,7 +159,6 @@
         title: name
       }));
     }
-
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
@@ -159,7 +173,7 @@
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
 
-    // ---- background ----
+    // Background
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -177,10 +191,9 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ---- download UI ----
+    // Download/progress icons
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
-
     let currentController = null;
     let currentDownloadingId = null;
     const inFlight = new Map();
@@ -193,6 +206,15 @@
 
     const rowEls = new Map();
     let downloadingVisualId = null;
+
+    function paintDownloading(idOrNull) {
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      downloadingVisualId = idOrNull;
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
+    }
+    function paintActive() {
+      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
+    }
 
     function parsePercent(progressText) {
       const match = String(progressText || "").match(/^(\d+)%$/);
@@ -236,15 +258,6 @@
           <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
         </svg>`;
     }
-
-    function paintDownloading(idOrNull) {
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
-      downloadingVisualId = idOrNull;
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
-    }
-    function paintActive() {
-      for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId);
-    }
     function refreshMeta(id) {
       const st = state.get(id);
       const meta = rowEls.get(id)?.meta;
@@ -261,18 +274,14 @@
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
-
         const name = document.createElement('div');
         name.className = "name";
         name.textContent = m.id;
-
         const meta = document.createElement('div');
         meta.className = "meta";
-
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
-
         list.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
@@ -301,7 +310,6 @@
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
-
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
@@ -339,7 +347,6 @@
             if (done) break;
             chunks.push(value);
             received += value.byteLength;
-
             if (total) {
               st.progressText = `${Math.floor((received / total) * 100)}%`;
               refreshMeta(modelId);
@@ -397,7 +404,6 @@
       }
     }
 
-    // ✅ Correct swap (single, clean)
     function swapViewersNow() {
       activeMv.classList.remove('shownViewer');
       activeMv.classList.add('hiddenViewer');
@@ -406,7 +412,6 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // model-viewer internal scene access
     function getMvScene(mv) {
       const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sceneSym ? mv[sceneSym] : null;
@@ -424,6 +429,8 @@
         btn.setAttribute('slot', a.slotName);
         btn.title = a.title;
         btn.textContent = "";
+        btn.dataset.position = '0m 0m 0m';
+        btn.dataset.normal = '0m 1m 0m';
         mv.appendChild(btn);
       }
     }
@@ -432,10 +439,10 @@
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
-    const TOL = 5; // ✅ 5 meters leeway
+    const TOL = 5; // 5 m leeway
 
     const occState = new WeakMap(); // mv -> { occluders, pointMap, raycaster, slots, cursor, finalizeRemaining }
-    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame }
+    const loopState = new WeakMap(); // mv -> { running, lastMoveTs, rafId, frame, finalizing }
 
     function buildRaycastOccluders(mv) {
       const scene = getMvScene(mv);
@@ -489,8 +496,8 @@
 
       const center = mv.getBoundingBoxCenter?.() || { x:0, y:0, z:0 };
       const pointMap = new Map();
-      const anns = ANNOTATIONS[modelId] || [];
 
+      const anns = ANNOTATIONS[modelId] || [];
       for (const a of anns) {
         const obj = scene.getObjectByName(a.anchor);
         if (!obj) continue;
@@ -503,8 +510,11 @@
         const z = p.z + center.z;
 
         const posStr = `${x}m ${y}m ${z}m`;
-        const el = mv.querySelector(`[slot="${a.slotName}"]`);
-        if (el) el.dataset.position = posStr;
+        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
+        catch {
+          const el = mv.querySelector(`[slot="${a.slotName}"]`);
+          if (el) el.dataset.position = posStr;
+        }
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
       }
@@ -561,6 +571,7 @@
     function runBatch(mv, count) {
       const st = occState.get(mv);
       if (!st || !st.slots.length) return;
+
       for (let i = 0; i < count; i++) {
         const slot = st.slots[st.cursor];
         occludeOne(mv, slot);
@@ -571,7 +582,7 @@
     function startLoop(mv) {
       let ls = loopState.get(mv);
       if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0, finalizing:false };
         loopState.set(mv, ls);
       }
 
@@ -579,9 +590,11 @@
       if (ls.running) return;
 
       ls.running = true;
+      ls.finalizing = false;
 
       const tick = () => {
         ls.frame++;
+
         const now = performance.now();
         const moving = (now - ls.lastMoveTs) < 200;
 
@@ -647,7 +660,6 @@
       }));
     }
 
-    // ---- model switching ----
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -673,7 +685,7 @@
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => requestAnimationFrame(finalizeSwap));
+          requestAnimationFrame(() => requestAnimationFrame(() => finalizeSwap()));
         };
         idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
@@ -682,7 +694,7 @@
 
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => requestAnimationFrame(finalizeSwap));
+        requestAnimationFrame(() => requestAnimationFrame(() => finalizeSwap()));
       };
       idleMv.addEventListener('load', onIdleLoad, { once:true });
 
@@ -699,7 +711,7 @@
       showModel(modelId);
     }
 
-    // ---- init ----
+    // init
     buildListOnce();
     initBackgroundSelector();
     showModel(selectedId).then(() => {
