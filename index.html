@@ -288,6 +288,96 @@
       "Anteriorcalcarinesulcus001","Angulargyrus001"
     ];
 
+    // ===== NEW: empties for newly added models (titles = anchors for now) =====
+    const MODEL03_NAMES = [
+      "03_U_Fibers_Small",
+      "Angulargyrus002",
+      "Centrallobe",
+      "InferiorFrontalgyrus002",
+      "InferiorFrontalsulcus002",
+      "Inferiortemporalgyrus002",
+      "Inferiortemporalsulcus002",
+      "Intraparietalsulcus002",
+      "Middlefrontalgyrus002",
+      "MiddletemporalGyrus002",
+      "ParietalOperculum002",
+      "SuperiorFrontalgyrus002",
+      "SuperiorFrontalsulcus002",
+      "Superiorparietallobule002",
+      "SuperiortemporalGyrus002",
+      "SuperiortemporalSulcus002",
+      "Supramarginalgyrus002",
+      "Sylvianfissure002"
+    ];
+
+    const MODEL04_NAMES = [
+      "04_Superficial_SLF_Small",
+      "AF1001",
+      "SLF",
+      "SuperficialAF",
+      "SuperficialSLF",
+      "SuperiortemporalGyrus003"
+    ];
+
+    const MODEL05_NAMES = [
+      "05_Superficial_Arcuate_Small",
+      "AF1",
+      "AF2",
+      "SLF001",
+      "SuperficialAF001",
+      "SuperiortemporalGyrus006"
+    ];
+
+    const MODEL06_NAMES = [
+      "06_Arcuate_SLF_Small",
+      "AF1002",
+      "AF2001",
+      "AnteriorinsularP",
+      "Anteriorlimsulc",
+      "CentralsulcusI",
+      "FrontalLimenP",
+      "Inferiorlimsulc",
+      "Insularapex",
+      "LimenI",
+      "LongGyri",
+      "PosteriorinsularP",
+      "SLF002",
+      "SLF003",
+      "ShortGyri",
+      "Superiorlimsulc",
+      "SuperiortemporalGyrus004",
+      "TemporalLimenP"
+    ];
+
+    const MODEL07_NAMES = [
+      "07_Extreme_Capsule_Small",
+      "ExtremeCapsule"
+    ];
+
+    const MODEL09_NAMES = [
+      "09_Putamen_External_Capsule_Small",
+      "ExternalCapsule",
+      "IFOF",
+      "Putamen",
+      "UF"
+    ];
+
+    const MODEL10_NAMES = [
+      "10_Internal_Capsule_Perforators_Small",
+      "CoronaRadiata",
+      "IFOF001",
+      "LenticulostriatePerforatorsM1",
+      "UF001"
+    ];
+
+    const MODEL11_NAMES = [
+      "11_Anterior_Comissure_Small",
+      "AnteriorCommissure",
+      "CoronaRadiata001",
+      "GlobusPallidus",
+      "InternalCapsule"
+    ];
+
     function makeAnnotations(names) {
       return names.map((name, i) => ({
         slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
@@ -299,14 +389,16 @@
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
-      "03_U_Fibers_Annotated": [],
-      "04_Superficial_SLF_Annotated": [],
-      "05_Superficial_Arcuate_Annotated": [],
-      "06_Insula_Annotated": [],
-      "07_Extreme_Capsule_Annotated": [],
-      "09_Putamen_External_Capsule_Annotated": [],
-      "10_Lenticulostriate_Perforators_Annotated": [],
-      "11_Anterior_Comissure_Annotated": [],
+
+      // ✅ Now enabled (labels = empty names for now)
+      "03_U_Fibers_Annotated": makeAnnotations(MODEL03_NAMES),
+      "04_Superficial_SLF_Annotated": makeAnnotations(MODEL04_NAMES),
+      "05_Superficial_Arcuate_Annotated": makeAnnotations(MODEL05_NAMES),
+      "06_Insula_Annotated": makeAnnotations(MODEL06_NAMES),
+      "07_Extreme_Capsule_Annotated": makeAnnotations(MODEL07_NAMES),
+      "09_Putamen_External_Capsule_Annotated": makeAnnotations(MODEL09_NAMES),
+      "10_Lenticulostriate_Perforators_Annotated": makeAnnotations(MODEL10_NAMES),
+      "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
     const list = document.getElementById('list');
@@ -1134,7 +1226,6 @@
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
       };
 
-      // ✅ REVEAL BARRIER helper: wait 3 frames then swap
       const finalizeAfterBarrier = () => {
         requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
           if (token !== swapToken) return;
