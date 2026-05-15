@@ -254,7 +254,6 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
-    // ✅ FIX: all models appear in UI because they are in MODELS
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" },
@@ -302,7 +301,6 @@
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
 
-      // placeholders until you provide names
       "03_U_Fibers_Annotated": [],
       "04_Superficial_SLF_Annotated": [],
       "05_Superficial_Arcuate_Annotated": [],
@@ -657,7 +655,7 @@
     }
 
     // =========================
-    // CALIBRATION (LOCKED) + ✅ global base to stabilize carry-over
+    // CALIBRATION (LOCKED) + global base
     // =========================
     const baseCenter = new Map();
     const baseTarget = new Map();
@@ -670,7 +668,6 @@
       return (dims.x >= dims.z) ? 'x' : 'z';
     }
 
-    // ✅ This is the ONLY camera-related fix: all models share the first auto-frame base.
     let GLOBAL_BASE_CENTER = null;
     let GLOBAL_BASE_TARGET = null;
 
@@ -688,7 +685,7 @@
     }
 
     // =========================
-    // CAMERA CARRYOVER (same method as your latest)
+    // CAMERA CARRYOVER (unchanged)
     // =========================
     let cameraReady = false;
 
@@ -941,12 +938,6 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ===== focus + hotspot elements + prepareAnnotationsAndOcclusion + showModel + init =====
-    // (Kept identical to the latest copy-paste you were using: no changes to those blocks)
-
-    // ------------------------
-    // Hotspot creation
-    // ------------------------
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -974,9 +965,38 @@
       }
     }
 
-    // ------------------------
-    // Focus (ELLIPSE LOCKED) – unchanged
-    // ------------------------
+    function prepareAnnotationsAndOcclusion(mv, modelId) {
+      ensureHotspotElements(mv, modelId);
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        captureAutoFrameBase(mv, modelId);
+
+        const bt = baseTarget.get(modelId);
+        const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
+        const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
+
+        const shift = baseCenter.get(modelId).clone().add(delta);
+
+        const occluders = buildRaycastOccluders(mv, shift);
+        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
+        const slots = Array.from(pointMap.keys());
+
+        if (occluders && occluders.length && slots.length) {
+          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null, forcedVisible: null });
+        } else {
+          occState.set(mv, null);
+        }
+
+        runBatch(mv, RAYS_PER_BATCH);
+
+        if (!mv.__hasOccListener) {
+          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
+          mv.__hasOccListener = true;
+        }
+      }));
+    }
+
+    // FOCUS (ELLIPSE LOCKED)
     const focusAnim = new WeakMap();
     const ELL_A = 35;
     const ELL_B = 10;
@@ -1092,40 +1112,54 @@
       );
     }
 
-    // ------------------------
-    // prepare + showModel (same as your latest)
-    // ------------------------
-    function prepareAnnotationsAndOcclusion(mv, modelId) {
-      ensureHotspotElements(mv, modelId);
-
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        captureAutoFrameBase(mv, modelId);
-
-        const bt = baseTarget.get(modelId);
-        const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-        const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-
-        const shift = baseCenter.get(modelId).clone().add(delta);
-
-        const occluders = buildRaycastOccluders(mv, shift);
-        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
-        const slots = Array.from(pointMap.keys());
-
-        if (occluders && occluders.length && slots.length) {
-          occState.set(mv, { occluders, pointMap, raycaster: new THREE.Raycaster(), slots, cursor: 0, finalizeRemaining: null, forcedVisible: null });
-        } else {
-          occState.set(mv, null);
-        }
-
-        runBatch(mv, RAYS_PER_BATCH);
-
-        if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
-          mv.__hasOccListener = true;
-        }
-      }));
+    // =========================
+    // Download UI list + preload plumbing
+    // =========================
+    function buildListOnce() {
+      list.innerHTML = "";
+      for (const m of MODELS) {
+        const row = document.createElement('div');
+        row.className = "row";
+        const name = document.createElement('div');
+        name.className = "name";
+        name.textContent = m.id;
+        const meta = document.createElement('div');
+        meta.className = "meta";
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.addEventListener('click', () => onUserSelect(m.id));
+        list.appendChild(row);
+        rowEls.set(m.id, { row, meta });
+        refreshMeta(m.id);
+      }
+      paintActive();
+      paintDownloading(null);
     }
 
+    // Background init
+    function initBackgroundSelector() {
+      bgOptions.querySelectorAll('.swatch').forEach(btn =>
+        btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color))
+      );
+      let saved = null;
+      try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
+      const valid = ["#ffffff","#808080","#000000"];
+      applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
+    }
+
+    // Toggle annotations init
+    function initAnnotationsToggle(){
+      let saved = null;
+      try { saved = localStorage.getItem('annotationsEnabled'); } catch (_) {}
+      const enabled = (saved == null) ? true : (saved === '1');
+      annToggle.checked = enabled;
+      setAnnotationsEnabled(enabled);
+      annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
+    }
+
+    // =========================
+    // MODEL SWAP
+    // =========================
     let swapToken = 0;
 
     async function showModel(modelId) {
