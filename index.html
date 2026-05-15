@@ -256,10 +256,12 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
-    // ===== Models (updated to include all uploaded GLBs) =====
+    // ===== Update this list to match your filenames if needed =====
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" },
+
+      // Example additional models (edit names to match yours exactly)
       { id: "03_U_Fibers_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers_Annotated.glb" },
       { id: "04_Superficial_SLF_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF_Annotated.glb" },
       { id: "05_Superficial_Arcuate_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate_Annotated.glb" },
@@ -270,7 +272,7 @@
       { id: "11_Anterior_Comissure_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure_Annotated.glb" }
     ];
 
-    // ===== Explicit names for model 01 & 02 (kept as-is) =====
+    // ===== Explicit names for model 01 & 02 =====
     const MODEL01_NAMES = [
       "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
       "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -301,7 +303,7 @@
       }));
     }
 
-    // Static annotations for models 01 & 02
+    // Static annotations for 01 & 02
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
@@ -437,7 +439,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // ===== Download/progress icons + download behavior (LOCKED) =====
+    // ===== Download/progress icons + behavior (LOCKED) =====
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -781,38 +783,6 @@
       return occluders;
     }
 
-    function updateHotspotsAndPointMap(mv, modelId, shift) {
-      const scene = getMvScene(mv);
-      if (!scene || typeof scene.getObjectByName !== "function") return new Map();
-
-      scene.updateMatrixWorld?.(true);
-
-      const pointMap = new Map();
-      const anns = getAnnoListForModel(modelId);
-
-      for (const a of anns) {
-        const obj = scene.getObjectByName(a.anchor);
-        if (!obj) continue;
-
-        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
-        if (!p) continue;
-
-        const x = p.x + shift.x;
-        const y = p.y + shift.y;
-        const z = p.z + shift.z;
-
-        const posStr = `${x}m ${y}m ${z}m`;
-        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
-        catch {
-          const el = mv.querySelector(`[slot="${a.slotName}"]`);
-          if (el) el.dataset.position = posStr;
-        }
-
-        pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
-      }
-      return pointMap;
-    }
-
     function getCameraPositionHotspotSpace(mv) {
       const o = mv.getCameraOrbit?.();
       const t = mv.getCameraTarget?.();
@@ -1069,18 +1039,19 @@
     }
 
     // =========================
-    // Hotspot creation / prep
+    // Hotspot creation / binding (FIXED)
     // =========================
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
 
+    // ✅ FIX: create hidden until anchor found
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = getAnnoListForModel(modelId);
       for (const a of anns) {
         const btn = document.createElement('button');
-        btn.className = 'hotspot';
+        btn.className = 'hotspot occluded'; // START HIDDEN (prevents 0,0,0 pile)
         btn.setAttribute('slot', a.slotName);
         btn.dataset.label = a.title;
         btn.setAttribute('aria-label', a.title);
@@ -1098,25 +1069,34 @@
       }
     }
 
-    // Auto-detect named non-mesh nodes (empties) and create annotations
-    function discoverAnnotationAnchors(modelId, mv) {
+    function getAnnoListForModel(modelId) {
+      return ANNOTATIONS[modelId] || DYN_ANNOTATIONS.get(modelId) || [];
+    }
+
+    // ✅ FIX: dynamic discovery ONLY empties that look like your names (ends with 3 digits)
+    function discoverAnnotationAnchors(mv) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return [];
 
       const names = [];
+      const re = /\d{3}$/; // matches ...001, ...123
+
       scene.traverse(obj => {
-        if (!obj) return;
-        if (!obj.name) return;
-        // Skip obvious non-annotation things
+        if (!obj || !obj.name) return;
         if (obj.isMesh) return;
         const type = (obj.type || "").toLowerCase();
         if (type.includes("camera") || type.includes("light")) return;
-        // Must exist by name lookup later
+
+        // Only accept your empty naming style
+        if (!re.test(obj.name)) return;
+
         names.push(obj.name);
       });
 
-      // Remove duplicates and sort for stable order
-      const uniq = Array.from(new Set(names)).sort((a,b) => a.localeCompare(b));
+      const uniq = Array.from(new Set(names));
+      // Keep stable order (alphabetical). If you want a custom order later, we can add it.
+      uniq.sort((a,b) => a.localeCompare(b));
+
       return uniq.map((name, i) => ({
         slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
         anchor: name,
@@ -1124,17 +1104,129 @@
       }));
     }
 
+    // ✅ FIX: only unhide hotspot if anchor exists & position is set
+    function updateHotspotsAndPointMap(mv, modelId, shift) {
+      const scene = getMvScene(mv);
+      if (!scene || typeof scene.getObjectByName !== "function") return new Map();
+
+      scene.updateMatrixWorld?.(true);
+
+      const pointMap = new Map();
+      const anns = getAnnoListForModel(modelId);
+
+      for (const a of anns) {
+        const obj = scene.getObjectByName(a.anchor);
+        if (!obj) continue; // stays hidden
+
+        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
+        if (!p) continue;
+
+        const x = p.x + shift.x;
+        const y = p.y + shift.y;
+        const z = p.z + shift.z;
+
+        const posStr = `${x}m ${y}m ${z}m`;
+
+        try {
+          mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" });
+        } catch {
+          const el = mv.querySelector(`[slot="${a.slotName}"]`);
+          if (el) el.dataset.position = posStr;
+        }
+
+        // ✅ show only successfully bound hotspots
+        const el = mv.querySelector(`[slot="${a.slotName}"]`);
+        if (el) el.classList.remove("occluded");
+
+        pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
+      }
+
+      return pointMap;
+    }
+
+    // =========================
+    // Download list UI (LOCKED)
+    // =========================
+    function buildListOnce() {
+      listEl.innerHTML = "";
+      for (const m of MODELS) {
+        const row = document.createElement('div');
+        row.className = "row";
+        const name = document.createElement('div');
+        name.className = "name";
+        name.textContent = m.id;
+        const meta = document.createElement('div');
+        meta.className = "meta";
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.addEventListener('click', () => onUserSelect(m.id));
+        listEl.appendChild(row);
+        rowEls.set(m.id, { row, meta });
+        refreshMeta(m.id);
+      }
+      paintActive();
+      paintDownloading(null);
+    }
+
+    // =========================
+    // Navigator (LOCKED)
+    // =========================
+    function setAnnoLabelText(text) { annoLabel.textContent = text || "Select an annotation"; }
+    function refreshAnnoNavLabel() {
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length || selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) {
+        setAnnoLabelText("Select an annotation");
+        return;
+      }
+      setAnnoLabelText(arr[selectedAnnoIndex].title);
+    }
+    function setSelectedAnnoBySlot(slotName) {
+      const arr = getAnnoListForCurrentModel();
+      const idx = arr.findIndex(a => a.slotName === slotName);
+      selectedAnnoIndex = idx;
+      refreshAnnoNavLabel();
+    }
+    function gotoAnnoIndex(idx, doFocus = true) {
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length) return;
+      const n = arr.length;
+      const i = ((idx % n) + n) % n;
+      selectedAnnoIndex = i;
+      refreshAnnoNavLabel();
+      if (doFocus) focusHotspot(arr[i].slotName);
+    }
+    function gotoNextPrev(dir) {
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length) return;
+      if (selectedAnnoIndex < 0) { gotoAnnoIndex(0, true); return; }
+      gotoAnnoIndex(selectedAnnoIndex + dir, true);
+    }
+    function getAnnoListForCurrentModel(){ return getAnnoListForModel(currentShownId); }
+
+    // =========================
+    // Icons + progress (LOCKED)
+    // =========================
+    function paintActive() { for (const m of MODELS) rowEls.get(m.id).row.classList.toggle("active", m.id === selectedId); }
+
+    function paintDownloading(idOrNull) {
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
+      downloadingVisualId = idOrNull;
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
+    }
+
+    // =========================
+    // Model swap + prep (LOCKED)
+    // =========================
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         captureAutoFrameBase(mv, modelId);
 
-        // If this model doesn't have an explicit annotation list, build it dynamically once.
+        // If no static list, discover once
         if (!ANNOTATIONS[modelId] && !DYN_ANNOTATIONS.has(modelId)) {
-          const dyn = discoverAnnotationAnchors(modelId, mv);
+          const dyn = discoverAnnotationAnchors(mv);
           DYN_ANNOTATIONS.set(modelId, dyn);
         }
 
-        // Now we can create hotspot elements (static or dynamic)
         ensureHotspotElements(mv, modelId);
 
         const bt = baseTarget.get(modelId);
@@ -1163,13 +1255,68 @@
     }
 
     // =========================
-    // MODEL SWAP (LOCKED)
+    // Remaining locked wiring (unchanged)
     // =========================
+    const rowEls = new Map();
+    let downloadingVisualId = null;
+
+    function refreshMeta(id) {
+      const st = state.get(id);
+      const meta = rowEls.get(id)?.meta;
+      if (!meta) return;
+      if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
+      if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
+      if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
+      if (st.status === "loading") { meta.innerHTML = loadingIconSVG(parsePercent(st.progressText)); return; }
+      meta.innerHTML = "";
+    }
+
+    function loadingIconSVG(percent) {
+      const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
+          <circle cx="10" cy="10" r="${r}"
+            fill="none" stroke="#1e88e5" stroke-width="2.5" stroke-linecap="round"
+            transform="rotate(-90 10 10)"
+            stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
+        </svg>`;
+    }
+    function doneIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#2e7d32"></circle>
+          <path d="M6 10.2 L8.6 12.8 L14 7.4"
+                fill="none" stroke="#ffffff" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>`;
+    }
+    function pausedIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#ffffff" stroke="#9e9e9e" stroke-width="2"></circle>
+          <rect x="7" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
+          <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
+        </svg>`;
+    }
+    function errorIconSVG() {
+      return `
+        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" fill="#c62828"></circle>
+          <rect x="9.1" y="5.2" width="1.8" height="6.8" rx="0.9" fill="#ffffff"></rect>
+          <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
+        </svg>`;
+    }
+
+    // navlist UI events
+    annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
+    annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
+
+    // ===== show model / selection glue (LOCKED) =====
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
-
       const camForThisSwap = readCamWithDelta(activeMv);
 
       selectedId = modelId;
@@ -1239,10 +1386,7 @@
       showModel(modelId);
     }
 
-    // ===== Bottom navigator visibility based on toggle =====
-    // (already handled in setAnnotationsEnabled)
-
-    // init UI list + selectors
+    // init UI
     buildListOnce();
     initBackgroundSelector();
     refreshAnnoNavLabel();
