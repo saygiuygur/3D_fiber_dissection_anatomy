@@ -254,7 +254,6 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
-    // ===== MODELS (all visible in UI) =====
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
       { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" },
@@ -268,7 +267,6 @@
       { id: "11_Anterior_Comissure_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure_Annotated.glb" },
     ];
 
-    // ===== Annotations (only 01/02 populated right now) =====
     const MODEL01_NAMES = [
       "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
       "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -312,7 +310,6 @@
       "11_Anterior_Comissure_Annotated": [],
     };
 
-    // ===== DOM =====
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
@@ -326,13 +323,11 @@
     const annoNext = document.getElementById('annoNext');
     const annoLabel = document.getElementById('annoLabel');
 
-    // ===== Active/idle viewers =====
     let activeMv = mvA;
     let idleMv = mvB;
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // ===== Annotation nav selection =====
     let selectedAnnoIndex = -1;
 
     function getAnnoListForCurrentModel() { return ANNOTATIONS[currentShownId] || []; }
@@ -366,11 +361,9 @@
       if (selectedAnnoIndex < 0) { gotoAnnoIndex(0, true); return; }
       gotoAnnoIndex(selectedAnnoIndex + dir, true);
     }
-
     annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
     annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
 
-    // ===== Background (LOCKED) =====
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -388,7 +381,6 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (LOCKED) =====
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) {
@@ -410,7 +402,6 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // ===== Tooltip (LOCKED) =====
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -431,7 +422,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // ===== Download/progress icons (LOCKED) =====
+    // Download/progress icons + download behavior (LOCKED)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -445,23 +436,16 @@
     let preloadRunning = false;
     const preloadQueue = MODELS.map(m => m.id);
 
-    // ✅ These MUST exist (this was the “models gone” cause when missing)
-    const rowEls = new Map(); // id -> { row, meta }
+    const rowEls = new Map();
     let downloadingVisualId = null;
 
     function paintDownloading(idOrNull) {
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
-        rowEls.get(downloadingVisualId).row.classList.remove("downloading");
-      }
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
       downloadingVisualId = idOrNull;
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) {
-        rowEls.get(downloadingVisualId).row.classList.add("downloading");
-      }
+      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
     }
     function paintActive() {
-      for (const m of MODELS) {
-        rowEls.get(m.id)?.row.classList.toggle("active", m.id === selectedId);
-      }
+      for (const m of MODELS) rowEls.get(m.id)?.row.classList.toggle("active", m.id === selectedId);
     }
 
     function parsePercent(progressText) {
@@ -517,6 +501,7 @@
       meta.innerHTML = "";
     }
 
+    // ✅ ONLY buildListOnce exists (duplicate removed)
     function buildListOnce() {
       list.innerHTML = "";
       rowEls.clear();
@@ -564,7 +549,6 @@
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
-
       if (st.status === "done" && st.blobUrl) return st.blobUrl;
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
@@ -600,14 +584,11 @@
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             chunks.push(value);
             received += value.byteLength;
 
-            st.progressText = total
-              ? `${Math.floor((received / total) * 100)}%`
-              : `${(received / (1024*1024)).toFixed(1)} MB`;
-
+            st.progressText = total ? `${Math.floor((received / total) * 100)}%`
+                                    : `${(received / (1024*1024)).toFixed(1)} MB`;
             refreshMeta(modelId);
           }
 
@@ -625,20 +606,17 @@
 
         } catch (err) {
           paintDownloading(null);
-
           if (err.name === "AbortError") {
             st.status = "paused";
             refreshMeta(modelId);
             maybeResumePreload();
             throw err;
           }
-
           st.status = "error";
           st.progressText = "";
           refreshMeta(modelId);
           maybeResumePreload();
           throw err;
-
         } finally {
           inFlight.delete(modelId);
         }
@@ -652,19 +630,15 @@
       if (!preloadEnabled) return;
       if (preloadRunning) return;
       preloadRunning = true;
-
       try {
         if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
           resumeRequested = true;
           return;
         }
-
         for (const id of preloadQueue) {
           if (!preloadEnabled) return;
-
           const st = state.get(id);
           if (st.status === "done") continue;
-
           try { await downloadToBlobUrl(id); }
           catch (e) { if (e.name === "AbortError") return; }
         }
@@ -673,7 +647,6 @@
       }
     }
 
-    // ===== Viewer swap =====
     function swapViewersNow() {
       activeMv.classList.remove('shownViewer');
       activeMv.classList.add('hiddenViewer');
@@ -687,9 +660,7 @@
       return sceneSym ? mv[sceneSym] : null;
     }
 
-    // =========================
-    // CALIBRATION + GLOBAL BASE (your stabilization)
-    // =========================
+    // ===== Global base + carryover (as before) =====
     const baseCenter = new Map();
     const baseTarget = new Map();
     const apAxisByModel = new Map();
@@ -713,13 +684,9 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
-
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
-    // =========================
-    // CAMERA CARRYOVER (LOCKED method)
-    // =========================
     let cameraReady = false;
 
     function readCamWithDelta(mv) {
@@ -754,9 +721,7 @@
       }
     }
 
-    // =========================
-    // OCCLUSION + bottom override (LOCKED)
-    // =========================
+    // ===== occlusion + focus + showModel =====
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const EPS = 1e-4;
@@ -972,16 +937,12 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // ===== Focus (kept as-is from your latest ellipse rule) =====
     const focusAnim = new WeakMap();
     const ELL_A = 35;
     const ELL_B = 10;
 
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
-    function easeInOutCubic(t){
-      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
-    }
+    function easeInOutCubic(t){ return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2; }
     function lerpAngleRad(a, b, t){
       let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
       return a + d * t;
@@ -1024,9 +985,7 @@
           cur.rafId = requestAnimationFrame(tick);
           focusAnim.set(mv, cur);
         } else {
-          if (typeof mv.jumpCameraToGoal === "function") {
-            try { mv.jumpCameraToGoal(); } catch (_) {}
-          }
+          try { mv.jumpCameraToGoal?.(); } catch (_) {}
           cur.rafId = 0;
           focusAnim.set(mv, cur);
         }
@@ -1088,7 +1047,6 @@
       );
     }
 
-    // ===== hotspots =====
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -1146,7 +1104,7 @@
       }));
     }
 
-    // ===== model swap =====
+    // ===== showModel =====
     let swapToken = 0;
 
     async function showModel(modelId) {
