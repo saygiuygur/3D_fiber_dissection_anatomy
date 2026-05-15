@@ -288,9 +288,7 @@
       "Anteriorcalcarinesulcus001","Angulargyrus001"
     ];
 
-    // ===== NEW: empties for newly added models (titles = anchors for now) =====
     const MODEL03_NAMES = [
-      "03_U_Fibers_Small",
       "Angulargyrus002",
       "Centrallobe",
       "InferiorFrontalgyrus002",
@@ -311,7 +309,6 @@
     ];
 
     const MODEL04_NAMES = [
-      "04_Superficial_SLF_Small",
       "AF1001",
       "SLF",
       "SuperficialAF",
@@ -320,7 +317,6 @@
     ];
 
     const MODEL05_NAMES = [
-      "05_Superficial_Arcuate_Small",
       "AF1",
       "AF2",
       "SLF001",
@@ -329,7 +325,6 @@
     ];
 
     const MODEL06_NAMES = [
-      "06_Arcuate_SLF_Small",
       "AF1002",
       "AF2001",
       "AnteriorinsularP",
@@ -350,12 +345,10 @@
     ];
 
     const MODEL07_NAMES = [
-      "07_Extreme_Capsule_Small",
       "ExtremeCapsule"
     ];
 
     const MODEL09_NAMES = [
-      "09_Putamen_External_Capsule_Small",
       "ExternalCapsule",
       "IFOF",
       "Putamen",
@@ -363,7 +356,6 @@
     ];
 
     const MODEL10_NAMES = [
-      "10_Internal_Capsule_Perforators_Small",
       "CoronaRadiata",
       "IFOF001",
       "LenticulostriatePerforatorsM1",
@@ -371,7 +363,6 @@
     ];
 
     const MODEL11_NAMES = [
-      "11_Anterior_Comissure_Small",
       "AnteriorCommissure",
       "CoronaRadiata001",
       "GlobusPallidus",
@@ -389,8 +380,6 @@
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
-
-      // ✅ Now enabled (labels = empty names for now)
       "03_U_Fibers_Annotated": makeAnnotations(MODEL03_NAMES),
       "04_Superficial_SLF_Annotated": makeAnnotations(MODEL04_NAMES),
       "05_Superficial_Arcuate_Annotated": makeAnnotations(MODEL05_NAMES),
@@ -513,6 +502,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
+    // Download logic / icons (LOCKED)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -738,6 +728,7 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
+    // Helpers
     const EPS = 1e-4;
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
@@ -761,6 +752,7 @@
       return sym ? mv[sym] : null;
     }
 
+    // CALIBRATION / BASE
     const baseCenter = new Map();
     const baseTarget = new Map();
     const apAxisByModel = new Map();
@@ -787,7 +779,21 @@
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
+    // CAMERA CARRYOVER (LOCKED) + ✅ settled snapshot freeze (prevents zoom drift)
     let cameraReady = false;
+
+    let latestCarryCam = null;   // frozen snapshot from settled user interactions
+    let savingEnabled = true;
+    let settleRaf = 0;
+
+    function cloneCarry(cam) {
+      if (!cam) return null;
+      return {
+        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
+        deltaTarget: { x: cam.deltaTarget.x, y: cam.deltaTarget.y, z: cam.deltaTarget.z },
+        fov: cam.fov
+      };
+    }
 
     function readCamWithDelta(mv) {
       if (!cameraReady || !mv || !mv.src) return null;
@@ -800,6 +806,24 @@
       const delta = bt ? { x: t.x - bt.x, y: t.y - bt.y, z: t.z - bt.z } : { x:0, y:0, z:0 };
 
       return { orbit: { theta: o.theta, phi: o.phi, radius: o.radius }, deltaTarget: delta, fov: f };
+    }
+
+    function scheduleSettledCarrySnapshot() {
+      if (!savingEnabled) return;
+      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+      if (settleRaf) cancelAnimationFrame(settleRaf);
+      settleRaf = requestAnimationFrame(() => {
+        settleRaf = 0;
+        const cam = readCamWithDelta(activeMv);
+        if (cam) latestCarryCam = cloneCarry(cam);
+      });
+    }
+
+    // capture only on "settled" user actions (prevents swap-time creep)
+    for (const mv of [mvA, mvB]) {
+      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
     }
 
     function applyCamWithDelta(mv, modelId, cam) {
@@ -819,6 +843,7 @@
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
+    // Hotspots
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -846,6 +871,7 @@
       }
     }
 
+    // Occlusion + bottom override (unchanged)
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -1060,6 +1086,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
+    // Focus (unchanged)
     const focusAnim = new WeakMap();
     const ELL_A = 35;
     const ELL_B = 10;
@@ -1199,11 +1226,17 @@
       }));
     }
 
+    // Model swap
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
-      const camForThisSwap = readCamWithDelta(activeMv);
+
+      // ✅ Freeze the camera from latest settled user snapshot (prevents zoom drift)
+      const camForThisSwap = cloneCarry(latestCarryCam) || readCamWithDelta(activeMv);
+
+      // Block settled snapshots during swap (swap-time camera changes are ignored)
+      savingEnabled = false;
 
       selectedId = modelId;
       paintActive();
@@ -1217,8 +1250,13 @@
         currentShownId = modelId;
         cameraReady = true;
         startLoop(activeMv);
+
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
+
+        // re-enable settled snapshots after swap
+        savingEnabled = true;
+        scheduleSettledCarrySnapshot();
       };
 
       const applyAfterLoad = () => {
@@ -1237,7 +1275,7 @@
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
 
-        if (activeSrc === targetSrc) return;
+        if (activeSrc === targetSrc) { savingEnabled = true; return; }
 
         if (idleSrc === targetSrc) {
           applyAfterLoad();
@@ -1266,7 +1304,9 @@
         const blobUrl = await downloadToBlobUrl(modelId);
         if (token !== swapToken) return;
         idleMv.src = blobUrl;
-      } catch (_) {}
+      } catch (_) {
+        savingEnabled = true;
+      }
     }
 
     function onUserSelect(modelId) {
@@ -1275,11 +1315,13 @@
       showModel(modelId);
     }
 
+    // Init
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
     refreshAnnoNavLabel();
 
+    // First show: no settled snapshot yet; capture after first load automatically
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
