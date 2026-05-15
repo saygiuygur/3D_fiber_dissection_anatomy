@@ -421,7 +421,6 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // Download/progress icons + download behavior (LOCKED)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -647,11 +646,6 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    /* =========================
-       ✅ INSERTED: missing core app logic (camera carryover + occlusion + focus + showModel)
-       ========================= */
-
-    // --- Helpers ---
     const EPS = 1e-4;
     function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
     function lerp(a,b,t){ return a + (b-a)*t; }
@@ -670,15 +664,11 @@
       return { theta, phi, radius: r };
     }
 
-    // --- Internal scene access ---
     function getMvScene(mv) {
       const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sym ? mv[sym] : null;
     }
 
-    // =========================
-    // CALIBRATION / BASE (global base to stabilize)
-    // =========================
     const baseCenter = new Map();
     const baseTarget = new Map();
     const apAxisByModel = new Map();
@@ -702,13 +692,9 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
-
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
-    // =========================
-    // CAMERA carryover (angle+zoom)
-    // =========================
     let cameraReady = false;
 
     function readCamWithDelta(mv) {
@@ -741,9 +727,6 @@
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
-    // =========================
-    // Hotspots creation
-    // =========================
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -771,9 +754,6 @@
       }
     }
 
-    // =========================
-    // Occlusion (batched) + bottom override
-    // =========================
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -988,9 +968,6 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // =========================
-    // Focus (ellipse rule)
-    // =========================
     const focusAnim = new WeakMap();
     const ELL_A = 35;
     const ELL_B = 10;
@@ -1091,9 +1068,6 @@
       );
     }
 
-    // =========================
-    // Prepare annotations/occlusion for a viewer
-    // =========================
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
 
@@ -1133,9 +1107,6 @@
       }));
     }
 
-    // =========================
-    // Model swap + load
-    // =========================
     let swapToken = 0;
 
     async function showModel(modelId) {
@@ -1163,23 +1134,30 @@
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
       };
 
+      // ✅ REVEAL BARRIER helper: wait 3 frames then swap
+      const finalizeAfterBarrier = () => {
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (token !== swapToken) return;
+          finalizeSwap();
+        })));
+      };
+
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
 
         if (activeSrc === targetSrc) return;
+
         if (idleSrc === targetSrc) {
           applyAfterLoad();
-          finalizeSwap();
+          finalizeAfterBarrier();
           return;
         }
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            applyAfterLoad();
-            finalizeSwap();
-          }));
+          applyAfterLoad();
+          finalizeAfterBarrier();
         };
         idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
@@ -1188,10 +1166,8 @@
 
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          applyAfterLoad();
-          finalizeSwap();
-        }));
+        applyAfterLoad();
+        finalizeAfterBarrier();
       };
       idleMv.addEventListener('load', onIdleLoad, { once:true });
 
@@ -1208,9 +1184,6 @@
       showModel(modelId);
     }
 
-    // =========================
-    // INIT
-    // =========================
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
