@@ -157,7 +157,7 @@
     .annOff .hotspot{ display:none !important; }
     .annOff #hotspotTip{ display:none !important; }
 
-    /* ===== Annotation bottom navigator ===== */
+    /* Bottom annotation navigator */
     #annoNav{
       position:absolute;
       left:50%;
@@ -240,7 +240,6 @@
     <div class="viewer-wrap" id="viewerWrap">
       <div id="hotspotTip"></div>
 
-      <!-- Bottom annotation navigator -->
       <div id="annoNav" aria-label="Annotation navigator">
         <button id="annoPrev" class="navBtn" aria-label="Previous annotation" title="Previous">‹</button>
         <div id="annoLabel" class="navText">Select an annotation</div>
@@ -257,11 +256,21 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
 
+    // ===== Models (updated to include all uploaded GLBs) =====
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
-      { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" }
+      { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" },
+      { id: "03_U_Fibers_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers_Annotated.glb" },
+      { id: "04_Superficial_SLF_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF_Annotated.glb" },
+      { id: "05_Superficial_Arcuate_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate_Annotated.glb" },
+      { id: "06_Insula_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Insula_Annotated.glb" },
+      { id: "07_Extreme_Capsule_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule_Annotated.glb" },
+      { id: "09_Putamen_External_Capsule_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule_Annotated.glb" },
+      { id: "10_Lenticulostriate_Perforators_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Lenticulostriate_Perforators_Annotated.glb" },
+      { id: "11_Anterior_Comissure_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure_Annotated.glb" }
     ];
 
+    // ===== Explicit names for model 01 & 02 (kept as-is) =====
     const MODEL01_NAMES = [
       "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
       "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -292,12 +301,16 @@
       }));
     }
 
+    // Static annotations for models 01 & 02
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
-      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
+      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES)
     };
 
-    const list = document.getElementById('list');
+    // Dynamic annotations (auto-detected empties) for models 03+
+    const DYN_ANNOTATIONS = new Map(); // modelId -> [{slotName, anchor, title}, ...]
+
+    const listEl = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
     const viewerWrap = document.getElementById('viewerWrap');
@@ -305,7 +318,6 @@
     const bgOptions = document.getElementById('bgOptions');
     const annToggle = document.getElementById('annToggle');
 
-    // bottom navigator elements
     const annoNav = document.getElementById('annoNav');
     const annoPrev = document.getElementById('annoPrev');
     const annoNext = document.getElementById('annoNext');
@@ -316,41 +328,44 @@
     let selectedId = MODELS[0].id;
     let currentShownId = selectedId;
 
-    // selection state for navigator
+    // Navigator selection state
     let selectedAnnoIndex = -1;
 
+    function getAnnoListForModel(modelId) {
+      return ANNOTATIONS[modelId] || DYN_ANNOTATIONS.get(modelId) || [];
+    }
     function getAnnoListForCurrentModel() {
-      return ANNOTATIONS[currentShownId] || [];
+      return getAnnoListForModel(currentShownId);
     }
     function setAnnoLabelText(text) {
       annoLabel.textContent = text || "Select an annotation";
     }
     function refreshAnnoNavLabel() {
-      const list = getAnnoListForCurrentModel();
-      if (!list.length || selectedAnnoIndex < 0 || selectedAnnoIndex >= list.length) {
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length || selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) {
         setAnnoLabelText("Select an annotation");
         return;
       }
-      setAnnoLabelText(list[selectedAnnoIndex].title);
+      setAnnoLabelText(arr[selectedAnnoIndex].title);
     }
     function setSelectedAnnoBySlot(slotName) {
-      const list = getAnnoListForCurrentModel();
-      const idx = list.findIndex(a => a.slotName === slotName);
+      const arr = getAnnoListForCurrentModel();
+      const idx = arr.findIndex(a => a.slotName === slotName);
       selectedAnnoIndex = idx;
       refreshAnnoNavLabel();
     }
     function gotoAnnoIndex(idx, doFocus = true) {
-      const list = getAnnoListForCurrentModel();
-      if (!list.length) return;
-      const n = list.length;
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length) return;
+      const n = arr.length;
       const i = ((idx % n) + n) % n;
       selectedAnnoIndex = i;
       refreshAnnoNavLabel();
-      if (doFocus) focusHotspot(list[i].slotName);
+      if (doFocus) focusHotspot(arr[i].slotName);
     }
     function gotoNextPrev(dir) {
-      const list = getAnnoListForCurrentModel();
-      if (!list.length) return;
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length) return;
       if (selectedAnnoIndex < 0) {
         gotoAnnoIndex(0, true);
         return;
@@ -379,16 +394,16 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // ===== Toggle annotations (LOCKED) + NEW: auto-hide navigator =====
+    // ===== Toggle annotations (LOCKED) =====
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) {
         hotspotTip.style.display = 'none';
-        annoNav.style.display = 'none';   // NEW: hide navigator
-        selectedAnnoIndex = -1;           // NEW: reset selection
+        annoNav.style.display = 'none';
+        selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
       } else {
-        annoNav.style.display = 'flex';   // NEW: show navigator
+        annoNav.style.display = 'flex';
       }
       try { localStorage.setItem('annotationsEnabled', enabled ? '1' : '0'); } catch (_) {}
     }
@@ -502,7 +517,7 @@
     }
 
     function buildListOnce() {
-      list.innerHTML = "";
+      listEl.innerHTML = "";
       for (const m of MODELS) {
         const row = document.createElement('div');
         row.className = "row";
@@ -514,7 +529,7 @@
         row.appendChild(name);
         row.appendChild(meta);
         row.addEventListener('click', () => onUserSelect(m.id));
-        list.appendChild(row);
+        listEl.appendChild(row);
         rowEls.set(m.id, { row, meta });
         refreshMeta(m.id);
       }
@@ -663,7 +678,7 @@
     }
 
     // =========================
-    // CAMERA CARRYOVER (LOCKED behavior)
+    // CAMERA CARRYOVER (LOCKED)
     // =========================
     let cameraReady = false;
 
@@ -773,7 +788,7 @@
       scene.updateMatrixWorld?.(true);
 
       const pointMap = new Map();
-      const anns = ANNOTATIONS[modelId] || [];
+      const anns = getAnnoListForModel(modelId);
 
       for (const a of anns) {
         const obj = scene.getObjectByName(a.anchor);
@@ -1062,7 +1077,7 @@
 
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
-      const anns = ANNOTATIONS[modelId] || [];
+      const anns = getAnnoListForModel(modelId);
       for (const a of anns) {
         const btn = document.createElement('button');
         btn.className = 'hotspot';
@@ -1083,11 +1098,44 @@
       }
     }
 
-    function prepareAnnotationsAndOcclusion(mv, modelId) {
-      ensureHotspotElements(mv, modelId);
+    // Auto-detect named non-mesh nodes (empties) and create annotations
+    function discoverAnnotationAnchors(modelId, mv) {
+      const scene = getMvScene(mv);
+      if (!scene || typeof scene.traverse !== "function") return [];
 
+      const names = [];
+      scene.traverse(obj => {
+        if (!obj) return;
+        if (!obj.name) return;
+        // Skip obvious non-annotation things
+        if (obj.isMesh) return;
+        const type = (obj.type || "").toLowerCase();
+        if (type.includes("camera") || type.includes("light")) return;
+        // Must exist by name lookup later
+        names.push(obj.name);
+      });
+
+      // Remove duplicates and sort for stable order
+      const uniq = Array.from(new Set(names)).sort((a,b) => a.localeCompare(b));
+      return uniq.map((name, i) => ({
+        slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
+        anchor: name,
+        title: name
+      }));
+    }
+
+    function prepareAnnotationsAndOcclusion(mv, modelId) {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         captureAutoFrameBase(mv, modelId);
+
+        // If this model doesn't have an explicit annotation list, build it dynamically once.
+        if (!ANNOTATIONS[modelId] && !DYN_ANNOTATIONS.has(modelId)) {
+          const dyn = discoverAnnotationAnchors(modelId, mv);
+          DYN_ANNOTATIONS.set(modelId, dyn);
+        }
+
+        // Now we can create hotspot elements (static or dynamic)
+        ensureHotspotElements(mv, modelId);
 
         const bt = baseTarget.get(modelId);
         const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
@@ -1191,15 +1239,16 @@
       showModel(modelId);
     }
 
-    // =========================
-    // INIT
-    // =========================
+    // ===== Bottom navigator visibility based on toggle =====
+    // (already handled in setAnnotationsEnabled)
+
+    // init UI list + selectors
     buildListOnce();
     initBackgroundSelector();
-
     refreshAnnoNavLabel();
     initAnnotationsToggle();
 
+    // boot
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
