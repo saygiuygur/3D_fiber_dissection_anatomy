@@ -338,11 +338,15 @@
       "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
-    // Cross-model anchor aliasing:
-    // In model 03, use model 02's Inferiortemporalsulcus001 coordinates
+    // Cross-model anchor aliasing + OFFSET:
+    // In model 03, use model 02's Inferiortemporalsulcus001 coordinates, then shift 1m DOWN on Y.
     const ANCHOR_ALIASES = {
       "03_U_Fibers_Annotated": {
-        "Inferiortemporalsulcus002": { modelId: "02_Veselless_Annotated", anchor: "Inferiortemporalsulcus001" }
+        "Inferiortemporalsulcus002": {
+          modelId: "02_Veselless_Annotated",
+          anchor: "Inferiortemporalsulcus001",
+          offset: { x: 0, y: -1, z: 0 } // 1 meter down
+        }
       }
     };
 
@@ -911,7 +915,14 @@
         if (alias) {
           const cached = anchorPosCache.get(cacheKey(alias.modelId, alias.anchor));
           if (cached) {
-            const x = cached.x, y = cached.y, z = cached.z;
+            const ox = alias.offset?.x ?? 0;
+            const oy = alias.offset?.y ?? 0;
+            const oz = alias.offset?.z ?? 0;
+
+            const x = cached.x + ox;
+            const y = cached.y + oy;
+            const z = cached.z + oz;
+
             const posStr = `${x}m ${y}m ${z}m`;
             try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
             catch {
@@ -1091,10 +1102,21 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus (unchanged)
+    // Focus (animated) + per-model ellipse profiles
     const focusAnim = new WeakMap();
-    const ELL_A = 35;
-    const ELL_B = 10;
+
+    // Default (locked): AP [-35,+35], SI [-10,+10], medialShift 0
+    const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
+
+    // Per-model overrides from you:
+    const FOCUS_PROFILE_BY_MODEL = {
+      "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: 0 },
+      "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: 0 },
+      "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: 0 },
+      "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 10 }
+    };
 
     function animateCamera(mv, from, to) {
       const prev = focusAnim.get(mv);
@@ -1149,22 +1171,38 @@
       if (!C0) return;
 
       const apKey = apAxisByModel.get(currentShownId) || 'z';
-      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
-      const v = new THREE.Vector3(0,1,0);
+      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1); // AP axis
+      const v = new THREE.Vector3(0,1,0);                                              // SI axis
+      const w = u.clone().cross(v).normalize();                                         // ML axis
+
+      const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
+
+      const apMid = (prof.apMin + prof.apMax) / 2;
+      const siMid = (prof.siMin + prof.siMax) / 2;
+      const A = Math.max(1e-6, (prof.apMax - prof.apMin) / 2);
+      const B = Math.max(1e-6, (prof.siMax - prof.siMin) / 2);
 
       const rel = P.clone().sub(C0);
       let xp = rel.dot(u);
       let yp = rel.dot(v);
 
-      const s = (xp*xp)/(ELL_A*ELL_A) + (yp*yp)/(ELL_B*ELL_B);
+      let xrel = xp - apMid;
+      let yrel = yp - siMid;
+
+      const s = (xrel*xrel)/(A*A) + (yrel*yrel)/(B*B);
       if (s > 1e-12 && s > 1) {
         const k = 1 / Math.sqrt(s);
-        xp *= k; yp *= k;
+        xrel *= k;
+        yrel *= k;
       }
+
+      xp = apMid + xrel;
+      yp = siMid + yrel;
 
       const Cstar = C0.clone()
         .add(u.clone().multiplyScalar(xp))
-        .add(v.clone().multiplyScalar(yp));
+        .add(v.clone().multiplyScalar(yp))
+        .add(w.clone().multiplyScalar(prof.medialShift || 0));
 
       const d = P.clone().sub(Cstar);
       if (d.length() < 1e-6) return;
@@ -1197,10 +1235,6 @@
     let prime02Started = false;
     let prime02Done = false;
 
-    function getModelUrlById(id) {
-      return MODELS.find(m => m.id === id)?.url || null;
-    }
-
     function computeShiftForModel(mv, modelId) {
       const bt = baseTarget.get(modelId);
       const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
@@ -1212,14 +1246,11 @@
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return;
 
-      // Ensure base maps exist
       captureAutoFrameBase(mv, PRIME_MODEL_ID);
 
-      // Force cameraTarget to baseTarget => delta = 0 (stable)
       const bt = baseTarget.get(PRIME_MODEL_ID);
       if (bt) mv.cameraTarget = `${bt.x}m ${bt.y}m ${bt.z}m`;
 
-      // Compute shift with delta=0
       const shift = computeShiftForModel(mv, PRIME_MODEL_ID);
 
       scene.updateMatrixWorld?.(true);
@@ -1243,17 +1274,13 @@
       prime02Started = true;
 
       try {
-        // Ensure we have baseCenter/Target set from first visible model
         if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
-          // will be set during first model load finalize; if not, just retry next frame
           requestAnimationFrame(() => startPrimeModel02Once());
           return;
         }
 
-        // Download blob via the SAME locked pipeline (doesn't change behaviors)
         const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
 
-        // Load into hidden priming viewer to build Three.js scene and cache coordinates
         if (mvPrime.src !== blobUrl) {
           await new Promise(resolve => {
             const onLoad = () => resolve();
@@ -1262,7 +1289,6 @@
           });
         }
 
-        // Two rAFs ensures internal scene is ready
         await new Promise(r => requestAnimationFrame(r));
         await new Promise(r => requestAnimationFrame(r));
 
@@ -1270,7 +1296,6 @@
         prime02Done = true;
 
       } catch (_) {
-        // If aborted by a user click, we'll allow retry later.
         prime02Started = false;
       }
     }
@@ -1350,7 +1375,6 @@
           if (token !== swapToken) return;
           finalizeSwap();
 
-          // Start invisible priming after first visible model is stable
           if (!prime02Done) startPrimeModel02Once();
         })));
       };
