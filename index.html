@@ -1,3 +1,4 @@
+index.html (camera-change carry listener removed)
 <!doctype html>
 <html>
 <head>
@@ -740,12 +741,12 @@
       });
     }
 
-    // ✅ CHANGE 1: removed camera-change listener (only wheel/pointerup/touchend)
+    // ✅ FIX: add camera-change so manual drags always update carry snapshot
     for (const mv of [mvA, mvB]) {
       mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
-    }
+}
 
     function getMvScene(mv) {
       const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
@@ -829,6 +830,7 @@
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
+
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -853,7 +855,7 @@
       updateSelectedHotspotVisual();
     }
 
-    // ===== Occlusion batching knobs =====
+    // Occlusion + bottom override + selected always visible
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -867,8 +869,8 @@
       if (!scene || typeof scene.traverse !== "function") return null;
 
       scene.updateMatrixWorld?.(true);
-
       const occluders = [];
+
       scene.traverse(obj => {
         if (!obj || !obj.isMesh || !obj.geometry) return;
 
@@ -891,28 +893,22 @@
         }
 
         const m = obj.matrixWorld?.elements;
-        if (m && m.length === 16) {
-          geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
-        }
+        if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
 
         geo.translate(shift.x, shift.y, shift.z);
-
         occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })));
       });
 
       return occluders;
     }
 
-    function updateHotspotPositionsAndPointMap(mv, modelId) {
+    function updateHotspotsAndPointMap(mv, modelId, shift) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return new Map();
 
       scene.updateMatrixWorld?.(true);
 
-      const shift = computeShiftForModel(mv, modelId);
-
       const pointMap = new Map();
-
       const anns = ANNOTATIONS[modelId] || [];
       const aliasMap = ANCHOR_ALIASES[modelId] || {};
 
@@ -935,7 +931,6 @@
               const el = mv.querySelector(`[slot="${a.slotName}"]`);
               if (el) el.dataset.position = posStr;
             }
-
             pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
             anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
             continue;
@@ -964,13 +959,6 @@
       }
 
       return pointMap;
-    }
-
-    function computeShiftForModel(mv, modelId) {
-      const bt = baseTarget.get(modelId);
-      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-      return baseCenter.get(modelId).clone().add(delta);
     }
 
     function getCameraPositionHotspotSpace(mv) {
@@ -1072,7 +1060,7 @@
     function startLoop(mv) {
       let ls = loopState.get(mv);
       if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0, frame:0, finalizing:false };
+        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
         loopState.set(mv, ls);
       }
 
@@ -1080,7 +1068,6 @@
       if (ls.running) return;
 
       ls.running = true;
-      ls.finalizing = false;
 
       const tick = () => {
         ls.frame++;
@@ -1097,10 +1084,7 @@
         }
 
         const st = occState.get(mv);
-        if (!st || !st.slots.length) {
-          ls.running = false; ls.rafId = 0;
-          return;
-        }
+        if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
 
         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
 
@@ -1120,42 +1104,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    function prepareAnnotationsAndOcclusion(mv, modelId) {
-      ensureHotspotElements(mv, modelId);
-
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        captureAutoFrameBase(mv, modelId);
-
-        const shift = computeShiftForModel(mv, modelId);
-
-        const occluders = buildRaycastOccluders(mv, shift);
-        const pointMap = updateHotspotPositionsAndPointMap(mv, modelId);
-        const slots = Array.from(pointMap.keys());
-
-        if (occluders && occluders.length && slots.length) {
-          occState.set(mv, {
-            occluders,
-            pointMap,
-            raycaster: new THREE.Raycaster(),
-            slots,
-            cursor: 0,
-            finalizeRemaining: null,
-            forcedVisible: null
-          });
-        } else {
-          occState.set(mv, null);
-        }
-
-        runBatch(mv, RAYS_PER_BATCH);
-
-        if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
-          mv.__hasOccListener = true;
-        }
-      }));
-    }
-
-    // Focus profiles (kept from base)
+    // Focus profiles (updated: 10 & 11 now -20)
     const focusAnim = new WeakMap();
     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
@@ -1164,8 +1113,8 @@
       "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
     };
 
     function animateCamera(mv, from, to) {
@@ -1201,7 +1150,14 @@
         } else {
           try { mv.jumpCameraToGoal?.(); } catch (_) {}
 
-          // ✅ CHANGE 2: removed "focus ended -> force carry snapshot" block
+          // focus doesn't trigger wheel/pointerup -> force carry snapshot
+          try {
+            if (mv === activeMv && savingEnabled) {
+              const camNow = readCamWithDelta(activeMv);
+              if (camNow) latestCarryCam = cloneCarry(camNow);
+              scheduleSettledCarrySnapshot();
+            }
+          } catch (_) {}
 
           cur.rafId = 0;
           focusAnim.set(mv, cur);
@@ -1283,9 +1239,17 @@
       );
     }
 
+    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
     const PRIME_MODEL_ID = "02_Veselless_Annotated";
     let prime02Started = false;
     let prime02Done = false;
+
+    function computeShiftForModel(mv, modelId) {
+      const bt = baseTarget.get(modelId);
+      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
+      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
+      return baseCenter.get(modelId).clone().add(delta);
+    }
 
     function primeCacheFromModel02(mv) {
       const scene = getMvScene(mv);
@@ -1348,6 +1312,41 @@
     // ===== Swap / show model =====
     let swapToken = 0;
 
+    function prepareAnnotationsAndOcclusion(mv, modelId) {
+      ensureHotspotElements(mv, modelId);
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        captureAutoFrameBase(mv, modelId);
+
+        const shift = computeShiftForModel(mv, modelId);
+
+        const occluders = buildRaycastOccluders(mv, shift);
+        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
+        const slots = Array.from(pointMap.keys());
+
+        if (occluders && occluders.length && slots.length) {
+          occState.set(mv, {
+            occluders,
+            pointMap,
+            raycaster: new THREE.Raycaster(),
+            slots,
+            cursor: 0,
+            finalizeRemaining: null,
+            forcedVisible: null
+          });
+        } else {
+          occState.set(mv, null);
+        }
+
+        runBatch(mv, RAYS_PER_BATCH);
+
+        if (!mv.__hasOccListener) {
+          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
+          mv.__hasOccListener = true;
+        }
+      }));
+    }
+
     async function showModel(modelId) {
       const token = ++swapToken;
 
@@ -1391,8 +1390,14 @@
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
+
         if (activeSrc === targetSrc) { savingEnabled = true; return; }
-        if (idleSrc === targetSrc) { applyAfterLoad(); finalizeAfterBarrier(); return; }
+
+        if (idleSrc === targetSrc) {
+          applyAfterLoad();
+          finalizeAfterBarrier();
+          return;
+        }
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
