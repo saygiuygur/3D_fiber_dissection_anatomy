@@ -718,6 +718,7 @@
     let latestCarryCam = null;
     let savingEnabled = true;
     let settleRaf = 0;
+    let freezeCarryFromCameraChange = false;
 
     function cloneCarry(cam) {
       if (!cam) return null;
@@ -739,11 +740,21 @@
       });
     }
 
+    function scheduleSettledCarrySnapshotManual() {
+      freezeCarryFromCameraChange = false;
+      scheduleSettledCarrySnapshot();
+    }
+
+    function scheduleSettledCarrySnapshotCameraChange() {
+      if (freezeCarryFromCameraChange) return;
+      scheduleSettledCarrySnapshot();
+    }
+
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('wheel', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
     }
 
     function getMvScene(mv) {
@@ -1165,7 +1176,7 @@
             if (mv === activeMv && savingEnabled) {
               const camNow = readCamWithDelta(activeMv);
               if (camNow) latestCarryCam = cloneCarry(camNow);
-              scheduleSettledCarrySnapshot();
+              freezeCarryFromCameraChange = true;
             }
           } catch (_) {}
 
@@ -1387,12 +1398,16 @@
         updateSelectedHotspotVisual();
 
         savingEnabled = true;
-        scheduleSettledCarrySnapshot();
+        if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
       };
 
       const applyAfterLoad = () => {
         captureAutoFrameBase(idleMv, modelId);
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
+        if (camForThisSwap) {
+          latestCarryCam = cloneCarry(camForThisSwap);
+          freezeCarryFromCameraChange = true;
+        }
         focusCarryCam.delete(idleMv);
       };
 
