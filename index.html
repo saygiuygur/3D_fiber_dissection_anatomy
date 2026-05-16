@@ -134,6 +134,9 @@
       transform: translate(-50%, -50%);
       box-sizing: border-box;
     }
+    .hotspot.selected{
+      border-color: #1e88e5; /* blue ring for selected */
+    }
     .hotspot.occluded{
       opacity: 0;
       pointer-events: none;
@@ -289,85 +292,26 @@
     ];
 
     const MODEL03_NAMES = [
-      "Angulargyrus002",
-      "Centrallobe",
-      "InferiorFrontalgyrus002",
-      "InferiorFrontalsulcus002",
-      "Inferiortemporalgyrus002",
-      "Inferiortemporalsulcus002",
-      "Intraparietalsulcus002",
-      "Middlefrontalgyrus002",
-      "MiddletemporalGyrus002",
-      "ParietalOperculum002",
-      "SuperiorFrontalgyrus002",
-      "SuperiorFrontalsulcus002",
-      "Superiorparietallobule002",
-      "SuperiortemporalGyrus002",
-      "SuperiortemporalSulcus002",
-      "Supramarginalgyrus002",
-      "Sylvianfissure002"
+      "Angulargyrus002","Centrallobe","InferiorFrontalgyrus002","InferiorFrontalsulcus002",
+      "Inferiortemporalgyrus002","Inferiortemporalsulcus002","Intraparietalsulcus002",
+      "Middlefrontalgyrus002","MiddletemporalGyrus002","ParietalOperculum002","SuperiorFrontalgyrus002",
+      "SuperiorFrontalsulcus002","Superiorparietallobule002","SuperiortemporalGyrus002",
+      "SuperiortemporalSulcus002","Supramarginalgyrus002","Sylvianfissure002"
     ];
 
-    const MODEL04_NAMES = [
-      "AF1001",
-      "SLF",
-      "SuperficialAF",
-      "SuperficialSLF",
-      "SuperiortemporalGyrus003"
-    ];
-
-    const MODEL05_NAMES = [
-      "AF1",
-      "AF2",
-      "SLF001",
-      "SuperficialAF001",
-      "SuperiortemporalGyrus006"
-    ];
+    const MODEL04_NAMES = [ "AF1001","SLF","SuperficialAF","SuperficialSLF","SuperiortemporalGyrus003" ];
+    const MODEL05_NAMES = [ "AF1","AF2","SLF001","SuperficialAF001","SuperiortemporalGyrus006" ];
 
     const MODEL06_NAMES = [
-      "AF1002",
-      "AF2001",
-      "AnteriorinsularP",
-      "Anteriorlimsulc",
-      "CentralsulcusI",
-      "FrontalLimenP",
-      "Inferiorlimsulc",
-      "Insularapex",
-      "LimenI",
-      "LongGyri",
-      "PosteriorinsularP",
-      "SLF002",
-      "SLF003",
-      "ShortGyri",
-      "Superiorlimsulc",
-      "SuperiortemporalGyrus004",
-      "TemporalLimenP"
+      "AF1002","AF2001","AnteriorinsularP","Anteriorlimsulc","CentralsulcusI","FrontalLimenP",
+      "Inferiorlimsulc","Insularapex","LimenI","LongGyri","PosteriorinsularP","SLF002","SLF003",
+      "ShortGyri","Superiorlimsulc","SuperiortemporalGyrus004","TemporalLimenP"
     ];
 
-    const MODEL07_NAMES = [
-      "ExtremeCapsule"
-    ];
-
-    const MODEL09_NAMES = [
-      "ExternalCapsule",
-      "IFOF",
-      "Putamen",
-      "UF"
-    ];
-
-    const MODEL10_NAMES = [
-      "CoronaRadiata",
-      "IFOF001",
-      "LenticulostriatePerforatorsM1",
-      "UF001"
-    ];
-
-    const MODEL11_NAMES = [
-      "AnteriorCommissure",
-      "CoronaRadiata001",
-      "GlobusPallidus",
-      "InternalCapsule"
-    ];
+    const MODEL07_NAMES = [ "ExtremeCapsule" ];
+    const MODEL09_NAMES = [ "ExternalCapsule","IFOF","Putamen","UF" ];
+    const MODEL10_NAMES = [ "CoronaRadiata","IFOF001","LenticulostriatePerforatorsM1","UF001" ];
+    const MODEL11_NAMES = [ "AnteriorCommissure","CoronaRadiata001","GlobusPallidus","InternalCapsule" ];
 
     function makeAnnotations(names) {
       return names.map((name, i) => ({
@@ -411,6 +355,24 @@
     let selectedAnnoIndex = -1;
 
     function getAnnoListForCurrentModel() { return ANNOTATIONS[currentShownId] || []; }
+    function getSelectedSlotName() {
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length) return null;
+      if (selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) return null;
+      return arr[selectedAnnoIndex].slotName;
+    }
+
+    // ✅ apply blue ring to selected hotspot
+    function updateSelectedHotspotVisual() {
+      const mv = activeMv;
+      if (!mv) return;
+      mv.querySelectorAll('.hotspot.selected').forEach(el => el.classList.remove('selected'));
+      const slot = getSelectedSlotName();
+      if (!slot) return;
+      const el = mv.querySelector(`[slot="${slot}"]`);
+      if (el) el.classList.add('selected');
+    }
+
     function setAnnoLabelText(text) { annoLabel.textContent = text || "Select an annotation"; }
     function refreshAnnoNavLabel() {
       const arr = getAnnoListForCurrentModel();
@@ -425,6 +387,7 @@
       const idx = arr.findIndex(a => a.slotName === slotName);
       selectedAnnoIndex = idx;
       refreshAnnoNavLabel();
+      updateSelectedHotspotVisual();
     }
     function gotoAnnoIndex(idx, doFocus = true) {
       const arr = getAnnoListForCurrentModel();
@@ -433,6 +396,7 @@
       const i = ((idx % n) + n) % n;
       selectedAnnoIndex = i;
       refreshAnnoNavLabel();
+      updateSelectedHotspotVisual();
       if (doFocus) focusHotspot(arr[i].slotName);
     }
     function gotoNextPrev(dir) {
@@ -468,6 +432,7 @@
         annoNav.style.display = 'none';
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
+        updateSelectedHotspotVisual();
       } else {
         annoNav.style.display = 'flex';
       }
@@ -728,31 +693,46 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // Helpers
-    const EPS = 1e-4;
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-    function lerp(a,b,t){ return a + (b-a)*t; }
-    function easeInOutCubic(t){
-      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
-    }
-    function lerpAngleRad(a, b, t){
-      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
-      return a + d * t;
-    }
-    function orbitFromOffset(off) {
-      const r = off.length();
-      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
-      const phi = Math.acos(clamp(off.y / r, -1, 1));
-      const theta = Math.atan2(off.x, off.z);
-      return { theta, phi, radius: r };
+    // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
+    let cameraReady = false;
+
+    let latestCarryCam = null;
+    let savingEnabled = true;
+    let settleRaf = 0;
+
+    function cloneCarry(cam) {
+      if (!cam) return null;
+      return {
+        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
+        deltaTarget: { x: cam.deltaTarget.x, y: cam.deltaTarget.y, z: cam.deltaTarget.z },
+        fov: cam.fov
+      };
     }
 
+    function scheduleSettledCarrySnapshot() {
+      if (!savingEnabled) return;
+      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+      if (settleRaf) cancelAnimationFrame(settleRaf);
+      settleRaf = requestAnimationFrame(() => {
+        settleRaf = 0;
+        const cam = readCamWithDelta(activeMv);
+        if (cam) latestCarryCam = cloneCarry(cam);
+      });
+    }
+
+    // Capture only on settled user actions
+    for (const mv of [mvA, mvB]) {
+      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
+    }
+
+    // Helpers
     function getMvScene(mv) {
       const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sym ? mv[sym] : null;
     }
 
-    // CALIBRATION / BASE
     const baseCenter = new Map();
     const baseTarget = new Map();
     const apAxisByModel = new Map();
@@ -779,20 +759,22 @@
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
-    // CAMERA CARRYOVER (LOCKED) + ✅ settled snapshot freeze (prevents zoom drift)
-    let cameraReady = false;
-
-    let latestCarryCam = null;   // frozen snapshot from settled user interactions
-    let savingEnabled = true;
-    let settleRaf = 0;
-
-    function cloneCarry(cam) {
-      if (!cam) return null;
-      return {
-        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
-        deltaTarget: { x: cam.deltaTarget.x, y: cam.deltaTarget.y, z: cam.deltaTarget.z },
-        fov: cam.fov
-      };
+    const EPS = 1e-4;
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function easeInOutCubic(t){
+      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
+    }
+    function lerpAngleRad(a, b, t){
+      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
+      return a + d * t;
+    }
+    function orbitFromOffset(off) {
+      const r = off.length();
+      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
+      const phi = Math.acos(clamp(off.y / r, -1, 1));
+      const theta = Math.atan2(off.x, off.z);
+      return { theta, phi, radius: r };
     }
 
     function readCamWithDelta(mv) {
@@ -806,24 +788,6 @@
       const delta = bt ? { x: t.x - bt.x, y: t.y - bt.y, z: t.z - bt.z } : { x:0, y:0, z:0 };
 
       return { orbit: { theta: o.theta, phi: o.phi, radius: o.radius }, deltaTarget: delta, fov: f };
-    }
-
-    function scheduleSettledCarrySnapshot() {
-      if (!savingEnabled) return;
-      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
-      if (settleRaf) cancelAnimationFrame(settleRaf);
-      settleRaf = requestAnimationFrame(() => {
-        settleRaf = 0;
-        const cam = readCamWithDelta(activeMv);
-        if (cam) latestCarryCam = cloneCarry(cam);
-      });
-    }
-
-    // capture only on "settled" user actions (prevents swap-time creep)
-    for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
     }
 
     function applyCamWithDelta(mv, modelId, cam) {
@@ -843,7 +807,7 @@
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
-    // Hotspots
+    // Hotspots creation
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -869,9 +833,11 @@
 
         mv.appendChild(btn);
       }
+      // after re-creating hotspots (e.g., model swap), re-apply selection ring
+      updateSelectedHotspotVisual();
     }
 
-    // Occlusion + bottom override (unchanged)
+    // Occlusion + bottom override
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -993,6 +959,14 @@
       const st = occState.get(mv);
       if (!st) return;
 
+      // Selected is always visible
+      const selectedSlot = getSelectedSlotName();
+      if (selectedSlot && slot === selectedSlot) {
+        const el = mv.querySelector(`[slot="${slot}"]`);
+        if (el) el.classList.remove("occluded");
+        return;
+      }
+
       updateForcedVisible(mv);
 
       if (st.forcedVisible && st.forcedVisible.has(slot)) {
@@ -1086,7 +1060,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus (unchanged)
+    // Focus + swap + init remain unchanged from your working base
     const focusAnim = new WeakMap();
     const ELL_A = 35;
     const ELL_B = 10;
@@ -1187,6 +1161,11 @@
       );
     }
 
+    // --- remaining parts (prepareAnnotationsAndOcclusion, showModel, onUserSelect, init) ---
+    // These are unchanged from your current working base except that:
+    // - ensureHotspotElements() already calls updateSelectedHotspotVisual()
+    // - showModel() resets selectedAnnoIndex and calls updateSelectedHotspotVisual()
+
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
 
@@ -1226,16 +1205,12 @@
       }));
     }
 
-    // Model swap
     let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // ✅ Freeze the camera from latest settled user snapshot (prevents zoom drift)
       const camForThisSwap = cloneCarry(latestCarryCam) || readCamWithDelta(activeMv);
-
-      // Block settled snapshots during swap (swap-time camera changes are ignored)
       savingEnabled = false;
 
       selectedId = modelId;
@@ -1253,8 +1228,8 @@
 
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
+        updateSelectedHotspotVisual();
 
-        // re-enable settled snapshots after swap
         savingEnabled = true;
         scheduleSettledCarrySnapshot();
       };
@@ -1320,8 +1295,8 @@
     initBackgroundSelector();
     initAnnotationsToggle();
     refreshAnnoNavLabel();
+    updateSelectedHotspotVisual();
 
-    // First show: no settled snapshot yet; capture after first load automatically
     showModel(selectedId).then(() => {
       resumeRequested = true;
       maybeResumePreload();
