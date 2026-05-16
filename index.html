@@ -337,13 +337,12 @@
       "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
-    // Cross-model anchor aliasing + OFFSET:
     const ANCHOR_ALIASES = {
       "03_U_Fibers_Annotated": {
         "Inferiortemporalsulcus002": {
           modelId: "02_Veselless_Annotated",
           anchor: "Inferiortemporalsulcus001",
-          offset: { x: 0, y: -1, z: 0 } // 1m down
+          offset: { x: 0, y: -1, z: 0 }
         }
       }
     };
@@ -425,7 +424,6 @@
     annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
     annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
 
-    // Background (LOCKED)
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -443,7 +441,6 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
-    // Toggle annotations (LOCKED)
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) {
@@ -466,7 +463,6 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
-    // Tooltip (LOCKED)
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -487,7 +483,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // Download/progress icons + download behavior (LOCKED)
+    // Download / preload / icons etc... (UNCHANGED from base)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -713,7 +709,7 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
+    // --- Camera carryover (now matches 22) ---
     let cameraReady = false;
 
     let latestCarryCam = null;
@@ -740,12 +736,11 @@
       });
     }
 
-    // ✅ FIX: add camera-change so manual drags always update carry snapshot
+    // (Difference applied) capture only on wheel/pointerup/touchend
     for (const mv of [mvA, mvB]) {
       mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
     }
 
     function getMvScene(mv) {
@@ -830,7 +825,6 @@
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
-
     function ensureHotspotElements(mv, modelId) {
       clearHotspots(mv);
       const anns = ANNOTATIONS[modelId] || [];
@@ -852,10 +846,8 @@
 
         mv.appendChild(btn);
       }
-      updateSelectedHotspotVisual();
     }
 
-    // Occlusion + bottom override + selected always visible
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -1104,18 +1096,8 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus profiles (updated: 10 & 11 now -20)
+    // Focus section: now matches 22 (no forced carry snapshot at end)
     const focusAnim = new WeakMap();
-    const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
-
-    const FOCUS_PROFILE_BY_MODEL = {
-      "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
-      "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
-      "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
-      "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
-    };
 
     function animateCamera(mv, from, to) {
       const prev = focusAnim.get(mv);
@@ -1149,16 +1131,6 @@
           focusAnim.set(mv, cur);
         } else {
           try { mv.jumpCameraToGoal?.(); } catch (_) {}
-
-          // focus doesn't trigger wheel/pointerup -> force carry snapshot
-          try {
-            if (mv === activeMv && savingEnabled) {
-              const camNow = readCamWithDelta(activeMv);
-              if (camNow) latestCarryCam = cloneCarry(camNow);
-              scheduleSettledCarrySnapshot();
-            }
-          } catch (_) {}
-
           cur.rafId = 0;
           focusAnim.set(mv, cur);
         }
@@ -1184,7 +1156,9 @@
       const v = new THREE.Vector3(0,1,0);
       const w = u.clone().cross(v).normalize();
 
-      const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
+      const prof = (typeof FOCUS_PROFILE_BY_MODEL !== "undefined" && FOCUS_PROFILE_BY_MODEL[currentShownId])
+        ? FOCUS_PROFILE_BY_MODEL[currentShownId]
+        : { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
       const apMid = (prof.apMin + prof.apMax) / 2;
       const siMid = (prof.siMin + prof.siMax) / 2;
@@ -1239,28 +1213,19 @@
       );
     }
 
-    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
-    const PRIME_MODEL_ID = "02_Veselless_Annotated";
     let prime02Started = false;
     let prime02Done = false;
-
-    function computeShiftForModel(mv, modelId) {
-      const bt = baseTarget.get(modelId);
-      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-      return baseCenter.get(modelId).clone().add(delta);
-    }
 
     function primeCacheFromModel02(mv) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return;
 
-      captureAutoFrameBase(mv, PRIME_MODEL_ID);
+      captureAutoFrameBase(mv, "02_Veselless_Annotated");
 
-      const bt = baseTarget.get(PRIME_MODEL_ID);
+      const bt = baseTarget.get("02_Veselless_Annotated");
       if (bt) mv.cameraTarget = `${bt.x}m ${bt.y}m ${bt.z}m`;
 
-      const shift = computeShiftForModel(mv, PRIME_MODEL_ID);
+      const shift = computeShiftForModel(mv, "02_Veselless_Annotated");
 
       scene.updateMatrixWorld?.(true);
 
@@ -1274,7 +1239,7 @@
         const y = p.y + shift.y;
         const z = p.z + shift.z;
 
-        anchorPosCache.set(cacheKey(PRIME_MODEL_ID, anchor), new THREE.Vector3(x, y, z));
+        anchorPosCache.set(cacheKey("02_Veselless_Annotated", anchor), new THREE.Vector3(x, y, z));
       }
     }
 
@@ -1288,7 +1253,7 @@
           return;
         }
 
-        const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+        const blobUrl = await downloadToBlobUrl("02_Veselless_Annotated");
 
         if (mvPrime.src !== blobUrl) {
           await new Promise(resolve => {
@@ -1309,7 +1274,6 @@
       }
     }
 
-    // ===== Swap / show model =====
     let swapToken = 0;
 
     function prepareAnnotationsAndOcclusion(mv, modelId) {
@@ -1442,6 +1406,7 @@
       resumeRequested = true;
       maybeResumePreload();
     });
+
   </script>
 </body>
 </html>
