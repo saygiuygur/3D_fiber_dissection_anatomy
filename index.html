@@ -134,6 +134,9 @@
       transform: translate(-50%, -50%);
       box-sizing: border-box;
     }
+    .hotspot.selected{
+      border-color: #1e88e5;
+    }
     .hotspot.occluded{
       opacity: 0;
       pointer-events: none;
@@ -247,6 +250,9 @@
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+
+      <model-viewer id="mvPrime" class="viewer hiddenViewer"
+        interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
     </div>
   </div>
 
@@ -288,6 +294,28 @@
       "Anteriorcalcarinesulcus001","Angulargyrus001"
     ];
 
+    const MODEL03_NAMES = [
+      "Angulargyrus002","Centrallobe","InferiorFrontalgyrus002","InferiorFrontalsulcus002",
+      "Inferiortemporalgyrus002","Inferiortemporalsulcus002","Intraparietalsulcus002",
+      "Middlefrontalgyrus002","MiddletemporalGyrus002","ParietalOperculum002","SuperiorFrontalgyrus002",
+      "SuperiorFrontalsulcus002","Superiorparietallobule002","SuperiortemporalGyrus002",
+      "SuperiortemporalSulcus002","Supramarginalgyrus002","Sylvianfissure002"
+    ];
+
+    const MODEL04_NAMES = [ "AF1001","SLF","SuperficialAF","SuperficialSLF","SuperiortemporalGyrus003" ];
+    const MODEL05_NAMES = [ "AF1","AF2","SLF001","SuperficialAF001","SuperiortemporalGyrus006" ];
+
+    const MODEL06_NAMES = [
+      "AF1002","AF2001","AnteriorinsularP","Anteriorlimsulc","CentralsulcusI","FrontalLimenP",
+      "Inferiorlimsulc","Insularapex","LimenI","LongGyri","PosteriorinsularP","SLF002","SLF003",
+      "ShortGyri","Superiorlimsulc","SuperiortemporalGyrus004","TemporalLimenP"
+    ];
+
+    const MODEL07_NAMES = [ "ExtremeCapsule" ];
+    const MODEL09_NAMES = [ "ExternalCapsule","IFOF","Putamen","UF" ];
+    const MODEL10_NAMES = [ "CoronaRadiata","IFOF001","LenticulostriatePerforatorsM1","UF001" ];
+    const MODEL11_NAMES = [ "AnteriorCommissure","CoronaRadiata001","GlobusPallidus","InternalCapsule" ];
+
     function makeAnnotations(names) {
       return names.map((name, i) => ({
         slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
@@ -299,19 +327,34 @@
     const ANNOTATIONS = {
       "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
       "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
-      "03_U_Fibers_Annotated": [],
-      "04_Superficial_SLF_Annotated": [],
-      "05_Superficial_Arcuate_Annotated": [],
-      "06_Insula_Annotated": [],
-      "07_Extreme_Capsule_Annotated": [],
-      "09_Putamen_External_Capsule_Annotated": [],
-      "10_Lenticulostriate_Perforators_Annotated": [],
-      "11_Anterior_Comissure_Annotated": [],
+      "03_U_Fibers_Annotated": makeAnnotations(MODEL03_NAMES),
+      "04_Superficial_SLF_Annotated": makeAnnotations(MODEL04_NAMES),
+      "05_Superficial_Arcuate_Annotated": makeAnnotations(MODEL05_NAMES),
+      "06_Insula_Annotated": makeAnnotations(MODEL06_NAMES),
+      "07_Extreme_Capsule_Annotated": makeAnnotations(MODEL07_NAMES),
+      "09_Putamen_External_Capsule_Annotated": makeAnnotations(MODEL09_NAMES),
+      "10_Lenticulostriate_Perforators_Annotated": makeAnnotations(MODEL10_NAMES),
+      "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
+
+    // Cross-model anchor aliasing + OFFSET:
+    const ANCHOR_ALIASES = {
+      "03_U_Fibers_Annotated": {
+        "Inferiortemporalsulcus002": {
+          modelId: "02_Veselless_Annotated",
+          anchor: "Inferiortemporalsulcus001",
+          offset: { x: 0, y: -1, z: 0 } // 1m down
+        }
+      }
+    };
+
+    const anchorPosCache = new Map();
+    function cacheKey(modelId, anchor) { return `${modelId}::${anchor}`; }
 
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
+    const mvPrime = document.getElementById('mvPrime');
     const viewerWrap = document.getElementById('viewerWrap');
     const hotspotTip = document.getElementById('hotspotTip');
     const bgOptions = document.getElementById('bgOptions');
@@ -330,6 +373,23 @@
     let selectedAnnoIndex = -1;
 
     function getAnnoListForCurrentModel() { return ANNOTATIONS[currentShownId] || []; }
+    function getSelectedSlotName() {
+      const arr = getAnnoListForCurrentModel();
+      if (!arr.length) return null;
+      if (selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) return null;
+      return arr[selectedAnnoIndex].slotName;
+    }
+
+    function updateSelectedHotspotVisual() {
+      const mv = activeMv;
+      if (!mv) return;
+      mv.querySelectorAll('.hotspot.selected').forEach(el => el.classList.remove('selected'));
+      const slot = getSelectedSlotName();
+      if (!slot) return;
+      const el = mv.querySelector(`[slot="${slot}"]`);
+      if (el) el.classList.add('selected');
+    }
+
     function setAnnoLabelText(text) { annoLabel.textContent = text || "Select an annotation"; }
     function refreshAnnoNavLabel() {
       const arr = getAnnoListForCurrentModel();
@@ -344,6 +404,7 @@
       const idx = arr.findIndex(a => a.slotName === slotName);
       selectedAnnoIndex = idx;
       refreshAnnoNavLabel();
+      updateSelectedHotspotVisual();
     }
     function gotoAnnoIndex(idx, doFocus = true) {
       const arr = getAnnoListForCurrentModel();
@@ -352,6 +413,7 @@
       const i = ((idx % n) + n) % n;
       selectedAnnoIndex = i;
       refreshAnnoNavLabel();
+      updateSelectedHotspotVisual();
       if (doFocus) focusHotspot(arr[i].slotName);
     }
     function gotoNextPrev(dir) {
@@ -363,6 +425,7 @@
     annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
     annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
 
+    // Background (LOCKED)
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -380,6 +443,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
+    // Toggle annotations (LOCKED)
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) {
@@ -387,6 +451,7 @@
         annoNav.style.display = 'none';
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
+        updateSelectedHotspotVisual();
       } else {
         annoNav.style.display = 'flex';
       }
@@ -401,6 +466,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
+    // Tooltip (LOCKED)
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -647,14 +713,12 @@
       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
     }
 
-    // =========================
-    // CAMERA CARRYOVER (OLD “GOOD” METHOD, adapted)
-    // =========================
+    // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
     let cameraReady = false;
 
     let latestCarryCam = null;
-    let carrySavingEnabled = true;
-    let carrySettleRaf = 0;
+    let savingEnabled = true;
+    let settleRaf = 0;
 
     function cloneCarry(cam) {
       if (!cam) return null;
@@ -666,26 +730,29 @@
     }
 
     function scheduleSettledCarrySnapshot() {
-      if (!carrySavingEnabled) return;
+      if (!savingEnabled) return;
       if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
-      if (carrySettleRaf) cancelAnimationFrame(carrySettleRaf);
-      carrySettleRaf = requestAnimationFrame(() => {
-        carrySettleRaf = 0;
+      if (settleRaf) cancelAnimationFrame(settleRaf);
+      settleRaf = requestAnimationFrame(() => {
+        settleRaf = 0;
         const cam = readCamWithDelta(activeMv);
         if (cam) latestCarryCam = cloneCarry(cam);
       });
     }
 
-    // Settled moments only:
+    // ✅ FIX: add camera-change so manual drags always update carry snapshot
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive:true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive:true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive:true });
+      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
     }
 
-    // =========================
-    // BASE CENTER/TARGET (LOCKED behavior)
-    // =========================
+    function getMvScene(mv) {
+      const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
+      return sym ? mv[sym] : null;
+    }
+
     const baseCenter = new Map();
     const baseTarget = new Map();
     const apAxisByModel = new Map();
@@ -697,15 +764,37 @@
       return (dims.x >= dims.z) ? 'x' : 'z';
     }
 
-    function captureAutoFrameBase(mv, modelId) {
-      if (baseCenter.has(modelId) && baseTarget.has(modelId)) return;
+    let GLOBAL_BASE_CENTER = null;
+    let GLOBAL_BASE_TARGET = null;
 
+    function captureAutoFrameBase(mv, modelId) {
       const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
       const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
 
-      baseCenter.set(modelId, new THREE.Vector3(c.x, c.y, c.z));
-      baseTarget.set(modelId, new THREE.Vector3(t.x, t.y, t.z));
+      if (!GLOBAL_BASE_CENTER) GLOBAL_BASE_CENTER = new THREE.Vector3(c.x, c.y, c.z);
+      if (!GLOBAL_BASE_TARGET) GLOBAL_BASE_TARGET = new THREE.Vector3(t.x, t.y, t.z);
+
+      if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
+      if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+    }
+
+    const EPS = 1e-4;
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function easeInOutCubic(t){
+      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
+    }
+    function lerpAngleRad(a, b, t){
+      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
+      return a + d * t;
+    }
+    function orbitFromOffset(off) {
+      const r = off.length();
+      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
+      const phi = Math.acos(clamp(off.y / r, -1, 1));
+      const theta = Math.atan2(off.x, off.z);
+      return { theta, phi, radius: r };
     }
 
     function readCamWithDelta(mv) {
@@ -734,34 +823,46 @@
         const tz = bt.z + cam.deltaTarget.z;
         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
       }
-      if (typeof mv.jumpCameraToGoal === "function") {
-        try { mv.jumpCameraToGoal(); } catch (_) {}
-      }
+
+      try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
-    // =========================
-    // OCCLUSION (kept from your file)
-    // =========================
+    function clearHotspots(mv) {
+      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
+    }
+
+    function ensureHotspotElements(mv, modelId) {
+      clearHotspots(mv);
+      const anns = ANNOTATIONS[modelId] || [];
+      for (const a of anns) {
+        const btn = document.createElement('button');
+        btn.className = 'hotspot';
+        btn.setAttribute('slot', a.slotName);
+        btn.dataset.label = a.title;
+        btn.setAttribute('aria-label', a.title);
+        attachTip(btn);
+
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTip();
+          setSelectedAnnoBySlot(a.slotName);
+          focusHotspot(a.slotName);
+        });
+
+        mv.appendChild(btn);
+      }
+      updateSelectedHotspotVisual();
+    }
+
+    // Occlusion + bottom override + selected always visible
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
-    const EPS = 1e-4;
     const TOL = 5;
     const FORCE_VISIBLE_K = 5;
 
     const occState = new WeakMap();
     const loopState = new WeakMap();
-
-    function getMvScene(mv) {
-      const sceneSym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
-      return sceneSym ? mv[sceneSym] : null;
-    }
-
-    function computeShiftForModel(mv, modelId) {
-      const bt = baseTarget.get(modelId);
-      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-      return baseCenter.get(modelId).clone().add(delta);
-    }
 
     function buildRaycastOccluders(mv, shift) {
       const scene = getMvScene(mv);
@@ -801,24 +902,6 @@
       return occluders;
     }
 
-    function clearHotspots(mv) {
-      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
-    }
-
-    function ensureHotspotElements(mv, modelId) {
-      clearHotspots(mv);
-      const anns = ANNOTATIONS[modelId] || [];
-      for (const a of anns) {
-        const btn = document.createElement('button');
-        btn.className = 'hotspot';
-        btn.setAttribute('slot', a.slotName);
-        btn.dataset.label = a.title;
-        btn.setAttribute('aria-label', a.title);
-        attachTip(btn);
-        mv.appendChild(btn);
-      }
-    }
-
     function updateHotspotsAndPointMap(mv, modelId, shift) {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.getObjectByName !== "function") return new Map();
@@ -827,8 +910,33 @@
 
       const pointMap = new Map();
       const anns = ANNOTATIONS[modelId] || [];
+      const aliasMap = ANCHOR_ALIASES[modelId] || {};
 
       for (const a of anns) {
+        const alias = aliasMap[a.anchor];
+        if (alias) {
+          const cached = anchorPosCache.get(cacheKey(alias.modelId, alias.anchor));
+          if (cached) {
+            const ox = alias.offset?.x ?? 0;
+            const oy = alias.offset?.y ?? 0;
+            const oz = alias.offset?.z ?? 0;
+
+            const x = cached.x + ox;
+            const y = cached.y + oy;
+            const z = cached.z + oz;
+
+            const posStr = `${x}m ${y}m ${z}m`;
+            try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
+            catch {
+              const el = mv.querySelector(`[slot="${a.slotName}"]`);
+              if (el) el.dataset.position = posStr;
+            }
+            pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
+            anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
+            continue;
+          }
+        }
+
         const obj = scene.getObjectByName(a.anchor);
         if (!obj) continue;
 
@@ -847,7 +955,9 @@
         }
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
+        anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
       }
+
       return pointMap;
     }
 
@@ -893,6 +1003,13 @@
     function occludeOne(mv, slot) {
       const st = occState.get(mv);
       if (!st) return;
+
+      const selectedSlot = getSelectedSlotName();
+      if (selectedSlot && slot === selectedSlot) {
+        const el = mv.querySelector(`[slot="${slot}"]`);
+        if (el) el.classList.remove("occluded");
+        return;
+      }
 
       updateForcedVisible(mv);
 
@@ -987,6 +1104,214 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
+    // Focus profiles (updated: 10 & 11 now -20)
+    const focusAnim = new WeakMap();
+    const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
+
+    const FOCUS_PROFILE_BY_MODEL = {
+      "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+      "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+      "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+      "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
+    };
+
+    function animateCamera(mv, from, to) {
+      const prev = focusAnim.get(mv);
+      if (prev?.rafId) cancelAnimationFrame(prev.rafId);
+      const token = (prev?.token ?? 0) + 1;
+      focusAnim.set(mv, { rafId: 0, token });
+
+      const duration = 560;
+      const start = performance.now();
+
+      const tick = (now) => {
+        const cur = focusAnim.get(mv);
+        if (!cur || cur.token !== token) return;
+
+        const tt = clamp((now - start) / duration, 0, 1);
+        const e = easeInOutCubic(tt);
+
+        const tx = lerp(from.target.x, to.target.x, e);
+        const ty = lerp(from.target.y, to.target.y, e);
+        const tz = lerp(from.target.z, to.target.z, e);
+
+        const th = lerpAngleRad(from.theta, to.theta, e);
+        const ph = lerpAngleRad(from.phi,   to.phi,   e);
+        const rr = lerp(from.radius, to.radius, e);
+
+        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
+        mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
+
+        if (tt < 1) {
+          cur.rafId = requestAnimationFrame(tick);
+          focusAnim.set(mv, cur);
+        } else {
+          try { mv.jumpCameraToGoal?.(); } catch (_) {}
+
+          // focus doesn't trigger wheel/pointerup -> force carry snapshot
+          try {
+            if (mv === activeMv && savingEnabled) {
+              const camNow = readCamWithDelta(activeMv);
+              if (camNow) latestCarryCam = cloneCarry(camNow);
+              scheduleSettledCarrySnapshot();
+            }
+          } catch (_) {}
+
+          cur.rafId = 0;
+          focusAnim.set(mv, cur);
+        }
+      };
+
+      const cur = focusAnim.get(mv);
+      cur.rafId = requestAnimationFrame(tick);
+      focusAnim.set(mv, cur);
+    }
+
+    function focusHotspot(slotName){
+      const st = occState.get(activeMv);
+      if (!st || !st.pointMap) return;
+
+      const P = st.pointMap.get(slotName);
+      if (!P) return;
+
+      const C0 = baseCenter.get(currentShownId);
+      if (!C0) return;
+
+      const apKey = apAxisByModel.get(currentShownId) || 'z';
+      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
+      const v = new THREE.Vector3(0,1,0);
+      const w = u.clone().cross(v).normalize();
+
+      const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
+
+      const apMid = (prof.apMin + prof.apMax) / 2;
+      const siMid = (prof.siMin + prof.siMax) / 2;
+      const A = Math.max(1e-6, (prof.apMax - prof.apMin) / 2);
+      const B = Math.max(1e-6, (prof.siMax - prof.siMin) / 2);
+
+      const rel = P.clone().sub(C0);
+      let xp = rel.dot(u);
+      let yp = rel.dot(v);
+
+      let xrel = xp - apMid;
+      let yrel = yp - siMid;
+
+      const s = (xrel*xrel)/(A*A) + (yrel*yrel)/(B*B);
+      if (s > 1e-12 && s > 1) {
+        const k = 1 / Math.sqrt(s);
+        xrel *= k;
+        yrel *= k;
+      }
+
+      xp = apMid + xrel;
+      yp = siMid + yrel;
+
+      const Cstar = C0.clone()
+        .add(u.clone().multiplyScalar(xp))
+        .add(v.clone().multiplyScalar(yp))
+        .add(w.clone().multiplyScalar(prof.medialShift || 0));
+
+      const d = P.clone().sub(Cstar);
+      if (d.length() < 1e-6) return;
+      d.normalize();
+
+      const orbit0 = activeMv.getCameraOrbit?.();
+      const target0 = activeMv.getCameraTarget?.();
+      if (!orbit0 || !target0) return;
+
+      const camPos0 = getCameraPositionHotspotSpace(activeMv);
+      if (!camPos0) return;
+
+      const distToPoint = camPos0.distanceTo(P);
+      const r0 = orbit0.radius;
+      const desiredR = Math.max(0.01, distToPoint * 0.65);
+      const r1 = Math.min(r0, desiredR);
+
+      const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
+      const off = camPos1.clone().sub(P);
+      const o1 = orbitFromOffset(off);
+
+      animateCamera(activeMv,
+        { theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x, target0.y, target0.z) },
+        { theta: o1.theta, phi: o1.phi, radius: r1, target: P.clone() }
+      );
+    }
+
+    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
+    const PRIME_MODEL_ID = "02_Veselless_Annotated";
+    let prime02Started = false;
+    let prime02Done = false;
+
+    function computeShiftForModel(mv, modelId) {
+      const bt = baseTarget.get(modelId);
+      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
+      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
+      return baseCenter.get(modelId).clone().add(delta);
+    }
+
+    function primeCacheFromModel02(mv) {
+      const scene = getMvScene(mv);
+      if (!scene || typeof scene.getObjectByName !== "function") return;
+
+      captureAutoFrameBase(mv, PRIME_MODEL_ID);
+
+      const bt = baseTarget.get(PRIME_MODEL_ID);
+      if (bt) mv.cameraTarget = `${bt.x}m ${bt.y}m ${bt.z}m`;
+
+      const shift = computeShiftForModel(mv, PRIME_MODEL_ID);
+
+      scene.updateMatrixWorld?.(true);
+
+      for (const anchor of MODEL02_NAMES) {
+        const obj = scene.getObjectByName(anchor);
+        if (!obj) continue;
+        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
+        if (!p) continue;
+
+        const x = p.x + shift.x;
+        const y = p.y + shift.y;
+        const z = p.z + shift.z;
+
+        anchorPosCache.set(cacheKey(PRIME_MODEL_ID, anchor), new THREE.Vector3(x, y, z));
+      }
+    }
+
+    async function startPrimeModel02Once() {
+      if (prime02Started) return;
+      prime02Started = true;
+
+      try {
+        if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
+          requestAnimationFrame(() => startPrimeModel02Once());
+          return;
+        }
+
+        const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+
+        if (mvPrime.src !== blobUrl) {
+          await new Promise(resolve => {
+            const onLoad = () => resolve();
+            mvPrime.addEventListener('load', onLoad, { once:true });
+            mvPrime.src = blobUrl;
+          });
+        }
+
+        await new Promise(r => requestAnimationFrame(r));
+        await new Promise(r => requestAnimationFrame(r));
+
+        primeCacheFromModel02(mvPrime);
+        prime02Done = true;
+
+      } catch (_) {
+        prime02Started = false;
+      }
+    }
+
+    // ===== Swap / show model =====
+    let swapToken = 0;
+
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
 
@@ -1022,23 +1347,11 @@
       }));
     }
 
-    function focusHotspot(_) { /* unchanged in your working codebase */ }
-
-    // =========================
-    // MODEL SWAP (updated camera carry only)
-    // =========================
-    let swapToken = 0;
-
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      // 1-frame settle before freezing the carry snapshot
-      await new Promise(requestAnimationFrame);
-
       const camForThisSwap = cloneCarry(latestCarryCam) || readCamWithDelta(activeMv);
-
-      // freeze carry saving during swap
-      carrySavingEnabled = false;
+      savingEnabled = false;
 
       selectedId = modelId;
       paintActive();
@@ -1055,9 +1368,9 @@
 
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
+        updateSelectedHotspotVisual();
 
-        if (camForThisSwap) latestCarryCam = cloneCarry(camForThisSwap);
-        carrySavingEnabled = true;
+        savingEnabled = true;
         scheduleSettledCarrySnapshot();
       };
 
@@ -1066,26 +1379,30 @@
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
       };
 
+      const finalizeAfterBarrier = () => {
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (token !== swapToken) return;
+          finalizeSwap();
+          if (!prime02Done) startPrimeModel02Once();
+        })));
+      };
+
       if (targetSrc) {
         const activeSrc = activeMv.src || "";
         const idleSrc = idleMv.src || "";
-        if (activeSrc === targetSrc) {
-          carrySavingEnabled = true;
-          return;
-        }
+
+        if (activeSrc === targetSrc) { savingEnabled = true; return; }
 
         if (idleSrc === targetSrc) {
           applyAfterLoad();
-          finalizeSwap();
+          finalizeAfterBarrier();
           return;
         }
 
         const onIdleLoad = () => {
           if (token !== swapToken) return;
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            applyAfterLoad();
-            finalizeSwap();
-          }));
+          applyAfterLoad();
+          finalizeAfterBarrier();
         };
         idleMv.addEventListener('load', onIdleLoad, { once:true });
         idleMv.src = targetSrc;
@@ -1094,10 +1411,8 @@
 
       const onIdleLoad = () => {
         if (token !== swapToken) return;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          applyAfterLoad();
-          finalizeSwap();
-        }));
+        applyAfterLoad();
+        finalizeAfterBarrier();
       };
       idleMv.addEventListener('load', onIdleLoad, { once:true });
 
@@ -1106,7 +1421,7 @@
         if (token !== swapToken) return;
         idleMv.src = blobUrl;
       } catch (_) {
-        if (token === swapToken) carrySavingEnabled = true;
+        savingEnabled = true;
       }
     }
 
@@ -1116,13 +1431,12 @@
       showModel(modelId);
     }
 
-    // =========================
-    // INIT
-    // =========================
+    // init
     buildListOnce();
     initBackgroundSelector();
-    refreshAnnoNavLabel();
     initAnnotationsToggle();
+    refreshAnnoNavLabel();
+    updateSelectedHotspotVisual();
 
     showModel(selectedId).then(() => {
       resumeRequested = true;
