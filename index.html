@@ -251,7 +251,6 @@
       <model-viewer id="mvB" class="viewer hiddenViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
 
-      <!-- Hidden priming viewer (does NOT swap into view) -->
       <model-viewer id="mvPrime" class="viewer hiddenViewer"
         interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
     </div>
@@ -338,19 +337,16 @@
       "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
-    // Cross-model anchor aliasing + OFFSET:
-    // In model 03, use model 02's Inferiortemporalsulcus001 coordinates, then shift 1m DOWN on Y.
     const ANCHOR_ALIASES = {
       "03_U_Fibers_Annotated": {
         "Inferiortemporalsulcus002": {
           modelId: "02_Veselless_Annotated",
           anchor: "Inferiortemporalsulcus001",
-          offset: { x: 0, y: -1, z: 0 } // 1 meter down
+          offset: { x: 0, y: -1, z: 0 }
         }
       }
     };
 
-    // Cache of hotspot-space positions, keyed by "modelId::anchorName"
     const anchorPosCache = new Map();
     function cacheKey(modelId, anchor) { return `${modelId}::${anchor}`; }
 
@@ -853,7 +849,6 @@
       updateSelectedHotspotVisual();
     }
 
-    // Occlusion + bottom override + selected always visible
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -1102,20 +1097,17 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus (animated) + per-model ellipse profiles
+    // Focus profiles (your current settings)
     const focusAnim = new WeakMap();
-
-    // Default (locked): AP [-35,+35], SI [-10,+10], medialShift 0
     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
-    // Per-model overrides from you:
     const FOCUS_PROFILE_BY_MODEL = {
-      "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: 0 },
-      "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: 0 },
-      "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: 0 },
+      "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+      "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+      "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 10 }
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -10 },
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -10 }
     };
 
     function animateCamera(mv, from, to) {
@@ -1150,6 +1142,16 @@
           focusAnim.set(mv, cur);
         } else {
           try { mv.jumpCameraToGoal?.(); } catch (_) {}
+
+          // ✅ FIX: focusing doesn't trigger wheel/pointerup, so force a carry snapshot now
+          try {
+            if (mv === activeMv && savingEnabled) {
+              const camNow = readCamWithDelta(activeMv);
+              if (camNow) latestCarryCam = cloneCarry(camNow);
+              scheduleSettledCarrySnapshot();
+            }
+          } catch (_) {}
+
           cur.rafId = 0;
           focusAnim.set(mv, cur);
         }
@@ -1171,9 +1173,9 @@
       if (!C0) return;
 
       const apKey = apAxisByModel.get(currentShownId) || 'z';
-      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1); // AP axis
-      const v = new THREE.Vector3(0,1,0);                                              // SI axis
-      const w = u.clone().cross(v).normalize();                                         // ML axis
+      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
+      const v = new THREE.Vector3(0,1,0);
+      const w = u.clone().cross(v).normalize();
 
       const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
 
@@ -1230,7 +1232,7 @@
       );
     }
 
-    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
+    // ===== Invisible prime of model 02 =====
     const PRIME_MODEL_ID = "02_Veselless_Annotated";
     let prime02Started = false;
     let prime02Done = false;
