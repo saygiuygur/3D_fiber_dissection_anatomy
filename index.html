@@ -135,7 +135,7 @@
       box-sizing: border-box;
     }
     .hotspot.selected{
-      border-color: #1e88e5; /* blue ring for selected */
+      border-color: #1e88e5;
     }
     .hotspot.occluded{
       opacity: 0;
@@ -250,6 +250,10 @@
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+
+      <!-- Hidden priming viewer (does NOT swap into view) -->
+      <model-viewer id="mvPrime" class="viewer hiddenViewer"
+        interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
     </div>
   </div>
 
@@ -334,9 +338,22 @@
       "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
+    // Cross-model anchor aliasing:
+    // In model 03, use model 02's Inferiortemporalsulcus001 coordinates
+    const ANCHOR_ALIASES = {
+      "03_U_Fibers_Annotated": {
+        "Inferiortemporalsulcus002": { modelId: "02_Veselless_Annotated", anchor: "Inferiortemporalsulcus001" }
+      }
+    };
+
+    // Cache of hotspot-space positions, keyed by "modelId::anchorName"
+    const anchorPosCache = new Map();
+    function cacheKey(modelId, anchor) { return `${modelId}::${anchor}`; }
+
     const list = document.getElementById('list');
     const mvA = document.getElementById('mvA');
     const mvB = document.getElementById('mvB');
+    const mvPrime = document.getElementById('mvPrime');
     const viewerWrap = document.getElementById('viewerWrap');
     const hotspotTip = document.getElementById('hotspotTip');
     const bgOptions = document.getElementById('bgOptions');
@@ -362,7 +379,6 @@
       return arr[selectedAnnoIndex].slotName;
     }
 
-    // ✅ apply blue ring to selected hotspot
     function updateSelectedHotspotVisual() {
       const mv = activeMv;
       if (!mv) return;
@@ -720,14 +736,12 @@
       });
     }
 
-    // Capture only on settled user actions
     for (const mv of [mvA, mvB]) {
       mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
     }
 
-    // Helpers
     function getMvScene(mv) {
       const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
       return sym ? mv[sym] : null;
@@ -807,7 +821,6 @@
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
-    // Hotspots creation
     function clearHotspots(mv) {
       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
     }
@@ -833,11 +846,10 @@
 
         mv.appendChild(btn);
       }
-      // after re-creating hotspots (e.g., model swap), re-apply selection ring
       updateSelectedHotspotVisual();
     }
 
-    // Occlusion + bottom override
+    // Occlusion + bottom override + selected always visible
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -892,8 +904,26 @@
 
       const pointMap = new Map();
       const anns = ANNOTATIONS[modelId] || [];
+      const aliasMap = ANCHOR_ALIASES[modelId] || {};
 
       for (const a of anns) {
+        const alias = aliasMap[a.anchor];
+        if (alias) {
+          const cached = anchorPosCache.get(cacheKey(alias.modelId, alias.anchor));
+          if (cached) {
+            const x = cached.x, y = cached.y, z = cached.z;
+            const posStr = `${x}m ${y}m ${z}m`;
+            try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
+            catch {
+              const el = mv.querySelector(`[slot="${a.slotName}"]`);
+              if (el) el.dataset.position = posStr;
+            }
+            pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
+            anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
+            continue;
+          }
+        }
+
         const obj = scene.getObjectByName(a.anchor);
         if (!obj) continue;
 
@@ -912,7 +942,9 @@
         }
 
         pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
+        anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
       }
+
       return pointMap;
     }
 
@@ -959,7 +991,6 @@
       const st = occState.get(mv);
       if (!st) return;
 
-      // Selected is always visible
       const selectedSlot = getSelectedSlotName();
       if (selectedSlot && slot === selectedSlot) {
         const el = mv.querySelector(`[slot="${slot}"]`);
@@ -1060,7 +1091,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus + swap + init remain unchanged from your working base
+    // Focus (unchanged)
     const focusAnim = new WeakMap();
     const ELL_A = 35;
     const ELL_B = 10;
@@ -1161,10 +1192,91 @@
       );
     }
 
-    // --- remaining parts (prepareAnnotationsAndOcclusion, showModel, onUserSelect, init) ---
-    // These are unchanged from your current working base except that:
-    // - ensureHotspotElements() already calls updateSelectedHotspotVisual()
-    // - showModel() resets selectedAnnoIndex and calls updateSelectedHotspotVisual()
+    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
+    const PRIME_MODEL_ID = "02_Veselless_Annotated";
+    let prime02Started = false;
+    let prime02Done = false;
+
+    function getModelUrlById(id) {
+      return MODELS.find(m => m.id === id)?.url || null;
+    }
+
+    function computeShiftForModel(mv, modelId) {
+      const bt = baseTarget.get(modelId);
+      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
+      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
+      return baseCenter.get(modelId).clone().add(delta);
+    }
+
+    function primeCacheFromModel02(mv) {
+      const scene = getMvScene(mv);
+      if (!scene || typeof scene.getObjectByName !== "function") return;
+
+      // Ensure base maps exist
+      captureAutoFrameBase(mv, PRIME_MODEL_ID);
+
+      // Force cameraTarget to baseTarget => delta = 0 (stable)
+      const bt = baseTarget.get(PRIME_MODEL_ID);
+      if (bt) mv.cameraTarget = `${bt.x}m ${bt.y}m ${bt.z}m`;
+
+      // Compute shift with delta=0
+      const shift = computeShiftForModel(mv, PRIME_MODEL_ID);
+
+      scene.updateMatrixWorld?.(true);
+
+      for (const anchor of MODEL02_NAMES) {
+        const obj = scene.getObjectByName(anchor);
+        if (!obj) continue;
+        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
+        if (!p) continue;
+
+        const x = p.x + shift.x;
+        const y = p.y + shift.y;
+        const z = p.z + shift.z;
+
+        anchorPosCache.set(cacheKey(PRIME_MODEL_ID, anchor), new THREE.Vector3(x, y, z));
+      }
+    }
+
+    async function startPrimeModel02Once() {
+      if (prime02Started) return;
+      prime02Started = true;
+
+      try {
+        // Ensure we have baseCenter/Target set from first visible model
+        if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
+          // will be set during first model load finalize; if not, just retry next frame
+          requestAnimationFrame(() => startPrimeModel02Once());
+          return;
+        }
+
+        // Download blob via the SAME locked pipeline (doesn't change behaviors)
+        const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+
+        // Load into hidden priming viewer to build Three.js scene and cache coordinates
+        if (mvPrime.src !== blobUrl) {
+          await new Promise(resolve => {
+            const onLoad = () => resolve();
+            mvPrime.addEventListener('load', onLoad, { once:true });
+            mvPrime.src = blobUrl;
+          });
+        }
+
+        // Two rAFs ensures internal scene is ready
+        await new Promise(r => requestAnimationFrame(r));
+        await new Promise(r => requestAnimationFrame(r));
+
+        primeCacheFromModel02(mvPrime);
+        prime02Done = true;
+
+      } catch (_) {
+        // If aborted by a user click, we'll allow retry later.
+        prime02Started = false;
+      }
+    }
+
+    // ===== Swap / show model =====
+    let swapToken = 0;
 
     function prepareAnnotationsAndOcclusion(mv, modelId) {
       ensureHotspotElements(mv, modelId);
@@ -1172,11 +1284,7 @@
       requestAnimationFrame(() => requestAnimationFrame(() => {
         captureAutoFrameBase(mv, modelId);
 
-        const bt = baseTarget.get(modelId);
-        const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-        const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-
-        const shift = baseCenter.get(modelId).clone().add(delta);
+        const shift = computeShiftForModel(mv, modelId);
 
         const occluders = buildRaycastOccluders(mv, shift);
         const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
@@ -1204,8 +1312,6 @@
         }
       }));
     }
-
-    let swapToken = 0;
 
     async function showModel(modelId) {
       const token = ++swapToken;
@@ -1243,6 +1349,9 @@
         requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
           if (token !== swapToken) return;
           finalizeSwap();
+
+          // Start invisible priming after first visible model is stable
+          if (!prime02Done) startPrimeModel02Once();
         })));
       };
 
