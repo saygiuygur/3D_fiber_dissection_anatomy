@@ -337,12 +337,13 @@
       "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
+    // Cross-model anchor aliasing + OFFSET:
     const ANCHOR_ALIASES = {
       "03_U_Fibers_Annotated": {
         "Inferiortemporalsulcus002": {
           modelId: "02_Veselless_Annotated",
           anchor: "Inferiortemporalsulcus001",
-          offset: { x: 0, y: -1, z: 0 }
+          offset: { x: 0, y: -1, z: 0 } // 1m down
         }
       }
     };
@@ -424,6 +425,7 @@
     annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
     annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
 
+    // Background (LOCKED)
     function applyBackgroundColor(color) {
       document.documentElement.style.setProperty('--viewer-bg', color);
       try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
@@ -441,6 +443,7 @@
       applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
     }
 
+    // Toggle annotations (LOCKED)
     function setAnnotationsEnabled(enabled){
       document.documentElement.classList.toggle('annOff', !enabled);
       if (!enabled) {
@@ -463,6 +466,7 @@
       annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
     }
 
+    // Tooltip (LOCKED)
     function attachTip(el) {
       el.addEventListener('mouseenter', (e) => {
         const text = el.dataset.label || "";
@@ -483,7 +487,7 @@
     }
     function hideTip(){ hotspotTip.style.display = 'none'; }
 
-    // Download logic / icons (LOCKED)
+    // Download/progress icons + download behavior (LOCKED)
     const state = new Map();
     MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
 
@@ -736,10 +740,12 @@
       });
     }
 
+    // ✅ FIX: add camera-change so manual drags always update carry snapshot
     for (const mv of [mvA, mvB]) {
       mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
       mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
     }
 
     function getMvScene(mv) {
@@ -849,6 +855,7 @@
       updateSelectedHotspotVisual();
     }
 
+    // Occlusion + bottom override + selected always visible
     const RAYS_PER_BATCH = 5;
     const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
     const TOL = 5;
@@ -1097,7 +1104,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus profiles (your current settings)
+    // Focus profiles (updated: 10 & 11 now -20)
     const focusAnim = new WeakMap();
     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
@@ -1106,8 +1113,8 @@
       "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -10 },
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -10 }
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
     };
 
     function animateCamera(mv, from, to) {
@@ -1143,7 +1150,7 @@
         } else {
           try { mv.jumpCameraToGoal?.(); } catch (_) {}
 
-          // ✅ FIX: focusing doesn't trigger wheel/pointerup, so force a carry snapshot now
+          // focus doesn't trigger wheel/pointerup -> force carry snapshot
           try {
             if (mv === activeMv && savingEnabled) {
               const camNow = readCamWithDelta(activeMv);
@@ -1232,7 +1239,7 @@
       );
     }
 
-    // ===== Invisible prime of model 02 =====
+    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
     const PRIME_MODEL_ID = "02_Veselless_Annotated";
     let prime02Started = false;
     let prime02Done = false;
@@ -1376,7 +1383,6 @@
         requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
           if (token !== swapToken) return;
           finalizeSwap();
-
           if (!prime02Done) startPrimeModel02Once();
         })));
       };
@@ -1425,7 +1431,7 @@
       showModel(modelId);
     }
 
-    // Init
+    // init
     buildListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
@@ -1436,7 +1442,6 @@
       resumeRequested = true;
       maybeResumePreload();
     });
-
   </script>
 </body>
 </html>
