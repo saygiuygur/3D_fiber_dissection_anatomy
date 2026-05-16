@@ -1104,6 +1104,7 @@
 
     // Focus profiles
     const focusAnim = new WeakMap();
+    const focusCarryCam = new WeakMap();
     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
     const FOCUS_PROFILE_BY_MODEL = {
@@ -1119,6 +1120,17 @@
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
       const token = (prev?.token ?? 0) + 1;
+
+      const bt = baseTarget.get(currentShownId);
+      const f = mv.getFieldOfView?.();
+      if (bt && typeof f === "number") {
+        focusCarryCam.set(mv, {
+          orbit: { theta: to.theta, phi: to.phi, radius: to.radius },
+          deltaTarget: { x: to.target.x - bt.x, y: to.target.y - bt.y, z: to.target.z - bt.z },
+          fov: f
+        });
+      }
+
       focusAnim.set(mv, { rafId: 0, token });
 
       const duration = 560;
@@ -1165,6 +1177,12 @@
       const cur = focusAnim.get(mv);
       cur.rafId = requestAnimationFrame(tick);
       focusAnim.set(mv, cur);
+    }
+
+    for (const mv of [mvA, mvB]) {
+      mv.addEventListener('wheel', () => focusCarryCam.delete(mv), { passive: true });
+      mv.addEventListener('pointerdown', () => focusCarryCam.delete(mv), { passive: true });
+      mv.addEventListener('touchstart', () => focusCarryCam.delete(mv), { passive: true });
     }
 
     function focusHotspot(slotName){
@@ -1348,7 +1366,7 @@
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      const camForThisSwap = readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
+      const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
       savingEnabled = false;
 
       selectedId = modelId;
@@ -1375,6 +1393,7 @@
       const applyAfterLoad = () => {
         captureAutoFrameBase(idleMv, modelId);
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
+        focusCarryCam.delete(idleMv);
       };
 
       const finalizeAfterBarrier = () => {
