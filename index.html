@@ -337,7 +337,6 @@
       "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
     };
 
-    // Cross-model anchor aliasing + OFFSET:
     const ANCHOR_ALIASES = {
       "03_U_Fibers_Annotated": {
         "Inferiortemporalsulcus002": {
@@ -720,6 +719,9 @@
     let savingEnabled = true;
     let settleRaf = 0;
 
+    // ✅ NEW: prevent camera-change events (post-focus settling) from overwriting the focus zoom carry
+    let freezeCarryFromCameraChange = false;
+
     function cloneCarry(cam) {
       if (!cam) return null;
       return {
@@ -740,12 +742,23 @@
       });
     }
 
-    // ✅ FIX: add camera-change so manual drags always update carry snapshot
+    // Manual interactions should ALWAYS update carry, and also unfreeze camera-change updates
+    function scheduleSettledCarrySnapshotManual() {
+      freezeCarryFromCameraChange = false;
+      scheduleSettledCarrySnapshot();
+    }
+
+    // camera-change updates are ignored while frozen (after focus) to preserve focus zoom carry
+    function scheduleSettledCarrySnapshotCameraChange() {
+      if (freezeCarryFromCameraChange) return;
+      scheduleSettledCarrySnapshot();
+    }
+
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('wheel', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
     }
 
     function getMvScene(mv) {
@@ -1104,7 +1117,7 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus profiles (updated: 10 & 11 now -20)
+    // Focus profiles (kept as-is from your current base)
     const focusAnim = new WeakMap();
     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
@@ -1113,8 +1126,8 @@
       "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
     };
 
     function animateCamera(mv, from, to) {
@@ -1150,12 +1163,13 @@
         } else {
           try { mv.jumpCameraToGoal?.(); } catch (_) {}
 
-          // focus doesn't trigger wheel/pointerup -> force carry snapshot
+          // ✅ IMPORTANT: after focus ends, freeze carry updates coming from camera-change
+          // so model-viewer settling can't overwrite the zoomed-in carry snapshot.
           try {
             if (mv === activeMv && savingEnabled) {
               const camNow = readCamWithDelta(activeMv);
               if (camNow) latestCarryCam = cloneCarry(camNow);
-              scheduleSettledCarrySnapshot();
+              freezeCarryFromCameraChange = true; // <-- keep focus zoom
             }
           } catch (_) {}
 
