@@ -764,6 +764,7 @@
 
     const baseCenter = new Map();
     const baseTarget = new Map();
+    const baseRadiusByModel = new Map();
     const apAxisByModel = new Map();
 
     function chooseApAxisForViewer(mv) {
@@ -785,6 +786,12 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
+
+      const o = mv.getCameraOrbit?.();
+      if (!baseRadiusByModel.has(modelId) && o && Number.isFinite(o.radius) && o.radius > 0) {
+        baseRadiusByModel.set(modelId, o.radius);
+      }
+
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
@@ -834,6 +841,20 @@
       mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
 
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
+    }
+
+    function applyCamWithDeltaStable(mv, modelId, cam, token) {
+      applyCamWithDelta(mv, modelId, cam);
+
+      requestAnimationFrame(() => {
+        if (token !== swapToken) return;
+        applyCamWithDelta(mv, modelId, cam);
+
+        requestAnimationFrame(() => {
+          if (token !== swapToken) return;
+          applyCamWithDelta(mv, modelId, cam);
+        });
+      });
     }
 
     function clearHotspots(mv) {
@@ -1128,6 +1149,7 @@
     };
 
     function animateCamera(mv, from, to) {
+      clearUserZoomOrbitLimits(mv);
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
       const token = (prev?.token ?? 0) + 1;
