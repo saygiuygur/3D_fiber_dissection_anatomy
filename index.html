@@ -822,9 +822,6 @@
     function applyCamWithDelta(mv, modelId, cam) {
       if (!cam) return;
 
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-
       const bt = baseTarget.get(modelId);
       if (bt) {
         const tx = bt.x + cam.deltaTarget.x;
@@ -832,6 +829,9 @@
         const tz = bt.z + cam.deltaTarget.z;
         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
       }
+
+      mv.fieldOfView = `${cam.fov}deg`;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
 
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
