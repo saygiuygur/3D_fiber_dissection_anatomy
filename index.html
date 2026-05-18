@@ -764,6 +764,7 @@
 
     const baseCenter = new Map();
     const baseTarget = new Map();
+    const baseRadiusByModel = new Map();
     const apAxisByModel = new Map();
 
     function chooseApAxisForViewer(mv) {
@@ -785,6 +786,12 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
+
+      const o = mv.getCameraOrbit?.();
+      if (!baseRadiusByModel.has(modelId) && o && Number.isFinite(o.radius) && o.radius > 0) {
+        baseRadiusByModel.set(modelId, o.radius);
+      }
+
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
@@ -834,6 +841,61 @@
       mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
 
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
+    }
+
+    const USER_MIN_RADIUS_FACTOR = 0.40;
+    const USER_MAX_RADIUS_FACTOR = 1.20;
+    let userZoomClampTimer = 0;
+
+    function getUserZoomLimits(modelId) {
+      const baseRadius = baseRadiusByModel.get(modelId);
+      if (!Number.isFinite(baseRadius) || baseRadius <= 0) return null;
+
+      return {
+        minRadius: baseRadius * USER_MIN_RADIUS_FACTOR,
+        maxRadius: baseRadius * USER_MAX_RADIUS_FACTOR
+      };
+    }
+
+    function clearUserZoomOrbitLimits(mv) {
+      mv?.removeAttribute?.('min-camera-orbit');
+      mv?.removeAttribute?.('max-camera-orbit');
+    }
+
+    function applyUserZoomOrbitLimits(mv, modelId) {
+      const limits = getUserZoomLimits(modelId);
+      if (!mv || !limits) return;
+      mv.setAttribute('min-camera-orbit', `auto auto ${limits.minRadius}m`);
+      mv.setAttribute('max-camera-orbit', `auto auto ${limits.maxRadius}m`);
+    }
+
+    function scheduleUserZoomClamp() {
+      if (userZoomClampTimer) clearTimeout(userZoomClampTimer);
+      userZoomClampTimer = setTimeout(() => {
+        userZoomClampTimer = 0;
+        requestAnimationFrame(clampActiveUserZoom);
+      }, 30);
+    }
+
+    function clampActiveUserZoom() {
+      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+
+      const limits = getUserZoomLimits(currentShownId);
+      if (!limits) return;
+
+      const o = activeMv.getCameraOrbit?.();
+      if (!o || !Number.isFinite(o.radius)) return;
+
+      const radius = clamp(o.radius, limits.minRadius, limits.maxRadius);
+      if (Math.abs(radius - o.radius) < EPS) return;
+
+      activeMv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${radius}m`;
+      try { activeMv.jumpCameraToGoal?.(); } catch (_) {}
+
+      requestAnimationFrame(() => {
+        const cam = readCamWithDelta(activeMv);
+        if (cam) latestCarryCam = cloneCarry(cam);
+      });
     }
 
     function clearHotspots(mv) {
@@ -1128,6 +1190,7 @@
     };
 
     function animateCamera(mv, from, to) {
+      clearUserZoomOrbitLimits(mv);
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
       const token = (prev?.token ?? 0) + 1;
