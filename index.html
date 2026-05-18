@@ -832,6 +832,7 @@
 
     function applyCamWithDelta(mv, modelId, cam) {
       if (!cam) return;
+      clearUserZoomOrbitLimits(mv);
 
       const bt = baseTarget.get(modelId);
       if (bt) {
@@ -847,8 +848,8 @@
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
-    const USER_MIN_RADIUS_FACTOR = 0.30;
-    const USER_MAX_RADIUS_FACTOR = 1.80;
+    const USER_MIN_RADIUS_FACTOR = 0.40;
+    const USER_MAX_RADIUS_FACTOR = 1.20;
     let userZoomClampTimer = 0;
 
     function getUserZoomLimits(modelId) {
@@ -868,7 +869,19 @@
       userZoomClampTimer = setTimeout(() => {
         userZoomClampTimer = 0;
         requestAnimationFrame(clampActiveUserZoom);
-      }, 120);
+      }, 30);
+    }
+
+    function clearUserZoomOrbitLimits(mv) {
+      mv?.removeAttribute?.('min-camera-orbit');
+      mv?.removeAttribute?.('max-camera-orbit');
+    }
+
+    function applyUserZoomOrbitLimits(mv, modelId) {
+      const limits = getUserZoomLimits(modelId);
+      if (!mv || !limits) return;
+      mv.setAttribute('min-camera-orbit', `auto auto ${limits.minRadius}m`);
+      mv.setAttribute('max-camera-orbit', `auto auto ${limits.maxRadius}m`);
     }
 
     function clampActiveUserZoom() {
@@ -1184,6 +1197,7 @@
     };
 
     function animateCamera(mv, from, to) {
+      clearUserZoomOrbitLimits(mv);
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
       const token = (prev?.token ?? 0) + 1;
@@ -1233,6 +1247,7 @@
               const camNow = readCamWithDelta(activeMv);
               if (camNow) latestCarryCam = cloneCarry(camNow);
               freezeCarryFromCameraChange = true;
+              applyUserZoomOrbitLimits(activeMv, currentShownId);
             }
           } catch (_) {}
 
@@ -1455,6 +1470,7 @@
         updateSelectedHotspotVisual();
 
         savingEnabled = true;
+        applyUserZoomOrbitLimits(activeMv, currentShownId);
         if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
       };
 
