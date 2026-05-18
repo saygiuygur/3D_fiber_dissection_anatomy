@@ -768,7 +768,6 @@
     const baseCenter = new Map();
     const baseTarget = new Map();
     const baseRadiusByModel = new Map();
-    const lastFocusRadiusByModel = new Map();
     const apAxisByModel = new Map();
 
     function chooseApAxisForViewer(mv) {
@@ -856,9 +855,7 @@
       const baseRadius = baseRadiusByModel.get(modelId);
       if (!Number.isFinite(baseRadius) || baseRadius <= 0) return null;
 
-      const focusRadius = lastFocusRadiusByModel.get(modelId);
-      const focusMin = Number.isFinite(focusRadius) && focusRadius > 0 ? focusRadius * 0.90 : Infinity;
-      const minRadius = Math.min(baseRadius * USER_MIN_RADIUS_FACTOR, focusMin);
+      const minRadius = baseRadius * USER_MIN_RADIUS_FACTOR;
       const maxRadius = baseRadius * USER_MAX_RADIUS_FACTOR;
 
       return { minRadius, maxRadius };
@@ -1324,7 +1321,9 @@
 
       const distToPoint = camPos0.distanceTo(P);
       const r0 = orbit0.radius;
-      const desiredR = Math.max(0.01, distToPoint * 0.65);
+      const limits = getUserZoomLimits(currentShownId);
+      const minFocusRadius = limits?.minRadius ?? 0.01;
+      const desiredR = Math.max(minFocusRadius, distToPoint * 0.65);
       const r1 = Math.min(r0, desiredR);
       lastFocusRadiusByModel.set(currentShownId, r1);
 
