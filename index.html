@@ -1,1571 +1,492 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>3D Fiber Dissection Anatomy</title>
-  <link rel="icon" href="data:," />
-  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-
-  <style>
-    :root{ --viewer-bg: #ffffff; }
-    body { margin:0; font-family: system-ui, sans-serif; }
-    .wrap { display:flex; height:100vh; }
-
-    .sidebar{
-      width:360px;
-      border-right:1px solid #ddd;
-      padding:12px;
-      overflow:auto;
-      background:#fff;
-    }
-
-    .row{
-      display:flex; align-items:center; justify-content:space-between;
-      width:100%; padding:10px; margin:6px 0;
-      border:1px solid #ddd;
-      border-radius:10px;
-      background:#fff;
-      cursor:pointer;
-      user-select:none;
-      gap:10px;
-      transition: border-color 120ms ease;
-    }
-    .row.active { border-color:#111; }
-    .row.downloading:not(.active) { border-color: rgba(0,0,0,0.25); }
-
-    .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1 1 auto; }
-    .meta{ width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex: 0 0 24px; }
-    .status-icon{ width:20px; height:20px; display:block; }
-    .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
-
-    .toggle-row{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-      margin: 4px 0 14px;
-      padding: 8px 0;
-    }
-    .toggle-title{
-      font-size:14px;
-      font-weight:600;
-      margin:0;
-    }
-
-    .switch{
-      position: relative;
-      display:inline-block;
-      width: 52px;
-      height: 30px;
-      flex: 0 0 auto;
-    }
-    .switch input{ opacity:0; width:0; height:0; }
-    .slider{
-      position:absolute;
-      cursor:pointer;
-      inset:0;
-      background:#d9d9d9;
-      transition: .2s;
-      border-radius:999px;
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
-    }
-    .slider:before{
-      content:"";
-      position:absolute;
-      height: 24px;
-      width: 24px;
-      left: 3px;
-      top: 3px;
-      background:#fff;
-      transition: .2s;
-      border-radius:50%;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
-    }
-    .switch input:checked + .slider{ background:#35c759; }
-    .switch input:checked + .slider:before{ transform: translateX(22px); }
-
-    .bg-section{ margin-top:18px; }
-    .bg-title{ font-size:14px; font-weight:600; margin:0 0 10px 0; }
-    .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
-
-    .swatch{
-      width:26px; height:26px;
-      border-radius:50%;
-      border:1px solid #cfcfcf;
-      cursor:pointer;
-      padding:0;
-      display:inline-block;
-      box-sizing:border-box;
-    }
-    .swatch.white{ background:#ffffff; }
-    .swatch.gray{ background:#808080; }
-    .swatch.black{ background:#000000; }
-    .swatch.selected{ outline:2px solid #111; outline-offset:3px; }
-
-    .viewer-wrap{
-      position: relative;
-      width: calc(100vw - 360px);
-      height: 100vh;
-      background:var(--viewer-bg);
-      overflow:hidden;
-    }
-
-    model-viewer.viewer{
-      position:absolute;
-      inset:0;
-      width:100%;
-      height:100%;
-      background:var(--viewer-bg);
-      --min-hotspot-opacity: 1;
-    }
-
-    .hiddenViewer { visibility: hidden; pointer-events: none; }
-    .shownViewer  { visibility: visible; pointer-events: auto; }
-
-    .hotspot{
-      width: 14px;
-      height: 14px;
-      padding: 0;
-      border-radius: 50%;
-      border: 2px solid #000;
-      background: rgba(255,255,255,0.65);
-      cursor: pointer;
-      transform: translate(-50%, -50%);
-      box-sizing: border-box;
-    }
-    .hotspot.selected{
-      border-color: #1e88e5;
-    }
-    .hotspot.occluded{
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    #hotspotTip{
-      position: absolute;
-      z-index: 60;
-      display: none;
-      padding: 6px 8px;
-      border-radius: 8px;
-      background: rgba(0,0,0,0.85);
-      color: #fff;
-      font-size: 12px;
-      line-height: 1.2;
-      pointer-events: none;
-      max-width: 280px;
-      white-space: nowrap;
-    }
-
-    .annOff .hotspot{ display:none !important; }
-    .annOff #hotspotTip{ display:none !important; }
-
-    #annoNav{
-      position:absolute;
-      left:50%;
-      bottom:18px;
-      transform:translateX(-50%);
-      z-index:55;
-      display:flex;
-      align-items:center;
-      gap:14px;
-      padding:10px 16px;
-      border-radius:999px;
-      background: rgba(0,0,0,0.60);
-      color:#fff;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-      max-width: min(560px, 92%);
-      user-select:none;
-    }
-    #annoNav .navBtn{
-      width:28px;
-      height:28px;
-      border:none;
-      border-radius:999px;
-      background: rgba(255,255,255,0.12);
-      color:#fff;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      cursor:pointer;
-      flex: 0 0 28px;
-      font-size:18px;
-      line-height:1;
-    }
-    #annoNav .navBtn:hover{ background: rgba(255,255,255,0.18); }
-    #annoNav .navText{
-      flex: 1 1 auto;
-      min-width: 0;
-      text-align:center;
-      font-size:14px;
-      font-weight:600;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
-      letter-spacing: 0.2px;
-    }
-  </style>
-</head>
-
-<body>
-  <div class="wrap">
-    <div class="sidebar">
-      <h3 style="margin:6px 0 12px;">Models</h3>
-      <div id="list"></div>
-
-      <div class="toggle-row">
-        <div class="toggle-title">Toggle annotations</div>
-        <label class="switch" title="Toggle annotations">
-          <input id="annToggle" type="checkbox" checked />
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="bg-section">
-        <div class="bg-title">Background Color</div>
-        <div class="bg-options" id="bgOptions">
-          <button class="swatch white selected" data-color="#ffffff" aria-label="White background" title="White"></button>
-          <button class="swatch gray" data-color="#808080" aria-label="Gray background" title="Gray"></button>
-          <button class="swatch black" data-color="#000000" aria-label="Black background" title="Black"></button>
-        </div>
-      </div>
-
-      <div class="small">
-        Select a model, then use annotations to focus anatomical structures.
-      </div>
-    </div>
-
-    <div class="viewer-wrap" id="viewerWrap">
-      <div id="hotspotTip"></div>
-
-      <div id="annoNav" aria-label="Annotation navigator">
-        <button id="annoPrev" class="navBtn" aria-label="Previous annotation" title="Previous">‹</button>
-        <div id="annoLabel" class="navText">Select an annotation</div>
-        <button id="annoNext" class="navBtn" aria-label="Next annotation" title="Next">›</button>
-      </div>
-
-      <model-viewer id="mvA" class="viewer shownViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
-        min-camera-orbit="auto auto 0m"></model-viewer>
-      <model-viewer id="mvB" class="viewer hiddenViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
-        min-camera-orbit="auto auto 0m"></model-viewer>
-
-      <model-viewer id="mvPrime" class="viewer hiddenViewer"
-        interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
-    </div>
-  </div>
-
-  <script type="module">
-    import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
-
-    const MODELS = [
-      { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
-      { id: "02_Veselless_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/02_Veselless_Annotated.glb" },
-      { id: "03_U_Fibers_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/03_U_Fibers_Annotated.glb" },
-      { id: "04_Superficial_SLF_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/04_Superficial_SLF_Annotated.glb" },
-      { id: "05_Superficial_Arcuate_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/05_Superficial_Arcuate_Annotated.glb" },
-      { id: "06_Insula_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/06_Insula_Annotated.glb" },
-      { id: "07_Extreme_Capsule_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/07_Extreme_Capsule_Annotated.glb" },
-      { id: "09_Putamen_External_Capsule_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/09_Putamen_External_Capsule_Annotated.glb" },
-      { id: "10_Lenticulostriate_Perforators_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Lenticulostriate_Perforators_Annotated.glb" },
-      { id: "11_Anterior_Comissure_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure_Annotated.glb" },
-    ];
-
-    const MODEL01_NAMES = [
-      "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
-      "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
-      "ParacentralA001","OpticN001","OlfactoryN001","OlfactoryA001","MIFA001","MiddletemporalA001",
-      "MedialOrbitofrontalA001","LateralorbitofrontalA001","LabbeV001","InternalcerebralV001",
-      "InferiorparietalA001","ICA001","GalenV001","FrontopolarACont001","FrontopolarA001",
-      "CentralsulcusA001","CallosomarginalA001","Basalveinofrosenthal001","AnteriortemporalA001",
-      "AnteriorparietalA001","AIFA001","ACA001"
-    ];
-
-    const MODEL02_NAMES = [
-      "Uncus001","Thalamus001","TemporalOperculum001","Sylvianfissure001","Supramarginalgyrus001",
-      "SuperiortemporalSulcus001","SuperiortemporalGyrus001","Superiorparietallobule001","SuperiorFrontalsulcus001",
-      "SuperiorFrontalgyrus001","Preoccipitalnotch001","Precuneus001","Precentralsulcus001","Precentralgyrus001",
-      "Posteriorcalcarinesulcus001","Postcentralgyrus001","Parietooccipitalsulcus001","ParietalOperculum001",
-      "Parahippocampalgyrus001","Paracentrallobule001","MiddletemporalGyrus001","Middlefrontalgyrus001","Marginalsulcus001",
-      "Lingualgyrus001","Lateralventricle001","Isthmusgyrus001","Intraparietalsulcus001","Inferiortemporalsulcus001",
-      "Inferiortemporalgyrus001","InferiorFrontalsulcus001","InferiorFrontalgyrus001","Gyrusrectus001","Fusiformgyrus001",
-      "FrontalOperculum001","Cuneus001","Corpuscallosum001","Collateralsulcus001","Cingulategyrus001","Centralsulcus001",
-      "Anteriorcalcarinesulcus001","Angulargyrus001"
-    ];
-
-    const MODEL03_NAMES = [
-      "Angulargyrus002","Centrallobe","InferiorFrontalgyrus002","InferiorFrontalsulcus002",
-      "Inferiortemporalgyrus002","Inferiortemporalsulcus002","Intraparietalsulcus002",
-      "Middlefrontalgyrus002","MiddletemporalGyrus002","ParietalOperculum002","SuperiorFrontalgyrus002",
-      "SuperiorFrontalsulcus002","Superiorparietallobule002","SuperiortemporalGyrus002",
-      "SuperiortemporalSulcus002","Supramarginalgyrus002","Sylvianfissure002"
-    ];
-
-    const MODEL04_NAMES = [ "AF1001","SLF","SuperficialAF","SuperficialSLF","SuperiortemporalGyrus003" ];
-    const MODEL05_NAMES = [ "AF1","AF2","SLF001","SuperficialAF001","SuperiortemporalGyrus006" ];
-
-    const MODEL06_NAMES = [
-      "AF1002","AF2001","AnteriorinsularP","Anteriorlimsulc","CentralsulcusI","FrontalLimenP",
-      "Inferiorlimsulc","Insularapex","LimenI","LongGyri","PosteriorinsularP","SLF002","SLF003",
-      "ShortGyri","Superiorlimsulc","SuperiortemporalGyrus004","TemporalLimenP"
-    ];
-
-    const MODEL07_NAMES = [ "ExtremeCapsule" ];
-    const MODEL09_NAMES = [ "ExternalCapsule","IFOF","Putamen","UF" ];
-    const MODEL10_NAMES = [ "CoronaRadiata","IFOF001","LenticulostriatePerforatorsM1","UF001" ];
-    const MODEL11_NAMES = [ "AnteriorCommissure","CoronaRadiata001","GlobusPallidus","InternalCapsule" ];
-
-    function makeAnnotations(names) {
-      return names.map((name, i) => ({
-        slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
-        anchor: name,
-        title: name
-      }));
-    }
-
-    const ANNOTATIONS = {
-      "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
-      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
-      "03_U_Fibers_Annotated": makeAnnotations(MODEL03_NAMES),
-      "04_Superficial_SLF_Annotated": makeAnnotations(MODEL04_NAMES),
-      "05_Superficial_Arcuate_Annotated": makeAnnotations(MODEL05_NAMES),
-      "06_Insula_Annotated": makeAnnotations(MODEL06_NAMES),
-      "07_Extreme_Capsule_Annotated": makeAnnotations(MODEL07_NAMES),
-      "09_Putamen_External_Capsule_Annotated": makeAnnotations(MODEL09_NAMES),
-      "10_Lenticulostriate_Perforators_Annotated": makeAnnotations(MODEL10_NAMES),
-      "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
-    };
-
-    // Cross-model anchor aliasing + OFFSET:
-    const ANCHOR_ALIASES = {
-      "03_U_Fibers_Annotated": {
-        "Inferiortemporalsulcus002": {
-          modelId: "02_Veselless_Annotated",
-          anchor: "Inferiortemporalsulcus001",
-          offset: { x: 0, y: -1, z: 0 } // 1m down
-        }
-      }
-    };
-
-    const anchorPosCache = new Map();
-    function cacheKey(modelId, anchor) { return `${modelId}::${anchor}`; }
-
-    const list = document.getElementById('list');
-    const mvA = document.getElementById('mvA');
-    const mvB = document.getElementById('mvB');
-    const mvPrime = document.getElementById('mvPrime');
-    const viewerWrap = document.getElementById('viewerWrap');
-    const hotspotTip = document.getElementById('hotspotTip');
-    const bgOptions = document.getElementById('bgOptions');
-    const annToggle = document.getElementById('annToggle');
-
-    const annoNav = document.getElementById('annoNav');
-    const annoPrev = document.getElementById('annoPrev');
-    const annoNext = document.getElementById('annoNext');
-    const annoLabel = document.getElementById('annoLabel');
-
-    let activeMv = mvA;
-    let idleMv = mvB;
-    let selectedId = MODELS[0].id;
-    let currentShownId = selectedId;
-
-    let selectedAnnoIndex = -1;
-
-    function getAnnoListForCurrentModel() { return ANNOTATIONS[currentShownId] || []; }
-    function getSelectedSlotName() {
-      const arr = getAnnoListForCurrentModel();
-      if (!arr.length) return null;
-      if (selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) return null;
-      return arr[selectedAnnoIndex].slotName;
-    }
-
-    function updateSelectedHotspotVisual() {
-      const mv = activeMv;
-      if (!mv) return;
-      mv.querySelectorAll('.hotspot.selected').forEach(el => el.classList.remove('selected'));
-      const slot = getSelectedSlotName();
-      if (!slot) return;
-      const el = mv.querySelector(`[slot="${slot}"]`);
-      if (el) el.classList.add('selected');
-    }
-
-    function setAnnoLabelText(text) { annoLabel.textContent = text || "Select an annotation"; }
-    function refreshAnnoNavLabel() {
-      const arr = getAnnoListForCurrentModel();
-      if (!arr.length || selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) {
-        setAnnoLabelText("Select an annotation");
-        return;
-      }
-      setAnnoLabelText(arr[selectedAnnoIndex].title);
-    }
-    function setSelectedAnnoBySlot(slotName) {
-      const arr = getAnnoListForCurrentModel();
-      const idx = arr.findIndex(a => a.slotName === slotName);
-      selectedAnnoIndex = idx;
-      refreshAnnoNavLabel();
-      updateSelectedHotspotVisual();
-    }
-    function gotoAnnoIndex(idx, doFocus = true) {
-      const arr = getAnnoListForCurrentModel();
-      if (!arr.length) return;
-      const n = arr.length;
-      const i = ((idx % n) + n) % n;
-      selectedAnnoIndex = i;
-      refreshAnnoNavLabel();
-      updateSelectedHotspotVisual();
-      if (doFocus) focusHotspot(arr[i].slotName);
-    }
-    function gotoNextPrev(dir) {
-      const arr = getAnnoListForCurrentModel();
-      if (!arr.length) return;
-      if (selectedAnnoIndex < 0) { gotoAnnoIndex(0, true); return; }
-      gotoAnnoIndex(selectedAnnoIndex + dir, true);
-    }
-    annoPrev.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(-1); });
-    annoNext.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); gotoNextPrev(+1); });
-
-    // Background (LOCKED)
-    function applyBackgroundColor(color) {
-      document.documentElement.style.setProperty('--viewer-bg', color);
-      try { localStorage.setItem('viewerBgColor', color); } catch (_) {}
-      bgOptions.querySelectorAll('.swatch').forEach(btn => {
-        btn.classList.toggle('selected', btn.dataset.color.toLowerCase() === color.toLowerCase());
-      });
-    }
-    function initBackgroundSelector() {
-      bgOptions.querySelectorAll('.swatch').forEach(btn =>
-        btn.addEventListener('click', () => applyBackgroundColor(btn.dataset.color))
-      );
-      let saved = null;
-      try { saved = localStorage.getItem('viewerBgColor'); } catch (_) {}
-      const valid = ["#ffffff","#808080","#000000"];
-      applyBackgroundColor(valid.includes((saved||"").toLowerCase()) ? saved : "#ffffff");
-    }
-
-    // Toggle annotations (LOCKED)
-    function setAnnotationsEnabled(enabled){
-      document.documentElement.classList.toggle('annOff', !enabled);
-      if (!enabled) {
-        hotspotTip.style.display = 'none';
-        annoNav.style.display = 'none';
-        selectedAnnoIndex = -1;
-        refreshAnnoNavLabel();
-        updateSelectedHotspotVisual();
-      } else {
-        annoNav.style.display = 'flex';
-      }
-      try { localStorage.setItem('annotationsEnabled', enabled ? '1' : '0'); } catch (_) {}
-    }
-    function initAnnotationsToggle(){
-      let saved = null;
-      try { saved = localStorage.getItem('annotationsEnabled'); } catch (_) {}
-      const enabled = (saved == null) ? true : (saved === '1');
-      annToggle.checked = enabled;
-      setAnnotationsEnabled(enabled);
-      annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
-    }
-
-    // Tooltip (LOCKED)
-    function attachTip(el) {
-      el.addEventListener('mouseenter', (e) => {
-        const text = el.dataset.label || "";
-        if (!text) return;
-        hotspotTip.textContent = text;
-        hotspotTip.style.display = 'block';
-        const rect = viewerWrap.getBoundingClientRect();
-        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-      });
-      el.addEventListener('mousemove', (e) => {
-        if (hotspotTip.style.display !== 'block') return;
-        const rect = viewerWrap.getBoundingClientRect();
-        hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-        hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-      });
-      el.addEventListener('mouseleave', () => { hotspotTip.style.display = 'none'; });
-    }
-    function hideTip(){ hotspotTip.style.display = 'none'; }
-
-    // Download/progress icons + download behavior (LOCKED)
-    const state = new Map();
-    MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
-
-    let currentController = null;
-    let currentDownloadingId = null;
-    const inFlight = new Map();
-
-    let preloadEnabled = true;
-    let preloadTimer = null;
-    let resumeRequested = false;
-    let preloadRunning = false;
-    const preloadQueue = MODELS.map(m => m.id);
-
-    const rowEls = new Map();
-    let downloadingVisualId = null;
-
-    function paintDownloading(idOrNull) {
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.remove("downloading");
-      downloadingVisualId = idOrNull;
-      if (downloadingVisualId && rowEls.get(downloadingVisualId)) rowEls.get(downloadingVisualId).row.classList.add("downloading");
-    }
-    function paintActive() {
-      for (const m of MODELS) rowEls.get(m.id)?.row.classList.toggle("active", m.id === selectedId);
-    }
-
-    function parsePercent(progressText) {
-      const match = String(progressText || "").match(/^(\d+)%$/);
-      if (!match) return 0;
-      const n = Number(match[1]);
-      return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
-    }
-    function loadingIconSVG(percent) {
-      const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="${r}" fill="none" stroke="#d6d6d6" stroke-width="2.5"></circle>
-          <circle cx="10" cy="10" r="${r}"
-            fill="none" stroke="#1e88e5" stroke-width="2.5" stroke-linecap="round"
-            transform="rotate(-90 10 10)"
-            stroke-dasharray="${c}" stroke-dashoffset="${offset}"></circle>
-        </svg>`;
-    }
-    function doneIconSVG() {
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" fill="#2e7d32"></circle>
-          <path d="M6 10.2 L8.6 12.8 L14 7.4"
-                fill="none" stroke="#ffffff" stroke-width="2.2"
-                stroke-linecap="round" stroke-linejoin="round"></path>
-        </svg>`;
-    }
-    function pausedIconSVG() {
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" fill="#ffffff" stroke="#9e9e9e" stroke-width="2"></circle>
-          <rect x="7" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
-          <rect x="10.8" y="6" width="2.2" height="8" rx="0.8" fill="#757575"></rect>
-        </svg>`;
-    }
-    function errorIconSVG() {
-      return `
-        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" fill="#c62828"></circle>
-          <rect x="9.1" y="5.2" width="1.8" height="6.8" rx="0.9" fill="#ffffff"></rect>
-          <circle cx="10" cy="14.4" r="1.1" fill="#ffffff"></circle>
-        </svg>`;
-    }
-    function refreshMeta(id) {
-      const st = state.get(id);
-      const meta = rowEls.get(id)?.meta;
-      if (!meta) return;
-      if (st.status === "done") { meta.innerHTML = doneIconSVG(); return; }
-      if (st.status === "paused") { meta.innerHTML = pausedIconSVG(); return; }
-      if (st.status === "error") { meta.innerHTML = errorIconSVG(); return; }
-      if (st.status === "loading") { meta.innerHTML = loadingIconSVG(parsePercent(st.progressText)); return; }
-      meta.innerHTML = "";
-    }
-
-    function buildListOnce() {
-      list.innerHTML = "";
-      for (const m of MODELS) {
-        const row = document.createElement('div');
-        row.className = "row";
-        const name = document.createElement('div');
-        name.className = "name";
-        name.textContent = m.id;
-        const meta = document.createElement('div');
-        meta.className = "meta";
-        row.appendChild(name);
-        row.appendChild(meta);
-        row.addEventListener('click', () => onUserSelect(m.id));
-        list.appendChild(row);
-        rowEls.set(m.id, { row, meta });
-        refreshMeta(m.id);
-      }
-      paintActive();
-      paintDownloading(null);
-    }
-
-    function maybeResumePreload() {
-      if (!preloadEnabled) return;
-      if (!resumeRequested) return;
-      if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
-      resumeRequested = false;
-      resumePreload();
-    }
-    function pausePreloadForAWhile() {
-      preloadEnabled = false;
-      if (preloadTimer) clearTimeout(preloadTimer);
-      preloadTimer = setTimeout(() => {
-        preloadEnabled = true;
-        resumeRequested = true;
-        maybeResumePreload();
-      }, 1200);
-    }
-
-    async function downloadToBlobUrl(modelId) {
-      const model = MODELS.find(x => x.id === modelId);
-      const st = state.get(modelId);
-      if (st.status === "done" && st.blobUrl) return st.blobUrl;
-      if (inFlight.has(modelId)) return inFlight.get(modelId);
-
-      const p = (async () => {
-        paintDownloading(modelId);
-        st.status = "loading";
-        st.progressText = "";
-        refreshMeta(modelId);
-
-        if (currentController) {
-          currentController.abort();
-          if (currentDownloadingId && currentDownloadingId !== modelId) {
-            const prev = state.get(currentDownloadingId);
-            if (prev && prev.status === "loading") {
-              prev.status = "paused";
-              refreshMeta(currentDownloadingId);
-            }
-          }
-        }
-
-        currentController = new AbortController();
-        currentDownloadingId = modelId;
-
-        try {
-          const res = await fetch(model.url, { signal: currentController.signal });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-          const total = Number(res.headers.get("Content-Length")) || null;
-          const reader = res.body.getReader();
-          let received = 0;
-          const chunks = [];
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.byteLength;
-
-            st.progressText = total ? `${Math.floor((received / total) * 100)}%` : "";
-            refreshMeta(modelId);
-          }
-
-          const blob = new Blob(chunks, { type: "model/gltf-binary" });
-          const blobUrl = URL.createObjectURL(blob);
-
-          st.status = "done";
-          st.progressText = "";
-          st.blobUrl = blobUrl;
-          refreshMeta(modelId);
-
-          paintDownloading(null);
-          maybeResumePreload();
-          return blobUrl;
-
-        } catch (err) {
-          paintDownloading(null);
-          if (err.name === "AbortError") {
-            st.status = "paused";
-            refreshMeta(modelId);
-            maybeResumePreload();
-            throw err;
-          }
-          st.status = "error";
-          st.progressText = "";
-          refreshMeta(modelId);
-          maybeResumePreload();
-          throw err;
-        } finally {
-          inFlight.delete(modelId);
-        }
-      })();
-
-      inFlight.set(modelId, p);
-      return p;
-    }
-
-    async function resumePreload() {
-      if (!preloadEnabled) return;
-      if (preloadRunning) return;
-      preloadRunning = true;
-      try {
-        if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
-          resumeRequested = true;
-          return;
-        }
-        for (const id of preloadQueue) {
-          if (!preloadEnabled) return;
-          const st = state.get(id);
-          if (st.status === "done") continue;
-          try { await downloadToBlobUrl(id); }
-          catch (e) { if (e.name === "AbortError") return; }
-        }
-      } finally {
-        preloadRunning = false;
-      }
-    }
-
-    function swapViewersNow() {
-      activeMv.classList.remove('shownViewer');
-      activeMv.classList.add('hiddenViewer');
-      idleMv.classList.remove('hiddenViewer');
-      idleMv.classList.add('shownViewer');
-      const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
-    }
-
-    // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
-    let cameraReady = false;
-
-    let latestCarryCam = null;
-    let savingEnabled = true;
-    let settleRaf = 0;
-    let freezeCarryFromCameraChange = false;
-
-    function cloneCarry(cam) {
-      if (!cam) return null;
-      return {
-        orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
-        deltaTarget: { x: cam.deltaTarget.x, y: cam.deltaTarget.y, z: cam.deltaTarget.z },
-        fov: cam.fov
-      };
-    }
-
-    function scheduleSettledCarrySnapshot() {
-      if (!savingEnabled) return;
-      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
-      if (settleRaf) cancelAnimationFrame(settleRaf);
-      settleRaf = requestAnimationFrame(() => {
-        settleRaf = 0;
-        const cam = readCamWithDelta(activeMv);
-        if (cam) latestCarryCam = cloneCarry(cam);
-      });
-    }
-
-    function scheduleSettledCarrySnapshotManual() {
-      freezeCarryFromCameraChange = false;
-      scheduleSettledCarrySnapshot();
-      scheduleShellCameraGuard(activeMv);
-    }
-
-    function scheduleSettledCarrySnapshotCameraChange() {
-      scheduleShellCameraGuard(activeMv);
-      if (freezeCarryFromCameraChange) return;
-      scheduleSettledCarrySnapshot();
-    }
-
-    for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshotManual, { passive: true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
-    }
-
-    function getMvScene(mv) {
-      const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
-      return sym ? mv[sym] : null;
-    }
-
-    const baseCenter = new Map();
-    const baseTarget = new Map();
-    const baseRadiusByModel = new Map();
-    const apAxisByModel = new Map();
-
-    function chooseApAxisForViewer(mv) {
-      let dims = null;
-      try { dims = mv.getDimensions?.() || null; } catch(_) {}
-      if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) return 'z';
-      return (dims.x >= dims.z) ? 'x' : 'z';
-    }
-
-    let GLOBAL_BASE_CENTER = null;
-    let GLOBAL_BASE_TARGET = null;
-
-    function captureAutoFrameBase(mv, modelId) {
-      const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
-      const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
-
-      if (!GLOBAL_BASE_CENTER) GLOBAL_BASE_CENTER = new THREE.Vector3(c.x, c.y, c.z);
-      if (!GLOBAL_BASE_TARGET) GLOBAL_BASE_TARGET = new THREE.Vector3(t.x, t.y, t.z);
-
-      if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
-      if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
-
-      if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
-    }
-
-    const EPS = 1e-4;
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-    function lerp(a,b,t){ return a + (b-a)*t; }
-    function easeInOutCubic(t){
-      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
-    }
-    function lerpAngleRad(a, b, t){
-      let d = ((b - a + Math.PI) % (2*Math.PI)) - Math.PI;
-      return a + d * t;
-    }
-    function orbitFromOffset(off) {
-      const r = off.length();
-      if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
-      const phi = Math.acos(clamp(off.y / r, -1, 1));
-      const theta = Math.atan2(off.x, off.z);
-      return { theta, phi, radius: r };
-    }
-
-    function readCamWithDelta(mv) {
-      if (!cameraReady || !mv || !mv.src) return null;
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      const f = mv.getFieldOfView?.();
-      if (!o || !t || typeof f !== "number") return null;
-
-      const bt = baseTarget.get(currentShownId);
-      const delta = bt ? { x: t.x - bt.x, y: t.y - bt.y, z: t.z - bt.z } : { x:0, y:0, z:0 };
-
-      return { orbit: { theta: o.theta, phi: o.phi, radius: o.radius }, deltaTarget: delta, fov: f };
-    }
-
-    function applyCamWithDelta(mv, modelId, cam) {
-      if (!cam) return;
-      clearShellCameraGuard(mv);
-
-      const bt = baseTarget.get(modelId);
-      if (bt) {
-        const tx = bt.x + cam.deltaTarget.x;
-        const ty = bt.y + cam.deltaTarget.y;
-        const tz = bt.z + cam.deltaTarget.z;
-        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
-      }
-
-      mv.fieldOfView = `${cam.fov}deg`;
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-
-      try { mv.jumpCameraToGoal?.(); } catch (_) {}
-    }
-
-    const SHELL_CAMERA_PADDING = 2;
-    const shellGuardRaf = new WeakMap();
-
-    function clearShellCameraGuard(mv) {
-      mv?.removeAttribute?.('min-camera-orbit');
-    }
-
-    function directionFromOrbit(orbit) {
-      const sinPhi = Math.sin(orbit.phi);
-      return new THREE.Vector3(
-        sinPhi * Math.sin(orbit.theta),
-        Math.cos(orbit.phi),
-        sinPhi * Math.cos(orbit.theta)
-      ).normalize();
-    }
-
-    function getShellRadiusLimit(mv, target, dir) {
-      const st = occState.get(mv);
-      if (!st || !st.occluders || !st.occluders.length || !target || !dir) return null;
-
-      const raycaster = st.shellRaycaster || new THREE.Raycaster();
-      st.shellRaycaster = raycaster;
-      raycaster.set(target, dir);
-      raycaster.near = EPS;
-      raycaster.far = Infinity;
-
-      const hits = raycaster.intersectObjects(st.occluders, true);
-      if (!hits.length) return null;
-
-      let shellDist = 0;
-      for (const hit of hits) {
-        if (Number.isFinite(hit.distance)) shellDist = Math.max(shellDist, hit.distance);
-      }
-      return shellDist > EPS ? shellDist + SHELL_CAMERA_PADDING : null;
-    }
-
-    function getCurrentShellRadiusLimit(mv) {
-      const o = mv?.getCameraOrbit?.();
-      const t = mv?.getCameraTarget?.();
-      if (!o || !t) return null;
-
-      const target = new THREE.Vector3(t.x, t.y, t.z);
-      return getShellRadiusLimit(mv, target, directionFromOrbit(o));
-    }
-
-    function scheduleShellCameraGuard(mv) {
-      if (!mv) return;
-      const prev = shellGuardRaf.get(mv);
-      if (prev) cancelAnimationFrame(prev);
-
-      const raf = requestAnimationFrame(() => {
-        shellGuardRaf.set(mv, 0);
-        applyShellCameraGuard(mv);
-      });
-      shellGuardRaf.set(mv, raf);
-    }
-
-    function applyShellCameraGuard(mv) {
-      if (!mv || !mv.classList.contains('shownViewer')) return;
-
-      const limit = getCurrentShellRadiusLimit(mv);
-      if (!Number.isFinite(limit) || limit <= 0) {
-        clearShellCameraGuard(mv);
-        return;
-      }
-
-      mv.setAttribute('min-camera-orbit', `auto auto ${limit}m`);
-
-      const o = mv.getCameraOrbit?.();
-      if (!o || !Number.isFinite(o.radius) || o.radius >= limit - EPS) return;
-
-      mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${limit}m`;
-      try { mv.jumpCameraToGoal?.(); } catch (_) {}
-
-      requestAnimationFrame(() => {
-        const cam = readCamWithDelta(mv);
-        if (cam && mv === activeMv) latestCarryCam = cloneCarry(cam);
-      });
-    }
-
-    function clearHotspots(mv) {
-      mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
-    }
-
-    function ensureHotspotElements(mv, modelId) {
-      clearHotspots(mv);
-      const anns = ANNOTATIONS[modelId] || [];
-      for (const a of anns) {
-        const btn = document.createElement('button');
-        btn.className = 'hotspot';
-        btn.setAttribute('slot', a.slotName);
-        btn.dataset.label = a.title;
-        btn.setAttribute('aria-label', a.title);
-        attachTip(btn);
-
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          hideTip();
-          setSelectedAnnoBySlot(a.slotName);
-          focusHotspot(a.slotName);
-        });
-
-        mv.appendChild(btn);
-      }
-      updateSelectedHotspotVisual();
-    }
-
-    // Occlusion + bottom override + selected always visible
-    const RAYS_PER_BATCH = 5;
-    const DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING = 6;
-    const TOL = 5;
-    const FORCE_VISIBLE_K = 5;
-
-    const occState = new WeakMap();
-    const loopState = new WeakMap();
-
-    function buildRaycastOccluders(mv, shift) {
-      const scene = getMvScene(mv);
-      if (!scene || typeof scene.traverse !== "function") return null;
-
-      scene.updateMatrixWorld?.(true);
-      const occluders = [];
-
-      scene.traverse(obj => {
-        if (!obj || !obj.isMesh || !obj.geometry) return;
-
-        const g = obj.geometry;
-        const geo = new THREE.BufferGeometry();
-
-        if (g.index) {
-          const idxArr = g.index.array;
-          const idxCopy = idxArr.slice ? idxArr.slice() : new idxArr.constructor(idxArr);
-          geo.setIndex(new THREE.BufferAttribute(idxCopy, 1));
-        }
-
-        const attrs = g.attributes || {};
-        for (const key of Object.keys(attrs)) {
-          const a = attrs[key];
-          if (!a || !a.array || a.itemSize == null) continue;
-          const arr = a.array;
-          const arrCopy = arr.slice ? arr.slice() : new arr.constructor(arr);
-          geo.setAttribute(key, new THREE.BufferAttribute(arrCopy, a.itemSize, a.normalized));
-        }
-
-        const m = obj.matrixWorld?.elements;
-        if (m && m.length === 16) geo.applyMatrix4(new THREE.Matrix4().fromArray(m));
-
-        geo.translate(shift.x, shift.y, shift.z);
-        occluders.push(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })));
-      });
-
-      return occluders;
-    }
-
-    function updateHotspotsAndPointMap(mv, modelId, shift) {
-      const scene = getMvScene(mv);
-      if (!scene || typeof scene.getObjectByName !== "function") return new Map();
-
-      scene.updateMatrixWorld?.(true);
-
-      const pointMap = new Map();
-      const anns = ANNOTATIONS[modelId] || [];
-      const aliasMap = ANCHOR_ALIASES[modelId] || {};
-
-      for (const a of anns) {
-        const alias = aliasMap[a.anchor];
-        if (alias) {
-          const cached = anchorPosCache.get(cacheKey(alias.modelId, alias.anchor));
-          if (cached) {
-            const ox = alias.offset?.x ?? 0;
-            const oy = alias.offset?.y ?? 0;
-            const oz = alias.offset?.z ?? 0;
-
-            const x = cached.x + ox;
-            const y = cached.y + oy;
-            const z = cached.z + oz;
-
-            const posStr = `${x}m ${y}m ${z}m`;
-            try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
-            catch {
-              const el = mv.querySelector(`[slot="${a.slotName}"]`);
-              if (el) el.dataset.position = posStr;
-            }
-            pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
-            anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
-            continue;
-          }
-        }
-
-        const obj = scene.getObjectByName(a.anchor);
-        if (!obj) continue;
-
-        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
-        if (!p) continue;
-
-        const x = p.x + shift.x;
-        const y = p.y + shift.y;
-        const z = p.z + shift.z;
-
-        const posStr = `${x}m ${y}m ${z}m`;
-        try { mv.updateHotspot({ name: a.slotName, position: posStr, normal: "0m 1m 0m" }); }
-        catch {
-          const el = mv.querySelector(`[slot="${a.slotName}"]`);
-          if (el) el.dataset.position = posStr;
-        }
-
-        pointMap.set(a.slotName, new THREE.Vector3(x, y, z));
-        anchorPosCache.set(cacheKey(modelId, a.anchor), new THREE.Vector3(x, y, z));
-      }
-
-      return pointMap;
-    }
-
-    function getCameraPositionHotspotSpace(mv) {
-      const o = mv.getCameraOrbit?.();
-      const t = mv.getCameraTarget?.();
-      if (!o || !t) return null;
-
-      const theta = o.theta, phi = o.phi, r = o.radius;
-      const sinPhi = Math.sin(phi);
-
-      return new THREE.Vector3(
-        t.x + r * sinPhi * Math.sin(theta),
-        t.y + r * Math.cos(phi),
-        t.z + r * sinPhi * Math.cos(theta)
-      );
-    }
-
-    function updateForcedVisible(mv) {
-      const st = occState.get(mv);
-      if (!st || !st.pointMap) return;
-
-      const camPos = getCameraPositionHotspotSpace(mv);
-      const C0 = baseCenter.get(currentShownId);
-      if (!camPos || !C0) return;
-
-      const below = camPos.y < C0.y;
-      if (!below) { st.forcedVisible = null; return; }
-
-      const arr = [];
-      for (const [slot, p] of st.pointMap.entries()) {
-        const dx = p.x - camPos.x, dy = p.y - camPos.y, dz = p.z - camPos.z;
-        const d2 = dx*dx + dy*dy + dz*dz;
-        arr.push([d2, slot]);
-      }
-      arr.sort((a,b) => a[0] - b[0]);
-
-      const set = new Set();
-      for (let i = 0; i < Math.min(FORCE_VISIBLE_K, arr.length); i++) set.add(arr[i][1]);
-      st.forcedVisible = set;
-    }
-
-    function occludeOne(mv, slot) {
-      const st = occState.get(mv);
-      if (!st) return;
-
-      const selectedSlot = getSelectedSlotName();
-      if (selectedSlot && slot === selectedSlot) {
-        const el = mv.querySelector(`[slot="${slot}"]`);
-        if (el) el.classList.remove("occluded");
-        return;
-      }
-
-      updateForcedVisible(mv);
-
-      if (st.forcedVisible && st.forcedVisible.has(slot)) {
-        const el = mv.querySelector(`[slot="${slot}"]`);
-        if (el) el.classList.remove("occluded");
-        return;
-      }
-
-      const camPos = getCameraPositionHotspotSpace(mv);
-      if (!camPos) return;
-
-      const point = st.pointMap.get(slot);
-      if (!point) return;
-
-      const dir = point.clone().sub(camPos);
-      const dist = dir.length();
-      if (dist < EPS) return;
-
-      dir.normalize();
-      st.raycaster.set(camPos, dir);
-      st.raycaster.near = 0;
-      st.raycaster.far = dist + EPS;
-
-      const hits = st.raycaster.intersectObjects(st.occluders, true);
-
-      let occluded = false;
-      if (hits.length > 0) {
-        const hitDist = hits[0].distance;
-        occluded = hitDist < (dist - TOL);
-      }
-
-      const el = mv.querySelector(`[slot="${slot}"]`);
-      if (el) el.classList.toggle("occluded", occluded);
-    }
-
-    function runBatch(mv, count) {
-      const st = occState.get(mv);
-      if (!st || !st.slots.length) return;
-
-      for (let i = 0; i < count; i++) {
-        const slot = st.slots[st.cursor];
-        occludeOne(mv, slot);
-        st.cursor = (st.cursor + 1) % st.slots.length;
-      }
-    }
-
-    function startLoop(mv) {
-      let ls = loopState.get(mv);
-      if (!ls) {
-        ls = { running:false, lastMoveTs:0, rafId:0, frame:0 };
-        loopState.set(mv, ls);
-      }
-
-      ls.lastMoveTs = performance.now();
-      if (ls.running) return;
-
-      ls.running = true;
-
-      const tick = () => {
-        ls.frame++;
-
-        const now = performance.now();
-        const moving = (now - ls.lastMoveTs) < 200;
-
-        if (moving) {
-          if (ls.frame % DO_BATCH_EVERY_N_FRAMES_WHILE_MOVING === 0) {
-            runBatch(mv, RAYS_PER_BATCH);
-          }
-          ls.rafId = requestAnimationFrame(tick);
-          return;
-        }
-
-        const st = occState.get(mv);
-        if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
-
-        if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
-
-        const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
-        runBatch(mv, toDo);
-        st.finalizeRemaining -= toDo;
-
-        if (st.finalizeRemaining > 0) {
-          ls.rafId = requestAnimationFrame(tick);
-        } else {
-          st.finalizeRemaining = null;
-          ls.running = false;
-          ls.rafId = 0;
-        }
-      };
-
-      ls.rafId = requestAnimationFrame(tick);
-    }
-
-    // Focus profiles
-    const focusAnim = new WeakMap();
-    const focusCarryCam = new WeakMap();
-    const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
-
-    const FOCUS_PROFILE_BY_MODEL = {
-      "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
-      "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
-      "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
-      "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
-    };
-
-    function animateCamera(mv, from, to) {
-      clearUserZoomOrbitLimits(mv);
-      const prev = focusAnim.get(mv);
-      if (prev?.rafId) cancelAnimationFrame(prev.rafId);
-      const token = (prev?.token ?? 0) + 1;
-
-      const bt = baseTarget.get(currentShownId);
-      const f = mv.getFieldOfView?.();
-      if (bt && typeof f === "number") {
-        focusCarryCam.set(mv, {
-          orbit: { theta: to.theta, phi: to.phi, radius: to.radius },
-          deltaTarget: { x: to.target.x - bt.x, y: to.target.y - bt.y, z: to.target.z - bt.z },
-          fov: f
-        });
-      }
-
-      focusAnim.set(mv, { rafId: 0, token });
-
-      const duration = 560;
-      const start = performance.now();
-
-      const tick = (now) => {
-        const cur = focusAnim.get(mv);
-        if (!cur || cur.token !== token) return;
-
-        const tt = clamp((now - start) / duration, 0, 1);
-        const e = easeInOutCubic(tt);
-
-        const tx = lerp(from.target.x, to.target.x, e);
-        const ty = lerp(from.target.y, to.target.y, e);
-        const tz = lerp(from.target.z, to.target.z, e);
-
-        const th = lerpAngleRad(from.theta, to.theta, e);
-        const ph = lerpAngleRad(from.phi,   to.phi,   e);
-        const rr = lerp(from.radius, to.radius, e);
-
-        mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
-        mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
-
-        if (tt < 1) {
-          cur.rafId = requestAnimationFrame(tick);
-          focusAnim.set(mv, cur);
-        } else {
-          try { mv.jumpCameraToGoal?.(); } catch (_) {}
-
-          // focus doesn't trigger wheel/pointerup -> force carry snapshot
-          try {
-            if (mv === activeMv && savingEnabled) {
-              const camNow = readCamWithDelta(activeMv);
-              if (camNow) latestCarryCam = cloneCarry(camNow);
-              freezeCarryFromCameraChange = true;
-              scheduleShellCameraGuard(activeMv);
-            }
-          } catch (_) {}
-
-          cur.rafId = 0;
-          focusAnim.set(mv, cur);
-        }
-      };
-
-      const cur = focusAnim.get(mv);
-      cur.rafId = requestAnimationFrame(tick);
-      focusAnim.set(mv, cur);
-    }
-
-    for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', () => focusCarryCam.delete(mv), { passive: true });
-      mv.addEventListener('pointerdown', () => focusCarryCam.delete(mv), { passive: true });
-      mv.addEventListener('touchstart', () => focusCarryCam.delete(mv), { passive: true });
-    }
-
-    function focusHotspot(slotName){
-      const st = occState.get(activeMv);
-      if (!st || !st.pointMap) return;
-
-      const P = st.pointMap.get(slotName);
-      if (!P) return;
-
-      const C0 = baseCenter.get(currentShownId);
-      if (!C0) return;
-
-      const apKey = apAxisByModel.get(currentShownId) || 'z';
-      const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
-      const v = new THREE.Vector3(0,1,0);
-      const w = u.clone().cross(v).normalize();
-
-      const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
-
-      const apMid = (prof.apMin + prof.apMax) / 2;
-      const siMid = (prof.siMin + prof.siMax) / 2;
-      const A = Math.max(1e-6, (prof.apMax - prof.apMin) / 2);
-      const B = Math.max(1e-6, (prof.siMax - prof.siMin) / 2);
-
-      const rel = P.clone().sub(C0);
-      let xp = rel.dot(u);
-      let yp = rel.dot(v);
-
-      let xrel = xp - apMid;
-      let yrel = yp - siMid;
-
-      const s = (xrel*xrel)/(A*A) + (yrel*yrel)/(B*B);
-      if (s > 1e-12 && s > 1) {
-        const k = 1 / Math.sqrt(s);
-        xrel *= k;
-        yrel *= k;
-      }
-
-      xp = apMid + xrel;
-      yp = siMid + yrel;
-
-      const Cstar = C0.clone()
-        .add(u.clone().multiplyScalar(xp))
-        .add(v.clone().multiplyScalar(yp))
-        .add(w.clone().multiplyScalar(prof.medialShift || 0));
-
-      const d = P.clone().sub(Cstar);
-      if (d.length() < 1e-6) return;
-      d.normalize();
-
-      const orbit0 = activeMv.getCameraOrbit?.();
-      const target0 = activeMv.getCameraTarget?.();
-      if (!orbit0 || !target0) return;
-
-      const camPos0 = getCameraPositionHotspotSpace(activeMv);
-      if (!camPos0) return;
-
-      const distToPoint = camPos0.distanceTo(P);
-      const r0 = orbit0.radius;
-      const shellLimit = getShellRadiusLimit(activeMv, P.clone(), d.clone()) ?? 0.01;
-      const desiredR = Math.max(shellLimit, distToPoint * 0.65);
-      const r1 = Math.min(r0, desiredR);
-      lastFocusRadiusByModel.set(currentShownId, r1);
-
-      const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
-      const off = camPos1.clone().sub(P);
-      const o1 = orbitFromOffset(off);
-
-      animateCamera(activeMv,
-        { theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x, target0.y, target0.z) },
-        { theta: o1.theta, phi: o1.phi, radius: r1, target: P.clone() }
-      );
-    }
-
-    // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
-    const PRIME_MODEL_ID = "02_Veselless_Annotated";
-    let prime02Started = false;
-    let prime02Done = false;
-
-    function computeShiftForModel(mv, modelId) {
-      const bt = baseTarget.get(modelId);
-      const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
-      const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
-      return baseCenter.get(modelId).clone().add(delta);
-    }
-
-    function primeCacheFromModel02(mv) {
-      const scene = getMvScene(mv);
-      if (!scene || typeof scene.getObjectByName !== "function") return;
-
-      captureAutoFrameBase(mv, PRIME_MODEL_ID);
-
-      const bt = baseTarget.get(PRIME_MODEL_ID);
-      if (bt) mv.cameraTarget = `${bt.x}m ${bt.y}m ${bt.z}m`;
-
-      const shift = computeShiftForModel(mv, PRIME_MODEL_ID);
-
-      scene.updateMatrixWorld?.(true);
-
-      for (const anchor of MODEL02_NAMES) {
-        const obj = scene.getObjectByName(anchor);
-        if (!obj) continue;
-        const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
-        if (!p) continue;
-
-        const x = p.x + shift.x;
-        const y = p.y + shift.y;
-        const z = p.z + shift.z;
-
-        anchorPosCache.set(cacheKey(PRIME_MODEL_ID, anchor), new THREE.Vector3(x, y, z));
-      }
-    }
-
-    async function startPrimeModel02Once() {
-      if (prime02Started) return;
-      prime02Started = true;
-
-      try {
-        if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
-          requestAnimationFrame(() => startPrimeModel02Once());
-          return;
-        }
-
-        const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
-
-        if (mvPrime.src !== blobUrl) {
-          await new Promise(resolve => {
-            const onLoad = () => resolve();
-            mvPrime.addEventListener('load', onLoad, { once:true });
-            mvPrime.src = blobUrl;
-          });
-        }
-
-        await new Promise(r => requestAnimationFrame(r));
-        await new Promise(r => requestAnimationFrame(r));
-
-        primeCacheFromModel02(mvPrime);
-        prime02Done = true;
-
-      } catch (_) {
-        prime02Started = false;
-      }
-    }
-
-    // ===== Swap / show model =====
-    let swapToken = 0;
-
-    function prepareAnnotationsAndOcclusion(mv, modelId) {
-      ensureHotspotElements(mv, modelId);
-
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        captureAutoFrameBase(mv, modelId);
-
-        const shift = computeShiftForModel(mv, modelId);
-
-        const occluders = buildRaycastOccluders(mv, shift);
-        const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
-        const slots = Array.from(pointMap.keys());
-
-        if (occluders && occluders.length && slots.length) {
-          occState.set(mv, {
-            occluders,
-            pointMap,
-            raycaster: new THREE.Raycaster(),
-            slots,
-            cursor: 0,
-            finalizeRemaining: null,
-            forcedVisible: null
-          });
-        } else {
-          occState.set(mv, null);
-        }
-
-        runBatch(mv, RAYS_PER_BATCH);
-
-        if (!mv.__hasOccListener) {
-          mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
-          mv.__hasOccListener = true;
-        }
-      }));
-    }
-
-    async function showModel(modelId) {
-      const token = ++swapToken;
-
-      const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
-      savingEnabled = false;
-
-      selectedId = modelId;
-      paintActive();
-
-      const st = state.get(modelId);
-      const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
-
-      const finalizeSwap = () => {
-        prepareAnnotationsAndOcclusion(idleMv, modelId);
-        swapViewersNow();
-        currentShownId = modelId;
-        cameraReady = true;
-        startLoop(activeMv);
-
-        selectedAnnoIndex = -1;
-        refreshAnnoNavLabel();
-        updateSelectedHotspotVisual();
-
-        savingEnabled = true;
-        scheduleShellCameraGuard(activeMv);
-        if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
-      };
-
-      const applyAfterLoad = () => {
-        captureAutoFrameBase(idleMv, modelId);
-        applyCamWithDelta(idleMv, modelId, camForThisSwap);
-        if (camForThisSwap) {
-          latestCarryCam = cloneCarry(camForThisSwap);
-          freezeCarryFromCameraChange = true;
-        }
-        focusCarryCam.delete(idleMv);
-      };
-
-      const finalizeAfterBarrier = () => {
-        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (token !== swapToken) return;
-          finalizeSwap();
-          if (!prime02Done) startPrimeModel02Once();
-        })));
-      };
-
-      if (targetSrc) {
-        const activeSrc = activeMv.src || "";
-        const idleSrc = idleMv.src || "";
-
-        if (activeSrc === targetSrc) { savingEnabled = true; return; }
-
-        if (idleSrc === targetSrc) {
-          applyAfterLoad();
-          finalizeAfterBarrier();
-          return;
-        }
-
-        const onIdleLoad = () => {
-          if (token !== swapToken) return;
-          applyAfterLoad();
-          finalizeAfterBarrier();
-        };
-        idleMv.addEventListener('load', onIdleLoad, { once:true });
-        idleMv.src = targetSrc;
-        return;
-      }
-
-      const onIdleLoad = () => {
-        if (token !== swapToken) return;
-        applyAfterLoad();
-        finalizeAfterBarrier();
-      };
-      idleMv.addEventListener('load', onIdleLoad, { once:true });
-
-      try {
-        const blobUrl = await downloadToBlobUrl(modelId);
-        if (token !== swapToken) return;
-        idleMv.src = blobUrl;
-      } catch (_) {
-        savingEnabled = true;
-      }
-    }
-
-    function onUserSelect(modelId) {
-      const st = state.get(modelId);
-      if (!(st.status === "done" && st.blobUrl)) pausePreloadForAWhile();
-      showModel(modelId);
-    }
-
-    // init
-    buildListOnce();
-    initBackgroundSelector();
-    initAnnotationsToggle();
-    refreshAnnoNavLabel();
-    updateSelectedHotspotVisual();
-
-    showModel(selectedId).then(() => {
-      resumeRequested = true;
-      maybeResumePreload();
-    });
-  </script>
-</body>
-</html>
+diff --git a/index.html b/index.html
+index 04fcea7e3ec7682db0a1ad0facaf19c1cfe03943..f586c941d1e402b5796bf8e0ef20a2ae10180cca 100644
+--- a/index.html
++++ b/index.html
+@@ -211,51 +211,51 @@
+ 
+ <body>
+   <div class="wrap">
+     <div class="sidebar">
+       <h3 style="margin:6px 0 12px;">Models</h3>
+       <div id="list"></div>
+ 
+       <div class="toggle-row">
+         <div class="toggle-title">Toggle annotations</div>
+         <label class="switch" title="Toggle annotations">
+           <input id="annToggle" type="checkbox" checked />
+           <span class="slider"></span>
+         </label>
+       </div>
+ 
+       <div class="bg-section">
+         <div class="bg-title">Background Color</div>
+         <div class="bg-options" id="bgOptions">
+           <button class="swatch white selected" data-color="#ffffff" aria-label="White background" title="White"></button>
+           <button class="swatch gray" data-color="#808080" aria-label="Gray background" title="Gray"></button>
+           <button class="swatch black" data-color="#000000" aria-label="Black background" title="Black"></button>
+         </div>
+       </div>
+ 
+       <div class="small">
+-        Bottom override: if camera Y &lt; baseCenter Y → show 5 closest hotspots.
++        Select a model, then use annotations to focus anatomical structures.
+       </div>
+     </div>
+ 
+     <div class="viewer-wrap" id="viewerWrap">
+       <div id="hotspotTip"></div>
+ 
+       <div id="annoNav" aria-label="Annotation navigator">
+         <button id="annoPrev" class="navBtn" aria-label="Previous annotation" title="Previous">‹</button>
+         <div id="annoLabel" class="navText">Select an annotation</div>
+         <button id="annoNext" class="navBtn" aria-label="Next annotation" title="Next">›</button>
+       </div>
+ 
+       <model-viewer id="mvA" class="viewer shownViewer"
+         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+       <model-viewer id="mvB" class="viewer hiddenViewer"
+         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+ 
+       <model-viewer id="mvPrime" class="viewer hiddenViewer"
+         interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
+     </div>
+   </div>
+ 
+   <script type="module">
+     import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
+ 
+@@ -623,52 +623,51 @@
+             if (prev && prev.status === "loading") {
+               prev.status = "paused";
+               refreshMeta(currentDownloadingId);
+             }
+           }
+         }
+ 
+         currentController = new AbortController();
+         currentDownloadingId = modelId;
+ 
+         try {
+           const res = await fetch(model.url, { signal: currentController.signal });
+           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+ 
+           const total = Number(res.headers.get("Content-Length")) || null;
+           const reader = res.body.getReader();
+           let received = 0;
+           const chunks = [];
+ 
+           while (true) {
+             const { done, value } = await reader.read();
+             if (done) break;
+             chunks.push(value);
+             received += value.byteLength;
+ 
+-            st.progressText = total ? `${Math.floor((received / total) * 100)}%`
+-                                    : `${(received / (1024*1024)).toFixed(1)} MB`;
++            st.progressText = total ? `${Math.floor((received / total) * 100)}%` : "";
+             refreshMeta(modelId);
+           }
+ 
+           const blob = new Blob(chunks, { type: "model/gltf-binary" });
+           const blobUrl = URL.createObjectURL(blob);
+ 
+           st.status = "done";
+           st.progressText = "";
+           st.blobUrl = blobUrl;
+           refreshMeta(modelId);
+ 
+           paintDownloading(null);
+           maybeResumePreload();
+           return blobUrl;
+ 
+         } catch (err) {
+           paintDownloading(null);
+           if (err.name === "AbortError") {
+             st.status = "paused";
+             refreshMeta(modelId);
+             maybeResumePreload();
+             throw err;
+           }
+           st.status = "error";
+           st.progressText = "";
+@@ -697,77 +696,87 @@
+           if (!preloadEnabled) return;
+           const st = state.get(id);
+           if (st.status === "done") continue;
+           try { await downloadToBlobUrl(id); }
+           catch (e) { if (e.name === "AbortError") return; }
+         }
+       } finally {
+         preloadRunning = false;
+       }
+     }
+ 
+     function swapViewersNow() {
+       activeMv.classList.remove('shownViewer');
+       activeMv.classList.add('hiddenViewer');
+       idleMv.classList.remove('hiddenViewer');
+       idleMv.classList.add('shownViewer');
+       const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
+     }
+ 
+     // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
+     let cameraReady = false;
+ 
+     let latestCarryCam = null;
+     let savingEnabled = true;
+     let settleRaf = 0;
++    let freezeCarryFromCameraChange = false;
+ 
+     function cloneCarry(cam) {
+       if (!cam) return null;
+       return {
+         orbit: { theta: cam.orbit.theta, phi: cam.orbit.phi, radius: cam.orbit.radius },
+         deltaTarget: { x: cam.deltaTarget.x, y: cam.deltaTarget.y, z: cam.deltaTarget.z },
+         fov: cam.fov
+       };
+     }
+ 
+     function scheduleSettledCarrySnapshot() {
+       if (!savingEnabled) return;
+       if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+       if (settleRaf) cancelAnimationFrame(settleRaf);
+       settleRaf = requestAnimationFrame(() => {
+         settleRaf = 0;
+         const cam = readCamWithDelta(activeMv);
+         if (cam) latestCarryCam = cloneCarry(cam);
+       });
+     }
+ 
+-    // ✅ FIX: add camera-change so manual drags always update carry snapshot
++    function scheduleSettledCarrySnapshotManual() {
++      freezeCarryFromCameraChange = false;
++      scheduleSettledCarrySnapshot();
++    }
++
++    function scheduleSettledCarrySnapshotCameraChange() {
++      if (freezeCarryFromCameraChange) return;
++      scheduleSettledCarrySnapshot();
++    }
++
+     for (const mv of [mvA, mvB]) {
+-      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
+-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
+-      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
+-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
++      mv.addEventListener('wheel', scheduleSettledCarrySnapshotManual, { passive: true });
++      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
++      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
++      mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
+     }
+ 
+     function getMvScene(mv) {
+       const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
+       return sym ? mv[sym] : null;
+     }
+ 
+     const baseCenter = new Map();
+     const baseTarget = new Map();
+     const apAxisByModel = new Map();
+ 
+     function chooseApAxisForViewer(mv) {
+       let dims = null;
+       try { dims = mv.getDimensions?.() || null; } catch(_) {}
+       if (!dims || !Number.isFinite(dims.x) || !Number.isFinite(dims.z)) return 'z';
+       return (dims.x >= dims.z) ? 'x' : 'z';
+     }
+ 
+     let GLOBAL_BASE_CENTER = null;
+     let GLOBAL_BASE_TARGET = null;
+ 
+     function captureAutoFrameBase(mv, modelId) {
+       const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
+       const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
+ 
+@@ -791,61 +800,61 @@
+     }
+     function orbitFromOffset(off) {
+       const r = off.length();
+       if (r < 1e-9) return { theta: 0, phi: Math.PI/2, radius: 0 };
+       const phi = Math.acos(clamp(off.y / r, -1, 1));
+       const theta = Math.atan2(off.x, off.z);
+       return { theta, phi, radius: r };
+     }
+ 
+     function readCamWithDelta(mv) {
+       if (!cameraReady || !mv || !mv.src) return null;
+       const o = mv.getCameraOrbit?.();
+       const t = mv.getCameraTarget?.();
+       const f = mv.getFieldOfView?.();
+       if (!o || !t || typeof f !== "number") return null;
+ 
+       const bt = baseTarget.get(currentShownId);
+       const delta = bt ? { x: t.x - bt.x, y: t.y - bt.y, z: t.z - bt.z } : { x:0, y:0, z:0 };
+ 
+       return { orbit: { theta: o.theta, phi: o.phi, radius: o.radius }, deltaTarget: delta, fov: f };
+     }
+ 
+     function applyCamWithDelta(mv, modelId, cam) {
+       if (!cam) return;
+ 
+-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+-      mv.fieldOfView = `${cam.fov}deg`;
+-
+       const bt = baseTarget.get(modelId);
+       if (bt) {
+         const tx = bt.x + cam.deltaTarget.x;
+         const ty = bt.y + cam.deltaTarget.y;
+         const tz = bt.z + cam.deltaTarget.z;
+         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
+       }
+ 
++      mv.fieldOfView = `${cam.fov}deg`;
++      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
++
+       try { mv.jumpCameraToGoal?.(); } catch (_) {}
+     }
+ 
+     function clearHotspots(mv) {
+       mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
+     }
+ 
+     function ensureHotspotElements(mv, modelId) {
+       clearHotspots(mv);
+       const anns = ANNOTATIONS[modelId] || [];
+       for (const a of anns) {
+         const btn = document.createElement('button');
+         btn.className = 'hotspot';
+         btn.setAttribute('slot', a.slotName);
+         btn.dataset.label = a.title;
+         btn.setAttribute('aria-label', a.title);
+         attachTip(btn);
+ 
+         btn.addEventListener('click', (e) => {
+           e.preventDefault();
+           e.stopPropagation();
+           hideTip();
+           setSelectedAnnoBySlot(a.slotName);
+           focusHotspot(a.slotName);
+         });
+@@ -1082,115 +1091,133 @@
+           ls.rafId = requestAnimationFrame(tick);
+           return;
+         }
+ 
+         const st = occState.get(mv);
+         if (!st || !st.slots.length) { ls.running = false; ls.rafId = 0; return; }
+ 
+         if (st.finalizeRemaining == null) st.finalizeRemaining = st.slots.length;
+ 
+         const toDo = Math.min(RAYS_PER_BATCH, st.finalizeRemaining);
+         runBatch(mv, toDo);
+         st.finalizeRemaining -= toDo;
+ 
+         if (st.finalizeRemaining > 0) {
+           ls.rafId = requestAnimationFrame(tick);
+         } else {
+           st.finalizeRemaining = null;
+           ls.running = false;
+           ls.rafId = 0;
+         }
+       };
+ 
+       ls.rafId = requestAnimationFrame(tick);
+     }
+ 
+-    // Focus profiles (updated: 10 & 11 now -20)
++    // Focus profiles
+     const focusAnim = new WeakMap();
++    const focusCarryCam = new WeakMap();
+     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
+ 
+     const FOCUS_PROFILE_BY_MODEL = {
+       "04_Superficial_SLF_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+       "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+       "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
+       "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
+-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
+-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
++      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
++      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
+     };
+ 
+     function animateCamera(mv, from, to) {
+       const prev = focusAnim.get(mv);
+       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
+       const token = (prev?.token ?? 0) + 1;
++
++      const bt = baseTarget.get(currentShownId);
++      const f = mv.getFieldOfView?.();
++      if (bt && typeof f === "number") {
++        focusCarryCam.set(mv, {
++          orbit: { theta: to.theta, phi: to.phi, radius: to.radius },
++          deltaTarget: { x: to.target.x - bt.x, y: to.target.y - bt.y, z: to.target.z - bt.z },
++          fov: f
++        });
++      }
++
+       focusAnim.set(mv, { rafId: 0, token });
+ 
+       const duration = 560;
+       const start = performance.now();
+ 
+       const tick = (now) => {
+         const cur = focusAnim.get(mv);
+         if (!cur || cur.token !== token) return;
+ 
+         const tt = clamp((now - start) / duration, 0, 1);
+         const e = easeInOutCubic(tt);
+ 
+         const tx = lerp(from.target.x, to.target.x, e);
+         const ty = lerp(from.target.y, to.target.y, e);
+         const tz = lerp(from.target.z, to.target.z, e);
+ 
+         const th = lerpAngleRad(from.theta, to.theta, e);
+         const ph = lerpAngleRad(from.phi,   to.phi,   e);
+         const rr = lerp(from.radius, to.radius, e);
+ 
+         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
+         mv.cameraOrbit  = `${th}rad ${ph}rad ${rr}m`;
+ 
+         if (tt < 1) {
+           cur.rafId = requestAnimationFrame(tick);
+           focusAnim.set(mv, cur);
+         } else {
+           try { mv.jumpCameraToGoal?.(); } catch (_) {}
+ 
+           // focus doesn't trigger wheel/pointerup -> force carry snapshot
+           try {
+             if (mv === activeMv && savingEnabled) {
+               const camNow = readCamWithDelta(activeMv);
+               if (camNow) latestCarryCam = cloneCarry(camNow);
+-              scheduleSettledCarrySnapshot();
++              freezeCarryFromCameraChange = true;
+             }
+           } catch (_) {}
+ 
+           cur.rafId = 0;
+           focusAnim.set(mv, cur);
+         }
+       };
+ 
+       const cur = focusAnim.get(mv);
+       cur.rafId = requestAnimationFrame(tick);
+       focusAnim.set(mv, cur);
+     }
+ 
++    for (const mv of [mvA, mvB]) {
++      mv.addEventListener('wheel', () => focusCarryCam.delete(mv), { passive: true });
++      mv.addEventListener('pointerdown', () => focusCarryCam.delete(mv), { passive: true });
++      mv.addEventListener('touchstart', () => focusCarryCam.delete(mv), { passive: true });
++    }
++
+     function focusHotspot(slotName){
+       const st = occState.get(activeMv);
+       if (!st || !st.pointMap) return;
+ 
+       const P = st.pointMap.get(slotName);
+       if (!P) return;
+ 
+       const C0 = baseCenter.get(currentShownId);
+       if (!C0) return;
+ 
+       const apKey = apAxisByModel.get(currentShownId) || 'z';
+       const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
+       const v = new THREE.Vector3(0,1,0);
+       const w = u.clone().cross(v).normalize();
+ 
+       const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
+ 
+       const apMid = (prof.apMin + prof.apMax) / 2;
+       const siMid = (prof.siMin + prof.siMax) / 2;
+       const A = Math.max(1e-6, (prof.apMax - prof.apMin) / 2);
+       const B = Math.max(1e-6, (prof.siMax - prof.siMin) / 2);
+ 
+       const rel = P.clone().sub(C0);
+       let xp = rel.dot(u);
+       let yp = rel.dot(v);
+@@ -1328,77 +1355,82 @@
+           occState.set(mv, {
+             occluders,
+             pointMap,
+             raycaster: new THREE.Raycaster(),
+             slots,
+             cursor: 0,
+             finalizeRemaining: null,
+             forcedVisible: null
+           });
+         } else {
+           occState.set(mv, null);
+         }
+ 
+         runBatch(mv, RAYS_PER_BATCH);
+ 
+         if (!mv.__hasOccListener) {
+           mv.addEventListener("camera-change", () => startLoop(mv), { passive:true });
+           mv.__hasOccListener = true;
+         }
+       }));
+     }
+ 
+     async function showModel(modelId) {
+       const token = ++swapToken;
+ 
+-      const camForThisSwap = cloneCarry(latestCarryCam) || readCamWithDelta(activeMv);
++      const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
+       savingEnabled = false;
+ 
+       selectedId = modelId;
+       paintActive();
+ 
+       const st = state.get(modelId);
+       const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
+ 
+       const finalizeSwap = () => {
+         prepareAnnotationsAndOcclusion(idleMv, modelId);
+         swapViewersNow();
+         currentShownId = modelId;
+         cameraReady = true;
+         startLoop(activeMv);
+ 
+         selectedAnnoIndex = -1;
+         refreshAnnoNavLabel();
+         updateSelectedHotspotVisual();
+ 
+         savingEnabled = true;
+-        scheduleSettledCarrySnapshot();
++        if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
+       };
+ 
+       const applyAfterLoad = () => {
+         captureAutoFrameBase(idleMv, modelId);
+         applyCamWithDelta(idleMv, modelId, camForThisSwap);
++        if (camForThisSwap) {
++          latestCarryCam = cloneCarry(camForThisSwap);
++          freezeCarryFromCameraChange = true;
++        }
++        focusCarryCam.delete(idleMv);
+       };
+ 
+       const finalizeAfterBarrier = () => {
+         requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+           if (token !== swapToken) return;
+           finalizeSwap();
+           if (!prime02Done) startPrimeModel02Once();
+         })));
+       };
+ 
+       if (targetSrc) {
+         const activeSrc = activeMv.src || "";
+         const idleSrc = idleMv.src || "";
+ 
+         if (activeSrc === targetSrc) { savingEnabled = true; return; }
+ 
+         if (idleSrc === targetSrc) {
+           applyAfterLoad();
+           finalizeAfterBarrier();
+           return;
+         }
+ 
+         const onIdleLoad = () => {
+           if (token !== swapToken) return;
+           applyAfterLoad();
