@@ -740,15 +740,9 @@
       });
     }
 
-    function beginUserCameraInteraction() {
+    function scheduleSettledCarrySnapshotManual() {
       freezeCarryFromCameraChange = false;
-      applyUserZoomOrbitLimits(activeMv, currentShownId);
-    }
-
-    function finishUserCameraInteraction() {
-      beginUserCameraInteraction();
       scheduleSettledCarrySnapshot();
-      scheduleUserZoomClamp();
     }
 
     function scheduleSettledCarrySnapshotCameraChange() {
@@ -757,11 +751,9 @@
     }
 
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', finishUserCameraInteraction, { passive: true, capture: true });
-      mv.addEventListener('pointerdown', beginUserCameraInteraction, { passive: true, capture: true });
-      mv.addEventListener('pointerup', finishUserCameraInteraction, { passive: true });
-      mv.addEventListener('touchstart', beginUserCameraInteraction, { passive: true, capture: true });
-      mv.addEventListener('touchend', finishUserCameraInteraction, { passive: true });
+      mv.addEventListener('wheel', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
       mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
     }
 
@@ -836,7 +828,6 @@
 
     function applyCamWithDelta(mv, modelId, cam) {
       if (!cam) return;
-      clearUserZoomOrbitLimits(mv);
 
       const bt = baseTarget.get(modelId);
       if (bt) {
@@ -1450,8 +1441,6 @@
       const token = ++swapToken;
 
       const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
-      clearUserZoomOrbitLimits(activeMv);
-      clearUserZoomOrbitLimits(idleMv);
       savingEnabled = false;
 
       selectedId = modelId;
