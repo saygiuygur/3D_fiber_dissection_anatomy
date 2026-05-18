@@ -745,10 +745,11 @@
     function scheduleSettledCarrySnapshotManual() {
       freezeCarryFromCameraChange = false;
       scheduleSettledCarrySnapshot();
-      scheduleUserZoomClamp();
+      scheduleShellCameraGuard(activeMv);
     }
 
     function scheduleSettledCarrySnapshotCameraChange() {
+      scheduleShellCameraGuard(activeMv);
       if (freezeCarryFromCameraChange) return;
       scheduleSettledCarrySnapshot();
     }
@@ -790,11 +791,6 @@
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
 
-      const o = mv.getCameraOrbit?.();
-      if (!baseRadiusByModel.has(modelId) && o && Number.isFinite(o.radius) && o.radius > 0) {
-        baseRadiusByModel.set(modelId, o.radius);
-      }
-
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
@@ -831,7 +827,7 @@
 
     function applyCamWithDelta(mv, modelId, cam) {
       if (!cam) return;
-      clearUserZoomOrbitLimits(mv);
+      clearShellCameraGuard(mv);
 
       const bt = baseTarget.get(modelId);
       if (bt) {
@@ -847,58 +843,83 @@
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
-    const USER_MIN_RADIUS_FACTOR = 0.40;
-    const USER_MAX_RADIUS_FACTOR = 1.20;
-    let userZoomClampTimer = 0;
+    const SHELL_CAMERA_PADDING = 2;
+    const shellGuardRaf = new WeakMap();
 
-    function getUserZoomLimits(modelId) {
-      const baseRadius = baseRadiusByModel.get(modelId);
-      if (!Number.isFinite(baseRadius) || baseRadius <= 0) return null;
-
-      const minRadius = baseRadius * USER_MIN_RADIUS_FACTOR;
-      const maxRadius = baseRadius * USER_MAX_RADIUS_FACTOR;
-
-      return { minRadius, maxRadius };
-    }
-
-    function scheduleUserZoomClamp() {
-      if (userZoomClampTimer) clearTimeout(userZoomClampTimer);
-      userZoomClampTimer = setTimeout(() => {
-        userZoomClampTimer = 0;
-        requestAnimationFrame(clampActiveUserZoom);
-      }, 30);
-    }
-
-    function clearUserZoomOrbitLimits(mv) {
+    function clearShellCameraGuard(mv) {
       mv?.removeAttribute?.('min-camera-orbit');
-      mv?.removeAttribute?.('max-camera-orbit');
     }
 
-    function applyUserZoomOrbitLimits(mv, modelId) {
-      const limits = getUserZoomLimits(modelId);
-      if (!mv || !limits) return;
-      mv.setAttribute('min-camera-orbit', `auto auto ${limits.minRadius}m`);
-      mv.setAttribute('max-camera-orbit', `auto auto ${limits.maxRadius}m`);
+    function directionFromOrbit(orbit) {
+      const sinPhi = Math.sin(orbit.phi);
+      return new THREE.Vector3(
+        sinPhi * Math.sin(orbit.theta),
+        Math.cos(orbit.phi),
+        sinPhi * Math.cos(orbit.theta)
+      ).normalize();
     }
 
-    function clampActiveUserZoom() {
-      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+    function getShellRadiusLimit(mv, target, dir) {
+      const st = occState.get(mv);
+      if (!st || !st.occluders || !st.occluders.length || !target || !dir) return null;
 
-      const limits = getUserZoomLimits(currentShownId);
-      if (!limits) return;
+      const raycaster = st.shellRaycaster || new THREE.Raycaster();
+      st.shellRaycaster = raycaster;
+      raycaster.set(target, dir);
+      raycaster.near = EPS;
+      raycaster.far = Infinity;
 
-      const o = activeMv.getCameraOrbit?.();
-      if (!o || !Number.isFinite(o.radius)) return;
+      const hits = raycaster.intersectObjects(st.occluders, true);
+      if (!hits.length) return null;
 
-      const radius = clamp(o.radius, limits.minRadius, limits.maxRadius);
-      if (Math.abs(radius - o.radius) < EPS) return;
+      let shellDist = 0;
+      for (const hit of hits) {
+        if (Number.isFinite(hit.distance)) shellDist = Math.max(shellDist, hit.distance);
+      }
+      return shellDist > EPS ? shellDist + SHELL_CAMERA_PADDING : null;
+    }
 
-      activeMv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${radius}m`;
-      try { activeMv.jumpCameraToGoal?.(); } catch (_) {}
+    function getCurrentShellRadiusLimit(mv) {
+      const o = mv?.getCameraOrbit?.();
+      const t = mv?.getCameraTarget?.();
+      if (!o || !t) return null;
+
+      const target = new THREE.Vector3(t.x, t.y, t.z);
+      return getShellRadiusLimit(mv, target, directionFromOrbit(o));
+    }
+
+    function scheduleShellCameraGuard(mv) {
+      if (!mv) return;
+      const prev = shellGuardRaf.get(mv);
+      if (prev) cancelAnimationFrame(prev);
+
+      const raf = requestAnimationFrame(() => {
+        shellGuardRaf.set(mv, 0);
+        applyShellCameraGuard(mv);
+      });
+      shellGuardRaf.set(mv, raf);
+    }
+
+    function applyShellCameraGuard(mv) {
+      if (!mv || !mv.classList.contains('shownViewer')) return;
+
+      const limit = getCurrentShellRadiusLimit(mv);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        clearShellCameraGuard(mv);
+        return;
+      }
+
+      mv.setAttribute('min-camera-orbit', `auto auto ${limit}m`);
+
+      const o = mv.getCameraOrbit?.();
+      if (!o || !Number.isFinite(o.radius) || o.radius >= limit - EPS) return;
+
+      mv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${limit}m`;
+      try { mv.jumpCameraToGoal?.(); } catch (_) {}
 
       requestAnimationFrame(() => {
-        const cam = readCamWithDelta(activeMv);
-        if (cam) latestCarryCam = cloneCarry(cam);
+        const cam = readCamWithDelta(mv);
+        if (cam && mv === activeMv) latestCarryCam = cloneCarry(cam);
       });
     }
 
@@ -1244,7 +1265,7 @@
               const camNow = readCamWithDelta(activeMv);
               if (camNow) latestCarryCam = cloneCarry(camNow);
               freezeCarryFromCameraChange = true;
-              applyUserZoomOrbitLimits(activeMv, currentShownId);
+              scheduleShellCameraGuard(activeMv);
             }
           } catch (_) {}
 
@@ -1321,9 +1342,8 @@
 
       const distToPoint = camPos0.distanceTo(P);
       const r0 = orbit0.radius;
-      const limits = getUserZoomLimits(currentShownId);
-      const minFocusRadius = limits?.minRadius ?? 0.01;
-      const desiredR = Math.max(minFocusRadius, distToPoint * 0.65);
+      const shellLimit = getShellRadiusLimit(activeMv, P.clone(), d.clone()) ?? 0.01;
+      const desiredR = Math.max(shellLimit, distToPoint * 0.65);
       const r1 = Math.min(r0, desiredR);
       lastFocusRadiusByModel.set(currentShownId, r1);
 
@@ -1469,7 +1489,7 @@
         updateSelectedHotspotVisual();
 
         savingEnabled = true;
-        applyUserZoomOrbitLimits(activeMv, currentShownId);
+        scheduleShellCameraGuard(activeMv);
         if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
       };
 
