@@ -745,6 +745,7 @@
     function scheduleSettledCarrySnapshotManual() {
       freezeCarryFromCameraChange = false;
       scheduleSettledCarrySnapshot();
+      scheduleUserZoomClamp();
     }
 
     function scheduleSettledCarrySnapshotCameraChange() {
@@ -766,6 +767,8 @@
 
     const baseCenter = new Map();
     const baseTarget = new Map();
+    const baseRadiusByModel = new Map();
+    const lastFocusRadiusByModel = new Map();
     const apAxisByModel = new Map();
 
     function chooseApAxisForViewer(mv) {
@@ -787,6 +790,12 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
+
+      const o = mv.getCameraOrbit?.();
+      if (!baseRadiusByModel.has(modelId) && o && Number.isFinite(o.radius) && o.radius > 0) {
+        baseRadiusByModel.set(modelId, o.radius);
+      }
+
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
@@ -836,6 +845,51 @@
       mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
 
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
+    }
+
+    const USER_MIN_RADIUS_FACTOR = 0.30;
+    const USER_MAX_RADIUS_FACTOR = 1.80;
+    let userZoomClampTimer = 0;
+
+    function getUserZoomLimits(modelId) {
+      const baseRadius = baseRadiusByModel.get(modelId);
+      if (!Number.isFinite(baseRadius) || baseRadius <= 0) return null;
+
+      const focusRadius = lastFocusRadiusByModel.get(modelId);
+      const focusMin = Number.isFinite(focusRadius) && focusRadius > 0 ? focusRadius * 0.90 : Infinity;
+      const minRadius = Math.min(baseRadius * USER_MIN_RADIUS_FACTOR, focusMin);
+      const maxRadius = baseRadius * USER_MAX_RADIUS_FACTOR;
+
+      return { minRadius, maxRadius };
+    }
+
+    function scheduleUserZoomClamp() {
+      if (userZoomClampTimer) clearTimeout(userZoomClampTimer);
+      userZoomClampTimer = setTimeout(() => {
+        userZoomClampTimer = 0;
+        requestAnimationFrame(clampActiveUserZoom);
+      }, 120);
+    }
+
+    function clampActiveUserZoom() {
+      if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+
+      const limits = getUserZoomLimits(currentShownId);
+      if (!limits) return;
+
+      const o = activeMv.getCameraOrbit?.();
+      if (!o || !Number.isFinite(o.radius)) return;
+
+      const radius = clamp(o.radius, limits.minRadius, limits.maxRadius);
+      if (Math.abs(radius - o.radius) < EPS) return;
+
+      activeMv.cameraOrbit = `${o.theta}rad ${o.phi}rad ${radius}m`;
+      try { activeMv.jumpCameraToGoal?.(); } catch (_) {}
+
+      requestAnimationFrame(() => {
+        const cam = readCamWithDelta(activeMv);
+        if (cam) latestCarryCam = cloneCarry(cam);
+      });
     }
 
     function clearHotspots(mv) {
@@ -1257,6 +1311,7 @@
       const r0 = orbit0.radius;
       const desiredR = Math.max(0.01, distToPoint * 0.65);
       const r1 = Math.min(r0, desiredR);
+      lastFocusRadiusByModel.set(currentShownId, r1);
 
       const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
       const off = camPos1.clone().sub(P);
