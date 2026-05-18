@@ -1425,7 +1425,7 @@
 
       const applyAfterLoad = () => {
         captureAutoFrameBase(idleMv, modelId);
-        applyCamWithDeltaStable(idleMv, modelId, camForThisSwap, token);
+        applyCamWithDelta(idleMv, modelId, camForThisSwap);
         if (camForThisSwap) {
           latestCarryCam = cloneCarry(camForThisSwap);
           freezeCarryFromCameraChange = true;
