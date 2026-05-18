@@ -247,9 +247,11 @@
       </div>
 
       <model-viewer id="mvA" class="viewer shownViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
 
       <model-viewer id="mvPrime" class="viewer hiddenViewer"
         interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
@@ -1192,6 +1194,7 @@
     };
 
     function animateCamera(mv, from, to) {
+      clearUserZoomOrbitLimits(mv);
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
       const token = (prev?.token ?? 0) + 1;
@@ -1322,6 +1325,7 @@
       const minFocusRadius = limits?.minRadius ?? 0.01;
       const desiredR = Math.max(minFocusRadius, distToPoint * 0.65);
       const r1 = Math.min(r0, desiredR);
+      lastFocusRadiusByModel.set(currentShownId, r1);
 
       const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
       const off = camPos1.clone().sub(P);
