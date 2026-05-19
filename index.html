@@ -997,11 +997,24 @@
 
     const WHEEL_ZOOM_MIN_STEP = 0;
     const WHEEL_ZOOM_MAX_STEP = 5;
+    const WHEEL_DELTA_CAP_PIXEL = 60;
+    const WHEEL_DELTA_CAP_LINE = 3;
+    const WHEEL_DELTA_CAP_PAGE = 1;
+    const nativeWheelPassThrough = new WeakSet();
     let wheelZoomStep = 0;
+
+    function capWheelDelta(deltaY, deltaMode) {
+      const cap = (deltaMode === 1) ? WHEEL_DELTA_CAP_LINE
+                : (deltaMode === 2) ? WHEEL_DELTA_CAP_PAGE
+                : WHEEL_DELTA_CAP_PIXEL;
+      return Math.max(-cap, Math.min(cap, deltaY));
+    }
 
     function handleWheelStepBound(mv, ev) {
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
+
+      if (nativeWheelPassThrough.has(mv)) return;
 
       // Scroll up (deltaY < 0) increases the step toward 5.
       if (ev.deltaY < 0) {
@@ -1012,17 +1025,42 @@
           return;
         }
         wheelZoomStep += 1;
-        return;
+      } else {
+        // Scroll down (deltaY > 0) decreases the step toward 0.
+        if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.stopImmediatePropagation();
+          return;
+        }
+        wheelZoomStep -= 1;
       }
 
-      // Scroll down (deltaY > 0) decreases the step toward 0.
-      if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        ev.stopImmediatePropagation();
-        return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+
+      const dy = capWheelDelta(ev.deltaY, ev.deltaMode);
+      nativeWheelPassThrough.add(mv);
+      try {
+        mv.dispatchEvent(new WheelEvent('wheel', {
+          deltaX: ev.deltaX,
+          deltaY: dy,
+          deltaZ: ev.deltaZ,
+          deltaMode: ev.deltaMode,
+          clientX: ev.clientX,
+          clientY: ev.clientY,
+          ctrlKey: ev.ctrlKey,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          metaKey: ev.metaKey,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        }));
+      } finally {
+        nativeWheelPassThrough.delete(mv);
       }
-      wheelZoomStep -= 1;
     }
 
     function updateForcedVisible(mv) {
