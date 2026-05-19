@@ -1001,7 +1001,7 @@
     let wheelZoomStep = 0;
 
     function handleFixedStepWheelZoom(mv, ev) {
-      if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
+      if (!mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
 
       if (ev.deltaY < 0) {
@@ -1033,6 +1033,7 @@
       ev.stopImmediatePropagation();
 
       mv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${nextRadius}m`;
+      try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
     function updateForcedVisible(mv) {
