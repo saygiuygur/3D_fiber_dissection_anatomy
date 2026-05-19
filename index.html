@@ -771,7 +771,7 @@
     const baseTarget = new Map();
     const baseRadiusByModel = new Map();
     const apAxisByModel = new Map();
-    const MAX_CAMERA_RADIUS_FACTOR = 3.2;
+    const MAX_CAMERA_RADIUS_FACTOR = 1;
 
     function chooseApAxisForViewer(mv) {
       let dims = null;
@@ -876,22 +876,6 @@
           setSelectedAnnoBySlot(a.slotName);
           focusHotspot(a.slotName);
         });
-
-        btn.addEventListener('wheel', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const ev = new WheelEvent('wheel', {
-            deltaX: e.deltaX,
-            deltaY: e.deltaY,
-            deltaZ: e.deltaZ,
-            deltaMode: e.deltaMode,
-            clientX: e.clientX,
-            clientY: e.clientY,
-            bubbles: true,
-            cancelable: true
-          });
-          activeMv.dispatchEvent(ev);
-        }, { passive: false });
 
         mv.appendChild(btn);
       }
