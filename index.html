@@ -1003,21 +1003,22 @@
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
 
-      const dir = Math.sign(ev.deltaY);
-      if (dir < 0) {
-        if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
+      // Scroll up (deltaY < 0) increases the step toward 5.
+      if (ev.deltaY < 0) {
+        if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
           ev.preventDefault();
           return;
         }
-        wheelZoomStep -= 1;
+        wheelZoomStep += 1;
         return;
       }
 
-      if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
+      // Scroll down (deltaY > 0) decreases the step toward 0.
+      if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
         ev.preventDefault();
         return;
       }
-      wheelZoomStep += 1;
+      wheelZoomStep -= 1;
     }
 
     function updateForcedVisible(mv) {
