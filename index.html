@@ -877,22 +877,6 @@
           focusHotspot(a.slotName);
         });
 
-        btn.addEventListener('wheel', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const ev = new WheelEvent('wheel', {
-            deltaX: e.deltaX,
-            deltaY: e.deltaY,
-            deltaZ: e.deltaZ,
-            deltaMode: e.deltaMode,
-            clientX: e.clientX,
-            clientY: e.clientY,
-            bubbles: true,
-            cancelable: true
-          });
-          activeMv.dispatchEvent(ev);
-        }, { passive: false });
-
         mv.appendChild(btn);
       }
       updateSelectedHotspotVisual();
@@ -1188,18 +1172,6 @@
       "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
       "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
     };
-    const FOCUS_TARGET_BY_ANNOTATION = {
-      "05_Superficial_Arcuate_Annotated": {
-        "superficialaf001": { ap: 60, si: 0 }
-      },
-      "06_Insula_Annotated": {
-        "anteriorlimsulc": { ap: 60, si: -20 },
-        "inferiorlimsulc": { si: -30 }
-      }
-    };
-    function normalizeAnchorName(s) {
-      return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    }
 
     function animateCamera(mv, from, to) {
       const prev = focusAnim.get(mv);
@@ -1284,9 +1256,6 @@
       const u = (apKey === 'x') ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,0,1);
       const v = new THREE.Vector3(0,1,0);
       const w = u.clone().cross(v).normalize();
-      const ann = (ANNOTATIONS[currentShownId] || []).find(a => a.slotName === slotName) || null;
-      const anchorKey = normalizeAnchorName(ann?.anchor);
-      const targetCoord = FOCUS_TARGET_BY_ANNOTATION[currentShownId]?.[anchorKey] || null;
 
       const prof = FOCUS_PROFILE_BY_MODEL[currentShownId] || FOCUS_PROFILE_DEFAULT;
 
@@ -1311,10 +1280,6 @@
 
       xp = apMid + xrel;
       yp = siMid + yrel;
-      if (annFocus) {
-        if (Number.isFinite(annFocus.ap)) xp = annFocus.ap;
-        if (Number.isFinite(annFocus.si)) yp = annFocus.si;
-      }
 
       const Cstar = C0.clone()
         .add(u.clone().multiplyScalar(xp))
@@ -1340,15 +1305,10 @@
       const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
       const off = camPos1.clone().sub(P);
       const o1 = orbitFromOffset(off);
-      const target1 = targetCoord
-        ? C0.clone()
-            .add(u.clone().multiplyScalar(targetCoord.ap || 0))
-            .add(v.clone().multiplyScalar(targetCoord.si || 0))
-        : P.clone();
 
       animateCamera(activeMv,
         { theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x, target0.y, target0.z) },
-        { theta: o1.theta, phi: o1.phi, radius: r1, target: target1 }
+        { theta: o1.theta, phi: o1.phi, radius: r1, target: P.clone() }
       );
     }
 
