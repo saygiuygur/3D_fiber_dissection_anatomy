@@ -996,18 +996,26 @@
     }
 
     const WHEEL_ZOOM_SCALE = 0.001;
-    const WHEEL_ZOOM_SLOW_AT = 0.40;
+    const WHEEL_ZOOM_SLOW_AT = 0.30;
     const WHEEL_ZOOM_MIN_SPEED = 0.01;
 
-    function gradualZoomSpeed(radius, baseRadius) {
+    function gradualZoomSpeed(radius, baseRadius, deltaY) {
       if (!Number.isFinite(radius) || !Number.isFinite(baseRadius) || baseRadius <= 0) return 1;
       const normalized = radius / baseRadius;
       if (normalized <= WHEEL_ZOOM_SLOW_AT) return WHEEL_ZOOM_MIN_SPEED;
-      if (normalized >= 1) return 1;
 
-      const t = (normalized - WHEEL_ZOOM_SLOW_AT) / (1 - WHEEL_ZOOM_SLOW_AT);
+      const t = Math.max(0, Math.min(1, (normalized - WHEEL_ZOOM_SLOW_AT) / (1 - WHEEL_ZOOM_SLOW_AT)));
       const eased = t * t * (3 - 2 * t);
-      return WHEEL_ZOOM_MIN_SPEED + (1 - WHEEL_ZOOM_MIN_SPEED) * eased;
+      const inRangeSpeed = WHEEL_ZOOM_MIN_SPEED + (1 - WHEEL_ZOOM_MIN_SPEED) * eased;
+
+      if (deltaY < 0) {
+        return (normalized >= 1) ? 1 : inRangeSpeed;
+      }
+
+      if (normalized <= 1) return inRangeSpeed;
+
+      const extra = Math.log1p(normalized - 1);
+      return 1 + 0.35 * extra;
     }
 
     function handleGradualWheelZoom(mv, ev) {
@@ -1018,7 +1026,7 @@
       if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
 
       const baseRadius = baseRadiusByModel.get(currentShownId) || orbit.radius;
-      const speed = gradualZoomSpeed(orbit.radius, baseRadius);
+      const speed = gradualZoomSpeed(orbit.radius, baseRadius, ev.deltaY);
       const nextRadius = Math.max(0.01, orbit.radius * Math.exp(ev.deltaY * WHEEL_ZOOM_SCALE * speed));
 
       ev.preventDefault();
