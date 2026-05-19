@@ -754,7 +754,7 @@
 
     for (const mv of [mvA, mvB]) {
       mv.addEventListener('wheel', (e) => {
-        handleWheelStepBound(mv, e);
+        handleFixedStepWheelZoom(mv, e);
         scheduleSettledCarrySnapshotManual();
       }, { passive: false, capture: true });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
@@ -995,59 +995,28 @@
       );
     }
 
-    const WHEEL_ZOOM_MIN_STEP = 0;
-    const WHEEL_ZOOM_MAX_STEP = 5;
-    const WHEEL_DELTA_CAP_PIXEL = 60;
-    const WHEEL_DELTA_CAP_LINE = 3;
-    const WHEEL_DELTA_CAP_PAGE = 1;
+    const WHEEL_STEP_DELTA_PIXEL = 40;
     const nativeWheelPassThrough = new WeakSet();
-    let wheelZoomStep = 0;
 
-    function capWheelDelta(deltaY, deltaMode) {
-      const cap = (deltaMode === 1) ? WHEEL_DELTA_CAP_LINE
-                : (deltaMode === 2) ? WHEEL_DELTA_CAP_PAGE
-                : WHEEL_DELTA_CAP_PIXEL;
-      return Math.max(-cap, Math.min(cap, deltaY));
-    }
-
-    function handleWheelStepBound(mv, ev) {
+    function handleFixedStepWheelZoom(mv, ev) {
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
-
       if (nativeWheelPassThrough.has(mv)) return;
 
-      // Scroll up (deltaY < 0) increases the step toward 5.
-      if (ev.deltaY < 0) {
-        if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          ev.stopImmediatePropagation();
-          return;
-        }
-        wheelZoomStep += 1;
-      } else {
-        // Scroll down (deltaY > 0) decreases the step toward 0.
-        if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          ev.stopImmediatePropagation();
-          return;
-        }
-        wheelZoomStep -= 1;
-      }
+      const dir = Math.sign(ev.deltaY);
+      if (dir === 0) return;
 
       ev.preventDefault();
       ev.stopPropagation();
       ev.stopImmediatePropagation();
 
-      const dy = capWheelDelta(ev.deltaY, ev.deltaMode);
       nativeWheelPassThrough.add(mv);
       try {
         mv.dispatchEvent(new WheelEvent('wheel', {
-          deltaX: ev.deltaX,
-          deltaY: dy,
-          deltaZ: ev.deltaZ,
-          deltaMode: ev.deltaMode,
+          deltaX: 0,
+          deltaY: dir * WHEEL_STEP_DELTA_PIXEL,
+          deltaZ: 0,
+          deltaMode: 0,
           clientX: ev.clientX,
           clientY: ev.clientY,
           ctrlKey: ev.ctrlKey,
