@@ -233,7 +233,7 @@
       </div>
 
       <div class="small">
-        Bottom override: if camera Y &lt; baseCenter Y → show 5 closest hotspots.
+        Select a model, then use annotations to focus anatomical structures.
       </div>
     </div>
 
@@ -247,9 +247,11 @@
       </div>
 
       <model-viewer id="mvA" class="viewer shownViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
 
       <model-viewer id="mvPrime" class="viewer hiddenViewer"
         interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
@@ -645,8 +647,7 @@
             chunks.push(value);
             received += value.byteLength;
 
-            st.progressText = total ? `${Math.floor((received / total) * 100)}%`
-                                    : `${(received / (1024*1024)).toFixed(1)} MB`;
+            st.progressText = total ? `${Math.floor((received / total) * 100)}%` : "";
             refreshMeta(modelId);
           }
 
@@ -719,6 +720,7 @@
     let latestCarryCam = null;
     let savingEnabled = true;
     let settleRaf = 0;
+    let freezeCarryFromCameraChange = false;
 
     function cloneCarry(cam) {
       if (!cam) return null;
@@ -740,12 +742,24 @@
       });
     }
 
-    // ✅ FIX: add camera-change so manual drags always update carry snapshot
+    function scheduleSettledCarrySnapshotManual() {
+      freezeCarryFromCameraChange = false;
+      scheduleSettledCarrySnapshot();
+    }
+
+    function scheduleSettledCarrySnapshotCameraChange() {
+      if (freezeCarryFromCameraChange) return;
+      scheduleSettledCarrySnapshot();
+    }
+
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshot, { passive: true });
-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshot, { passive: true });
+      mv.addEventListener('wheel', (e) => {
+        handleFixedStepWheelZoom(mv, e);
+        scheduleSettledCarrySnapshotManual();
+      }, { passive: false, capture: true });
+      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
     }
 
     function getMvScene(mv) {
@@ -755,7 +769,9 @@
 
     const baseCenter = new Map();
     const baseTarget = new Map();
+    const baseRadiusByModel = new Map();
     const apAxisByModel = new Map();
+    const MAX_CAMERA_RADIUS_FACTOR = 1;
 
     function chooseApAxisForViewer(mv) {
       let dims = null;
@@ -770,13 +786,24 @@
     function captureAutoFrameBase(mv, modelId) {
       const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
       const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
+      const o = mv.getCameraOrbit?.() || null;
 
       if (!GLOBAL_BASE_CENTER) GLOBAL_BASE_CENTER = new THREE.Vector3(c.x, c.y, c.z);
       if (!GLOBAL_BASE_TARGET) GLOBAL_BASE_TARGET = new THREE.Vector3(t.x, t.y, t.z);
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
+      if (!baseRadiusByModel.has(modelId) && o && Number.isFinite(o.radius)) {
+        baseRadiusByModel.set(modelId, o.radius);
+      }
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+    }
+
+    function applyMaxCameraOrbit(mv, modelId) {
+      const base = baseRadiusByModel.get(modelId);
+      if (!Number.isFinite(base) || base <= 0) return;
+      const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
+      mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
     }
 
     const EPS = 1e-4;
@@ -813,9 +840,6 @@
     function applyCamWithDelta(mv, modelId, cam) {
       if (!cam) return;
 
-      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
-      mv.fieldOfView = `${cam.fov}deg`;
-
       const bt = baseTarget.get(modelId);
       if (bt) {
         const tx = bt.x + cam.deltaTarget.x;
@@ -823,6 +847,9 @@
         const tz = bt.z + cam.deltaTarget.z;
         mv.cameraTarget = `${tx}m ${ty}m ${tz}m`;
       }
+
+      mv.fieldOfView = `${cam.fov}deg`;
+      mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
 
       try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
@@ -976,6 +1003,34 @@
       );
     }
 
+    const WHEEL_ZOOM_MIN_STEP = 0;
+    const WHEEL_ZOOM_MAX_STEP = 5;
+    let wheelZoomStep = 0;
+
+    function handleFixedStepWheelZoom(mv, ev) {
+      if (!mv.classList.contains('shownViewer')) return;
+      if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
+
+      if (ev.deltaY < 0) {
+        if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.stopImmediatePropagation();
+          return;
+        }
+        wheelZoomStep += 1;
+        return;
+      }
+
+      if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+        return;
+      }
+      wheelZoomStep -= 1;
+    }
+
     function updateForcedVisible(mv) {
       const st = occState.get(mv);
       if (!st || !st.pointMap) return;
@@ -1104,8 +1159,9 @@
       ls.rafId = requestAnimationFrame(tick);
     }
 
-    // Focus profiles (updated: 10 & 11 now -20)
+    // Focus profiles
     const focusAnim = new WeakMap();
+    const focusCarryCam = new WeakMap();
     const FOCUS_PROFILE_DEFAULT = { apMin: -35, apMax: 35, siMin: -10, siMax: 10, medialShift: 0 };
 
     const FOCUS_PROFILE_BY_MODEL = {
@@ -1113,8 +1169,8 @@
       "05_Superficial_Arcuate_Annotated": { apMin: -50, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "06_Insula_Annotated": { apMin: -35, apMax: 35, siMin: -20, siMax: 0, medialShift: -10 },
       "09_Putamen_External_Capsule_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: 0 },
-      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },  // <-- changed
-      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }              // <-- changed
+      "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
+      "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
     };
     const FOCUS_TARGET_BY_ANNOTATION = {
       "05_Superficial_Arcuate_Annotated": {
@@ -1133,6 +1189,17 @@
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
       const token = (prev?.token ?? 0) + 1;
+
+      const bt = baseTarget.get(currentShownId);
+      const f = mv.getFieldOfView?.();
+      if (bt && typeof f === "number") {
+        focusCarryCam.set(mv, {
+          orbit: { theta: to.theta, phi: to.phi, radius: to.radius },
+          deltaTarget: { x: to.target.x - bt.x, y: to.target.y - bt.y, z: to.target.z - bt.z },
+          fov: f
+        });
+      }
+
       focusAnim.set(mv, { rafId: 0, token });
 
       const duration = 560;
@@ -1167,7 +1234,7 @@
             if (mv === activeMv && savingEnabled) {
               const camNow = readCamWithDelta(activeMv);
               if (camNow) latestCarryCam = cloneCarry(camNow);
-              scheduleSettledCarrySnapshot();
+              freezeCarryFromCameraChange = true;
             }
           } catch (_) {}
 
@@ -1179,6 +1246,12 @@
       const cur = focusAnim.get(mv);
       cur.rafId = requestAnimationFrame(tick);
       focusAnim.set(mv, cur);
+    }
+
+    for (const mv of [mvA, mvB]) {
+      mv.addEventListener('wheel', () => focusCarryCam.delete(mv), { passive: true });
+      mv.addEventListener('pointerdown', () => focusCarryCam.delete(mv), { passive: true });
+      mv.addEventListener('touchstart', () => focusCarryCam.delete(mv), { passive: true });
     }
 
     function focusHotspot(slotName){
@@ -1374,7 +1447,7 @@
     async function showModel(modelId) {
       const token = ++swapToken;
 
-      const camForThisSwap = cloneCarry(latestCarryCam) || readCamWithDelta(activeMv);
+      const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
       savingEnabled = false;
 
       selectedId = modelId;
@@ -1395,12 +1468,18 @@
         updateSelectedHotspotVisual();
 
         savingEnabled = true;
-        scheduleSettledCarrySnapshot();
+        if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
       };
 
       const applyAfterLoad = () => {
         captureAutoFrameBase(idleMv, modelId);
+        applyMaxCameraOrbit(idleMv, modelId);
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
+        if (camForThisSwap) {
+          latestCarryCam = cloneCarry(camForThisSwap);
+          freezeCarryFromCameraChange = true;
+        }
+        focusCarryCam.delete(idleMv);
       };
 
       const finalizeAfterBarrier = () => {
