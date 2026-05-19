@@ -997,12 +997,15 @@
 
     const WHEEL_ZOOM_MIN_STEP = 0;
     const WHEEL_ZOOM_MAX_STEP = 5;
-    const WHEEL_RADIUS_STEP = 40;
+    const WHEEL_NORMALIZED_DELTA = 48;
+    const nativeWheelPassThrough = new WeakSet();
     let wheelZoomStep = 0;
 
     function handleFixedStepWheelZoom(mv, ev) {
       if (!mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
+
+      if (nativeWheelPassThrough.has(mv)) return;
 
       if (ev.deltaY < 0) {
         if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
@@ -1022,18 +1025,30 @@
         wheelZoomStep -= 1;
       }
 
-      const orbit = mv.getCameraOrbit?.();
-      if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
-
-      const delta = ev.deltaY < 0 ? -WHEEL_RADIUS_STEP : WHEEL_RADIUS_STEP;
-      const nextRadius = Math.max(0.01, orbit.radius + delta);
-
       ev.preventDefault();
       ev.stopPropagation();
       ev.stopImmediatePropagation();
 
-      mv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${nextRadius}m`;
-      try { mv.jumpCameraToGoal?.(); } catch (_) {}
+      nativeWheelPassThrough.add(mv);
+      try {
+        mv.dispatchEvent(new WheelEvent('wheel', {
+          deltaX: 0,
+          deltaY: Math.sign(ev.deltaY) * WHEEL_NORMALIZED_DELTA,
+          deltaZ: 0,
+          deltaMode: 0,
+          clientX: ev.clientX,
+          clientY: ev.clientY,
+          ctrlKey: ev.ctrlKey,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          metaKey: ev.metaKey,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        }));
+      } finally {
+        nativeWheelPassThrough.delete(mv);
+      }
     }
 
     function updateForcedVisible(mv) {
