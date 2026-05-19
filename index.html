@@ -754,7 +754,7 @@
 
     for (const mv of [mvA, mvB]) {
       mv.addEventListener('wheel', (e) => {
-        handleGradualWheelZoom(mv, e);
+        handleWheelStepBound(mv, e);
         scheduleSettledCarrySnapshotManual();
       }, { passive: false });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
@@ -995,61 +995,29 @@
       );
     }
 
-    const WHEEL_ZOOM_SLOW_AT = 0.30;
-    const WHEEL_ZOOM_MIN_SPEED = 0.01;
-    const WHEEL_ZOOM_OUT_BOOST = 0.35;
-    const nativeWheelPassThrough = new WeakSet();
+    const WHEEL_ZOOM_MIN_STEP = 0;
+    const WHEEL_ZOOM_MAX_STEP = 5;
+    let wheelZoomStep = 0;
 
-    function gradualZoomSpeed(radius, baseRadius, deltaY) {
-      if (!Number.isFinite(radius) || !Number.isFinite(baseRadius) || baseRadius <= 0) return 1;
-      const normalized = radius / baseRadius;
-      if (normalized <= WHEEL_ZOOM_SLOW_AT) return WHEEL_ZOOM_MIN_SPEED;
-
-      const t = Math.max(0, Math.min(1, (normalized - WHEEL_ZOOM_SLOW_AT) / (1 - WHEEL_ZOOM_SLOW_AT)));
-      const eased = t * t * (3 - 2 * t);
-      const inRangeSpeed = WHEEL_ZOOM_MIN_SPEED + (1 - WHEEL_ZOOM_MIN_SPEED) * eased;
-
-      if (deltaY < 0) return (normalized >= 1) ? 1 : inRangeSpeed;
-      if (normalized <= 1) return inRangeSpeed;
-
-      const extra = Math.log1p(normalized - 1);
-      return 1 + WHEEL_ZOOM_OUT_BOOST * extra;
-    }
-
-    function handleGradualWheelZoom(mv, ev) {
+    function handleWheelStepBound(mv, ev) {
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
 
-      if (nativeWheelPassThrough.has(mv)) return;
-
-      const orbit = mv.getCameraOrbit?.();
-      if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
-
-      const baseRadius = baseRadiusByModel.get(currentShownId) || orbit.radius;
-      const speed = gradualZoomSpeed(orbit.radius, baseRadius, ev.deltaY);
-      if (!Number.isFinite(speed) || Math.abs(speed - 1) < 1e-3) return;
-
-      ev.preventDefault();
-      nativeWheelPassThrough.add(mv);
-      try {
-        mv.dispatchEvent(new WheelEvent('wheel', {
-          deltaX: ev.deltaX * speed,
-          deltaY: ev.deltaY * speed,
-          deltaZ: ev.deltaZ * speed,
-          deltaMode: ev.deltaMode,
-          clientX: ev.clientX,
-          clientY: ev.clientY,
-          ctrlKey: ev.ctrlKey,
-          shiftKey: ev.shiftKey,
-          altKey: ev.altKey,
-          metaKey: ev.metaKey,
-          bubbles: true,
-          cancelable: true,
-          composed: true
-        }));
-      } finally {
-        nativeWheelPassThrough.delete(mv);
+      const dir = Math.sign(ev.deltaY);
+      if (dir < 0) {
+        if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
+          ev.preventDefault();
+          return;
+        }
+        wheelZoomStep -= 1;
+        return;
       }
+
+      if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
+        ev.preventDefault();
+        return;
+      }
+      wheelZoomStep += 1;
     }
 
     function updateForcedVisible(mv) {
