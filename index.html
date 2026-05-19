@@ -771,6 +771,7 @@
     const baseTarget = new Map();
     const baseRadiusByModel = new Map();
     const apAxisByModel = new Map();
+    const MAX_CAMERA_RADIUS_FACTOR = 3.2;
 
     function chooseApAxisForViewer(mv) {
       let dims = null;
@@ -785,17 +786,24 @@
     function captureAutoFrameBase(mv, modelId) {
       const c = mv.getBoundingBoxCenter?.() || {x:0,y:0,z:0};
       const t = mv.getCameraTarget?.() || {x:0,y:0,z:0};
+      const o = mv.getCameraOrbit?.() || null;
 
       if (!GLOBAL_BASE_CENTER) GLOBAL_BASE_CENTER = new THREE.Vector3(c.x, c.y, c.z);
       if (!GLOBAL_BASE_TARGET) GLOBAL_BASE_TARGET = new THREE.Vector3(t.x, t.y, t.z);
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
-      if (!baseRadiusByModel.has(modelId)) {
-        const o = mv.getCameraOrbit?.();
-        if (o && Number.isFinite(o.radius) && o.radius > 0) baseRadiusByModel.set(modelId, o.radius);
+      if (!baseRadiusByModel.has(modelId) && o && Number.isFinite(o.radius)) {
+        baseRadiusByModel.set(modelId, o.radius);
       }
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
+    }
+
+    function applyMaxCameraOrbit(mv, modelId) {
+      const base = baseRadiusByModel.get(modelId);
+      if (!Number.isFinite(base) || base <= 0) return;
+      const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
+      mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
     }
 
     const EPS = 1e-4;
@@ -1441,6 +1449,7 @@
 
       const applyAfterLoad = () => {
         captureAutoFrameBase(idleMv, modelId);
+        applyMaxCameraOrbit(idleMv, modelId);
         applyCamWithDelta(idleMv, modelId, camForThisSwap);
         if (camForThisSwap) {
           latestCarryCam = cloneCarry(camForThisSwap);
