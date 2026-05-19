@@ -1172,7 +1172,19 @@
       "10_Lenticulostriate_Perforators_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 },
       "11_Anterior_Comissure_Annotated": { apMin: -35, apMax: 35, siMin: -40, siMax: -10, medialShift: -20 }
     };
-
+ const FOCUS_TARGET_BY_ANNOTATION = {
+      "05_Superficial_Arcuate_Annotated": {
+        "superficialaf001": { ap: 60, si: 0 }
+      },
+      "06_Insula_Annotated": {
+        "anteriorlimsulc": { ap: 60, si: -20 },
+        "inferiorlimsulc": { si: -30 }
+      }
+    };
+    function normalizeAnchorName(s) {
+      return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+    
     function animateCamera(mv, from, to) {
       const prev = focusAnim.get(mv);
       if (prev?.rafId) cancelAnimationFrame(prev.rafId);
