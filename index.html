@@ -995,41 +995,24 @@
       );
     }
 
-    const WHEEL_STEP_DELTA_PIXEL = 40;
-    const nativeWheelPassThrough = new WeakSet();
+    const WHEEL_ZOOM_IN_FACTOR = 0.92;
+    const WHEEL_ZOOM_OUT_FACTOR = 1 / WHEEL_ZOOM_IN_FACTOR;
 
     function handleFixedStepWheelZoom(mv, ev) {
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
-      if (nativeWheelPassThrough.has(mv)) return;
 
-      const dir = Math.sign(ev.deltaY);
-      if (dir === 0) return;
+      const orbit = mv.getCameraOrbit?.();
+      if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
+
+      const factor = ev.deltaY < 0 ? WHEEL_ZOOM_IN_FACTOR : WHEEL_ZOOM_OUT_FACTOR;
+      const nextRadius = Math.max(0.01, orbit.radius * factor);
 
       ev.preventDefault();
       ev.stopPropagation();
       ev.stopImmediatePropagation();
 
-      nativeWheelPassThrough.add(mv);
-      try {
-        mv.dispatchEvent(new WheelEvent('wheel', {
-          deltaX: 0,
-          deltaY: dir * WHEEL_STEP_DELTA_PIXEL,
-          deltaZ: 0,
-          deltaMode: 0,
-          clientX: ev.clientX,
-          clientY: ev.clientY,
-          ctrlKey: ev.ctrlKey,
-          shiftKey: ev.shiftKey,
-          altKey: ev.altKey,
-          metaKey: ev.metaKey,
-          bubbles: true,
-          cancelable: true,
-          composed: true
-        }));
-      } finally {
-        nativeWheelPassThrough.delete(mv);
-      }
+      mv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${nextRadius}m`;
     }
 
     function updateForcedVisible(mv) {
