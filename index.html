@@ -997,8 +997,7 @@
 
     const WHEEL_ZOOM_MIN_STEP = 0;
     const WHEEL_ZOOM_MAX_STEP = 5;
-    const WHEEL_ZOOM_IN_FACTOR = 0.75;
-    const WHEEL_ZOOM_OUT_FACTOR = 1 + (1 - WHEEL_ZOOM_IN_FACTOR);
+    const WHEEL_RADIUS_STEP = 0.13;
     let wheelZoomStep = 0;
 
     function handleFixedStepWheelZoom(mv, ev) {
@@ -1026,8 +1025,8 @@
       const orbit = mv.getCameraOrbit?.();
       if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
 
-      const factor = ev.deltaY < 0 ? WHEEL_ZOOM_IN_FACTOR : WHEEL_ZOOM_OUT_FACTOR;
-      const nextRadius = Math.max(0.01, orbit.radius * factor);
+      const delta = ev.deltaY < 0 ? -WHEEL_RADIUS_STEP : WHEEL_RADIUS_STEP;
+      const nextRadius = Math.max(0.01, orbit.radius + delta);
 
       ev.preventDefault();
       ev.stopPropagation();
