@@ -995,9 +995,10 @@
       );
     }
 
-    const WHEEL_ZOOM_SCALE = 0.001;
     const WHEEL_ZOOM_SLOW_AT = 0.30;
     const WHEEL_ZOOM_MIN_SPEED = 0.01;
+    const WHEEL_ZOOM_OUT_BOOST = 0.35;
+    const nativeWheelPassThrough = new WeakSet();
 
     function gradualZoomSpeed(radius, baseRadius, deltaY) {
       if (!Number.isFinite(radius) || !Number.isFinite(baseRadius) || baseRadius <= 0) return 1;
@@ -1008,30 +1009,47 @@
       const eased = t * t * (3 - 2 * t);
       const inRangeSpeed = WHEEL_ZOOM_MIN_SPEED + (1 - WHEEL_ZOOM_MIN_SPEED) * eased;
 
-      if (deltaY < 0) {
-        return (normalized >= 1) ? 1 : inRangeSpeed;
-      }
-
+      if (deltaY < 0) return (normalized >= 1) ? 1 : inRangeSpeed;
       if (normalized <= 1) return inRangeSpeed;
 
       const extra = Math.log1p(normalized - 1);
-      return 1 + 0.35 * extra;
+      return 1 + WHEEL_ZOOM_OUT_BOOST * extra;
     }
 
     function handleGradualWheelZoom(mv, ev) {
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
-      if (!ev) return;
+      if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
+
+      if (nativeWheelPassThrough.has(mv)) return;
 
       const orbit = mv.getCameraOrbit?.();
       if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
 
       const baseRadius = baseRadiusByModel.get(currentShownId) || orbit.radius;
       const speed = gradualZoomSpeed(orbit.radius, baseRadius, ev.deltaY);
-      const nextRadius = Math.max(0.01, orbit.radius * Math.exp(ev.deltaY * WHEEL_ZOOM_SCALE * speed));
+      if (!Number.isFinite(speed) || Math.abs(speed - 1) < 1e-3) return;
 
       ev.preventDefault();
-      mv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${nextRadius}m`;
-      try { mv.jumpCameraToGoal?.(); } catch (_) {}
+      nativeWheelPassThrough.add(mv);
+      try {
+        mv.dispatchEvent(new WheelEvent('wheel', {
+          deltaX: ev.deltaX * speed,
+          deltaY: ev.deltaY * speed,
+          deltaZ: ev.deltaZ * speed,
+          deltaMode: ev.deltaMode,
+          clientX: ev.clientX,
+          clientY: ev.clientY,
+          ctrlKey: ev.ctrlKey,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          metaKey: ev.metaKey,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        }));
+      } finally {
+        nativeWheelPassThrough.delete(mv);
+      }
     }
 
     function updateForcedVisible(mv) {
