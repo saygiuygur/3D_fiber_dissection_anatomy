@@ -753,7 +753,10 @@
     }
 
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', scheduleSettledCarrySnapshotManual, { passive: true });
+      mv.addEventListener('wheel', (e) => {
+        guardUserZoomIntoShell(mv, e);
+        scheduleSettledCarrySnapshotManual();
+      }, { passive: false });
       mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
       mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
       mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
@@ -985,6 +988,62 @@
         t.y + r * Math.cos(phi),
         t.z + r * sinPhi * Math.cos(theta)
       );
+    }
+
+    const userZoomShellRaycasters = new WeakMap();
+
+    function getUserZoomShellRaycaster(mv) {
+      let raycaster = userZoomShellRaycasters.get(mv);
+      if (!raycaster) {
+        raycaster = new THREE.Raycaster();
+        userZoomShellRaycasters.set(mv, raycaster);
+      }
+      return raycaster;
+    }
+
+    function shellDistanceFromTargetTowardCamera(mv, target, camPos) {
+      const st = occState.get(mv);
+      if (!st || !st.occluders) return null;
+
+      const dir = camPos.clone().sub(target);
+      const dist = dir.length();
+      if (dist < EPS) return null;
+
+      dir.normalize();
+      const raycaster = getUserZoomShellRaycaster(mv);
+      raycaster.set(target, dir);
+      raycaster.near = EPS;
+      raycaster.far = dist + EPS;
+
+      const hits = raycaster.intersectObjects(st.occluders, true);
+      if (!hits.length) return null;
+
+      return hits[hits.length - 1].distance;
+    }
+
+    function requestedWheelRadius(currentRadius, deltaY) {
+      return currentRadius * Math.exp(deltaY * 0.001);
+    }
+
+    function guardUserZoomIntoShell(mv, ev) {
+      if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
+      if (!ev || ev.deltaY >= 0) return;
+
+      const orbit = mv.getCameraOrbit?.();
+      const targetRaw = mv.getCameraTarget?.();
+      if (!orbit || !targetRaw) return;
+
+      const target = new THREE.Vector3(targetRaw.x, targetRaw.y, targetRaw.z);
+      const camPos = getCameraPositionHotspotSpace(mv);
+      if (!camPos) return;
+
+      const shellDist = shellDistanceFromTargetTowardCamera(mv, target, camPos);
+      if (!Number.isFinite(shellDist)) return;
+
+      const nextRadius = Math.max(shellDist, requestedWheelRadius(orbit.radius, ev.deltaY));
+      ev.preventDefault();
+      mv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${nextRadius}m`;
+      try { mv.jumpCameraToGoal?.(); } catch (_) {}
     }
 
     function updateForcedVisible(mv) {
