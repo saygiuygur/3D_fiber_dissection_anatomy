@@ -995,12 +995,33 @@
       );
     }
 
-    const WHEEL_ZOOM_IN_FACTOR = 0.92;
+    const WHEEL_ZOOM_MIN_STEP = 0;
+    const WHEEL_ZOOM_MAX_STEP = 5;
+    const WHEEL_ZOOM_IN_FACTOR = 0.84;
     const WHEEL_ZOOM_OUT_FACTOR = 1 / WHEEL_ZOOM_IN_FACTOR;
+    let wheelZoomStep = 0;
 
     function handleFixedStepWheelZoom(mv, ev) {
       if (mv !== activeMv || !mv.classList.contains('shownViewer')) return;
       if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
+
+      if (ev.deltaY < 0) {
+        if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.stopImmediatePropagation();
+          return;
+        }
+        wheelZoomStep += 1;
+      } else {
+        if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.stopImmediatePropagation();
+          return;
+        }
+        wheelZoomStep -= 1;
+      }
 
       const orbit = mv.getCameraOrbit?.();
       if (!orbit || !Number.isFinite(orbit.radius) || orbit.radius <= 0) return;
