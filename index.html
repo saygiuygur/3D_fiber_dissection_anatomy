@@ -247,9 +247,11 @@
       </div>
 
       <model-viewer id="mvA" class="viewer shownViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
 
       <model-viewer id="mvPrime" class="viewer hiddenViewer"
         interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
@@ -767,6 +769,7 @@
 
     const baseCenter = new Map();
     const baseTarget = new Map();
+    const baseRadiusByModel = new Map();
     const apAxisByModel = new Map();
 
     function chooseApAxisForViewer(mv) {
@@ -788,6 +791,10 @@
 
       if (!baseCenter.has(modelId)) baseCenter.set(modelId, GLOBAL_BASE_CENTER.clone());
       if (!baseTarget.has(modelId)) baseTarget.set(modelId, GLOBAL_BASE_TARGET.clone());
+      if (!baseRadiusByModel.has(modelId)) {
+        const o = mv.getCameraOrbit?.();
+        if (o && Number.isFinite(o.radius) && o.radius > 0) baseRadiusByModel.set(modelId, o.radius);
+      }
       if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewer(mv));
     }
 
