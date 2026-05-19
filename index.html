@@ -247,9 +247,11 @@
       </div>
 
       <model-viewer id="mvA" class="viewer shownViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
       <model-viewer id="mvB" class="viewer hiddenViewer"
-        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"></model-viewer>
+        camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
+        min-camera-orbit="auto auto 0m"></model-viewer>
 
       <model-viewer id="mvPrime" class="viewer hiddenViewer"
         interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
@@ -1340,7 +1342,7 @@
       const o1 = orbitFromOffset(off);
       animateCamera(activeMv,
         { theta: orbit0.theta, phi: orbit0.phi, radius: r0, target: new THREE.Vector3(target0.x, target0.y, target0.z) },
-        { theta: o1.theta, phi: o1.phi, radius: r1, target: P.clone() }
+        { theta: o1.theta, phi: o1.phi, radius: r1, target: target1 }
       );
     }
 
