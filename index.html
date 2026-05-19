@@ -998,7 +998,7 @@
     const WHEEL_ZOOM_MIN_STEP = 0;
     const WHEEL_ZOOM_MAX_STEP = 5;
     const WHEEL_ZOOM_IN_FACTOR = 0.75;
-    const WHEEL_ZOOM_OUT_FACTOR = 1 / WHEEL_ZOOM_IN_FACTOR;
+    const WHEEL_ZOOM_OUT_FACTOR = 1 + (1 - WHEEL_ZOOM_IN_FACTOR);
     let wheelZoomStep = 0;
 
     function handleFixedStepWheelZoom(mv, ev) {
