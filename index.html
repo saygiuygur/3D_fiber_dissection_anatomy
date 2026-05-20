@@ -1261,6 +1261,8 @@
       const P = st.pointMap.get(slotName);
       if (!P) return;
 
+      wheelZoomStep = WHEEL_ZOOM_MAX_STEP;
+      
       const C0 = baseCenter.get(currentShownId);
       if (!C0) return;
 
