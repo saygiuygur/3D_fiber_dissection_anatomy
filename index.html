@@ -1017,7 +1017,30 @@ function cloneDtiObject(proto, dtiId) {
   const clone = proto.clone(true);
   return markAsDtiObject(clone, dtiId);
 }
+function getCurrentModelAutoShift(mv) {
+  if (!currentShownId) return new THREE.Vector3(0, 0, 0);
+  if (!baseCenter.has(currentShownId)) return new THREE.Vector3(0, 0, 0);
+  if (!baseTarget.has(currentShownId)) return new THREE.Vector3(0, 0, 0);
 
+  return computeShiftForModel(mv, currentShownId);
+}
+
+function applyDtiAutoShiftToViewer(mv) {
+  const mounted = getMountedDtiMap(mv);
+  if (!mounted.size) return;
+
+  const shift = getCurrentModelAutoShift(mv);
+
+  for (const obj of mounted.values()) {
+    obj.position.copy(shift);
+    obj.updateMatrixWorld?.(true);
+  }
+
+  const scene = getDtiSceneRoot(mv);
+  scene?.updateMatrixWorld?.(true);
+
+  try { mv.requestUpdate?.(); } catch (_) {}
+}
 function unmountAllDtiFromViewer(mv) {
   const mounted = getMountedDtiMap(mv);
 
@@ -1074,12 +1097,18 @@ async function refreshDtiSceneForActiveViewer() {
       const proto = await loadDtiPrototype(dti);
       if (token !== dtiRefreshToken || mv !== activeMv) return;
 
-      const obj = cloneDtiObject(proto, id);
-      scene.add(obj);
-      mounted.set(id, obj);
+     const obj = cloneDtiObject(proto, id);
 
-      scene.updateMatrixWorld?.(true);
-      setDtiStatus(id, "✓");
+// Apply the same model-viewer auto-shift used by annotations/occlusion.
+obj.position.copy(getCurrentModelAutoShift(mv));
+
+scene.add(obj);
+mounted.set(id, obj);
+
+applyDtiAutoShiftToViewer(mv);
+
+scene.updateMatrixWorld?.(true);
+setDtiStatus(id, "✓");
 
       try { mv.requestUpdate?.(); } catch (_) {}
     } catch (err) {
@@ -1093,8 +1122,10 @@ async function refreshDtiSceneForActiveViewer() {
     }
   }
 
-  scene.updateMatrixWorld?.(true);
-  try { mv.requestUpdate?.(); } catch (_) {}
+ applyDtiAutoShiftToViewer(mv);
+
+scene.updateMatrixWorld?.(true);
+try { mv.requestUpdate?.(); } catch (_) {}
 }
 
 function scheduleDtiRefreshAfterModelPrepared() {
@@ -1329,11 +1360,23 @@ function swapViewersNow() {
   mv.addEventListener('wheel', (e) => {
     handleFixedStepWheelZoom(mv, e);
     scheduleSettledCarrySnapshotManual();
+    applyDtiAutoShiftToViewer(mv);
   }, { passive: false, capture: true });
 
-  mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
-  mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
-  mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
+  mv.addEventListener('pointerup', () => {
+    scheduleSettledCarrySnapshotManual();
+    applyDtiAutoShiftToViewer(mv);
+  }, { passive: true });
+
+  mv.addEventListener('touchend', () => {
+    scheduleSettledCarrySnapshotManual();
+    applyDtiAutoShiftToViewer(mv);
+  }, { passive: true });
+
+  mv.addEventListener('camera-change', () => {
+    scheduleSettledCarrySnapshotCameraChange();
+    applyDtiAutoShiftToViewer(mv);
+  }, { passive: true });
 }
 
     function getMvScene(mv) {
