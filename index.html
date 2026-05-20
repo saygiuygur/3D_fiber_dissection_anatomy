@@ -1044,13 +1044,6 @@ function cloneDtiObject(proto, dtiId) {
   return markAsDtiObject(clone, dtiId);
 }
 
- const scene = getDtiSceneRoot(mv);
-const attachRoot = getDtiAttachRoot(mv);
-
-if (!scene || !attachRoot) {
-  requestAnimationFrame(refreshDtiSceneForActiveViewer);
-  return;
-}
 function unmountAllDtiFromViewer(mv) {
   const mounted = getMountedDtiMap(mv);
 
@@ -1068,8 +1061,9 @@ async function refreshDtiSceneForActiveViewer() {
   if (!mv || !mv.src) return;
 
   const scene = getDtiSceneRoot(mv);
+  const attachRoot = getDtiAttachRoot(mv);
 
-  if (!scene) {
+  if (!scene || !attachRoot) {
     requestAnimationFrame(refreshDtiSceneForActiveViewer);
     return;
   }
@@ -1091,7 +1085,7 @@ async function refreshDtiSceneForActiveViewer() {
     }
   }
 
-  // Add enabled DTI objects into the same scene as the active anatomy.
+  // Add enabled DTI objects into the same scene/root as the active anatomical model.
   for (const id of dtiEnabled) {
     if (mounted.has(id) && mounted.get(id).parent) {
       setDtiStatus(id, "✓");
@@ -1107,16 +1101,16 @@ async function refreshDtiSceneForActiveViewer() {
       const proto = await loadDtiPrototype(dti);
       if (token !== dtiRefreshToken || mv !== activeMv) return;
 
-     const obj = cloneDtiObject(proto, id);
+      const obj = cloneDtiObject(proto, id);
 
-// Do not apply computeShiftForModel or manual offset.
-// Attach DTI to the same anatomical root so it inherits the model-viewer transform.
-attachRoot.add(obj);
-mounted.set(id, obj);
+      // No manual offset and no computeShiftForModel here.
+      // The DTI object is attached to the same anatomical root.
+      attachRoot.add(obj);
+      mounted.set(id, obj);
 
-scene.updateMatrixWorld?.(true);
-setDtiStatus(id, "✓");
-      
+      scene.updateMatrixWorld?.(true);
+      setDtiStatus(id, "✓");
+
       try { mv.requestUpdate?.(); } catch (_) {}
     } catch (err) {
       console.warn("DTI model failed to load:", id, err);
@@ -1129,10 +1123,8 @@ setDtiStatus(id, "✓");
     }
   }
 
- applyDtiAutoShiftToViewer(mv);
-
-scene.updateMatrixWorld?.(true);
-try { mv.requestUpdate?.(); } catch (_) {}
+  scene.updateMatrixWorld?.(true);
+  try { mv.requestUpdate?.(); } catch (_) {}
 }
 
 function scheduleDtiRefreshAfterModelPrepared() {
