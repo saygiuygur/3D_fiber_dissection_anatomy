@@ -194,8 +194,19 @@
   font-size:12px;
   color:#666;
 }
-    .hiddenViewer { visibility: hidden; pointer-events: none; }
-    .shownViewer  { visibility: visible; pointer-events: auto; }
+  .hiddenViewer {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9 !important;
+}
+
+  .shownViewer {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 20 !important;
+}
 
     .hotspot{
       width: 14px;
@@ -1170,13 +1181,24 @@ function buildDtiListOnce() {
       }
     }
 
-    function swapViewersNow() {
-      activeMv.classList.remove('shownViewer');
-      activeMv.classList.add('hiddenViewer');
-      idleMv.classList.remove('hiddenViewer');
-      idleMv.classList.add('shownViewer');
-      const tmp = activeMv; activeMv = idleMv; idleMv = tmp;
-    }
+    function setMainViewerShown(mv, shown) {
+  mv.classList.toggle('shownViewer', shown);
+  mv.classList.toggle('hiddenViewer', !shown);
+
+  mv.style.visibility = shown ? 'visible' : 'hidden';
+  mv.style.opacity = shown ? '1' : '0';
+  mv.style.pointerEvents = shown ? 'auto' : 'none';
+  mv.style.zIndex = shown ? '20' : '9';
+}
+
+function swapViewersNow() {
+  setMainViewerShown(activeMv, false);
+  setMainViewerShown(idleMv, true);
+
+  const tmp = activeMv;
+  activeMv = idleMv;
+  idleMv = tmp;
+}
 
     // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
     let cameraReady = false;
@@ -2054,11 +2076,15 @@ async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
 
     // init
     buildListOnce();
-    buildDtiListOnce();
-    initBackgroundSelector();
-    initAnnotationsToggle();
-    refreshAnnoNavLabel();
-    updateSelectedHotspotVisual();
+buildDtiListOnce();
+
+setMainViewerShown(mvA, true);
+setMainViewerShown(mvB, false);
+
+initBackgroundSelector();
+initAnnotationsToggle();
+refreshAnnoNavLabel();
+updateSelectedHotspotVisual();
 
     showModel(selectedId).then(() => {
       resumeRequested = true;
