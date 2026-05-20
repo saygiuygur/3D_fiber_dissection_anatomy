@@ -318,26 +318,201 @@
     const MODEL10_NAMES = [ "CoronaRadiata","IFOF001","LenticulostriatePerforatorsM1","UF001" ];
     const MODEL11_NAMES = [ "AnteriorCommissure","CoronaRadiata001","GlobusPallidus","InternalCapsule" ];
 
-    function makeAnnotations(names) {
-      return names.map((name, i) => ({
-        slotName: `hotspot-${String(i + 1).padStart(2, '0')}`,
-        anchor: name,
-        title: name
-      }));
-    }
+    const MODEL_DISPLAY_NAMES = Object.freeze({
+  "01_Veselled_Annotated": "Cortical Vessels",
+  "02_Veselless_Annotated": "Cortical Gyri and Sulci",
+  "03_U_Fibers_Annotated": "Decortication",
+  "04_Superficial_SLF_Annotated": "Superior Longitudinal Fascicle",
+  "05_Superficial_Arcuate_Annotated": "Arcuate Fascicle",
+  "06_Insula_Annotated": "Insula",
+  "07_Extreme_Capsule_Annotated": "Extreme Capsule",
+  "09_Putamen_External_Capsule_Annotated": "External Capsule and Putamen",
+  "10_Lenticulostriate_Perforators_Annotated": "Lenticulostriate Branches of MCA",
+  "11_Anterior_Comissure_Annotated": "Internal Capsule, Globus Pallidus and Anterior Commissure",
+});
 
-    const ANNOTATIONS = {
-      "01_Veselled_Annotated": makeAnnotations(MODEL01_NAMES),
-      "02_Veselless_Annotated": makeAnnotations(MODEL02_NAMES),
-      "03_U_Fibers_Annotated": makeAnnotations(MODEL03_NAMES),
-      "04_Superficial_SLF_Annotated": makeAnnotations(MODEL04_NAMES),
-      "05_Superficial_Arcuate_Annotated": makeAnnotations(MODEL05_NAMES),
-      "06_Insula_Annotated": makeAnnotations(MODEL06_NAMES),
-      "07_Extreme_Capsule_Annotated": makeAnnotations(MODEL07_NAMES),
-      "09_Putamen_External_Capsule_Annotated": makeAnnotations(MODEL09_NAMES),
-      "10_Lenticulostriate_Perforators_Annotated": makeAnnotations(MODEL10_NAMES),
-      "11_Anterior_Comissure_Annotated": makeAnnotations(MODEL11_NAMES),
+const ANNOTATION_RULES = Object.freeze({
+  "01_Veselled_Annotated": {
+    "TrolardV001": { title: "Vein of Trolard", order: 12 },
+    "SylvianV001": { title: "Sylvian Vein", order: 10 },
+    "SuperiorparietalA001": { title: "Superior Parietal Artery", order: 31 },
+    "PrefrontalA001": { title: "Prefrontal Artery", order: 8 },
+    "PrecentralsulcusA001": { title: "Artery of Precentral Sulcus", order: 7 },
+    "PosteriortemporalA001": { title: "Posterior Temporal Artery", order: 3 },
+    "PosteriorparietalA001": { title: "Posterior Parietal Artery", order: 4 },
+    "PIFA001": { title: "Posterior Internal Frontal Artery", order: 29 },
+    "PericallosalA001": { title: "Pericallosal Artery", order: 25 },
+    "PCA001": { title: "Posterior Cerebral Artery", order: 16 },
+    "ParacentralA001": { title: "Paracentral Artery", order: 30 },
+    "OpticN001": { title: "Optic Nerve", order: 18 },
+    "OlfactoryN001": { title: "Olfactory Nerve", order: 19 },
+    "OlfactoryA001": { title: "Olfactory Artery", order: 20 },
+    "MIFA001": { title: "Middle Internal Frontal Artery", order: 28 },
+    "MiddletemporalA001": { title: "Middle Temporal Artery", order: 2 },
+    "MedialOrbitofrontalA001": { title: "Medial Orbitofrontal Artery", order: 22 },
+    "LateralorbitofrontalA001": { title: "Lateral Orbitofrontal Artery", order: 9 },
+    "LabbeV001": { title: "Vein of Labbe", order: 11 },
+    "InternalcerebralV001": { title: "Internal Cerebral Vein", order: 14 },
+    "InferiorparietalA001": { title: "Inferior Parietal Artery", order: 32 },
+    "ICA001": { title: "Internal Cerebral Artery", order: 17 },
+    "GalenV001": { title: "Vein of Galen", order: 13 },
+    "FrontopolarACont001": { title: "Frontopolar Artery", order: 24 },
+    "FrontopolarA001": { title: "Frontopolar Artery", order: 23 },
+    "CentralsulcusA001": { title: "Artery of Central Sulcus", order: 6 },
+    "CallosomarginalA001": { title: "Callosomarginal Artery", order: 26 },
+    "Basalveinofrosenthal001": { title: "Basal Vein of Rosenthal", order: 15 },
+    "AnteriortemporalA001": { title: "Anterior Temporal Artery", order: 1 },
+    "AnteriorparietalA001": { title: "Anterior Parietal Artery", order: 5 },
+    "AIFA001": { title: "Anterior Internal Frontal Artery", order: 27 },
+    "ACA001": { title: "Anterior Cerebral Artery", order: 21 },
+  },
+  "02_Veselless_Annotated": {
+    "Uncus001": { title: "Uncus", order: 36 },
+    "Thalamus001": { title: "Thalamus", order: 34 },
+    "TemporalOperculum001": { title: "Temporal Operculum", order: 7 },
+    "Sylvianfissure001": { title: "Sylvian Fissure", order: 6 },
+    "Supramarginalgyrus001": { title: "Supramarginal Gyrus", order: 19 },
+    "SuperiortemporalSulcus001": { title: "Superior Temporal Sulcus", order: 4 },
+    "SuperiortemporalGyrus001": { title: "Superior Temporal Gyrus", order: 5 },
+    "Superiorparietallobule001": { title: "Superior Parietal Lobule", order: 22 },
+    "SuperiorFrontalsulcus001": { title: "Superior Frontal Sulcus", order: 13 },
+    "SuperiorFrontalgyrus001": { title: "Superior Frontal Gyrus", order: 14 },
+    "Preoccipitalnotch001": { title: "Preoccipital Notch", order: 41 },
+    "Precuneus001": { title: "Precuneus", order: 25 },
+    "Precentralsulcus001": { title: "Precentral Sulcus", order: 15 },
+    "Precentralgyrus001": { title: "Precentral Gyrus", order: 16 },
+    "Posteriorcalcarinesulcus001": { title: "Posterior Calcarine Sulcus", order: 28 },
+    "Postcentralgyrus001": { title: "Postcentral Gyrus", order: 18 },
+    "Parietooccipitalsulcus001": { title: "Parietooccipital Sulcus", order: 26 },
+    "ParietalOperculum001": { title: "Parietal Operculum", order: 8 },
+    "Parahippocampalgyrus001": { title: "Parahippocampal Gyrus", order: 37 },
+    "Paracentrallobule001": { title: "Paracentral Lobule", order: 23 },
+    "MiddletemporalGyrus001": { title: "Middle Temporal Gyrus", order: 3 },
+    "Middlefrontalgyrus001": { title: "Middle Frontal Gyrus", order: 12 },
+    "Marginalsulcus001": { title: "Marginal Sulcus", order: 24 },
+    "Lingualgyrus001": { title: "Lingual Gyrus", order: 40 },
+    "Lateralventricle001": { title: "Lateral Ventricle", order: 33 },
+    "Isthmusgyrus001": { title: "Isthmus of Cingulate Gyrus", order: 30 },
+    "Intraparietalsulcus001": { title: "Intraparietal Sulcus", order: 21 },
+    "Inferiortemporalsulcus001": { title: "Inferior Temporal Sulcus", order: 2 },
+    "Inferiortemporalgyrus001": { title: "Inferior Temporal Gyrus", order: 1 },
+    "InferiorFrontalsulcus001": { title: "Inferior Frontal Sulcus", order: 11 },
+    "InferiorFrontalgyrus001": { title: "Inferior Frontal Gyrus", order: 10 },
+    "Gyrusrectus001": { title: "Gyrus Rectus", order: 35 },
+    "Fusiformgyrus001": { title: "Fusiform Gyrus", order: 38 },
+    "FrontalOperculum001": { title: "Frontal Operculum", order: 9 },
+    "Cuneus001": { title: "Cuneus", order: 27 },
+    "Corpuscallosum001": { title: "Corpus Callosum", order: 32 },
+    "Collateralsulcus001": { title: "Collateral Sulcus", order: 39 },
+    "Cingulategyrus001": { title: "Cingulate Gyrus", order: 31 },
+    "Centralsulcus001": { title: "Central Sulcus", order: 17 },
+    "Anteriorcalcarinesulcus001": { title: "Anterior Calcarine Sulcus", order: 29 },
+    "Angulargyrus001": { title: "Angular Gyrus", order: 20 },
+  },
+  "03_U_Fibers_Annotated": {
+    "Angulargyrus002": { title: "Angular Gyrus", order: 15 },
+    "Centrallobe": { title: "Central Lobe", order: 13 },
+    "InferiorFrontalgyrus002": { title: "Inferior Frontal Gyrus", order: 8 },
+    "InferiorFrontalsulcus002": { title: "Inferior Frontal Sulcus", order: 9 },
+    "Inferiortemporalgyrus002": { title: "Inferior Temporal Gyrus", order: 1 },
+    "Inferiortemporalsulcus002": { title: "Inferior Temporal Sulcus", order: 2 },
+    "Intraparietalsulcus002": { title: "Intraparietal Sulcus", order: 16 },
+    "Middlefrontalgyrus002": { title: "Middle Frontal Gyrus", order: 10 },
+    "MiddletemporalGyrus002": { title: "Middle Temporal Gyrus", order: 3 },
+    "ParietalOperculum002": { title: "Parietal Operculum", order: 7 },
+    "SuperiorFrontalgyrus002": { title: "Superior Frontal Gyrus", order: 12 },
+    "SuperiorFrontalsulcus002": { title: "Superior Frontal Sulcus", order: 11 },
+    "Superiorparietallobule002": { title: "Superior Parietal Lobule", order: 17 },
+    "SuperiortemporalGyrus002": { title: "Superior Temporal Gyrus", order: 5 },
+    "SuperiortemporalSulcus002": { title: "Superior Temporal Sulcus", order: 4 },
+    "Supramarginalgyrus002": { title: "Supramarginal Gyrus", order: 14 },
+    "Sylvianfissure002": { title: "Sylvian Fissure", order: 6 },
+  },
+  "04_Superficial_SLF_Annotated": {
+    "AF1001": { title: "Arcuate Fascicle Dorsal Segment", order: 5 },
+    "SLF": { title: "Superior Longitudinal Fascicle II", order: 1 },
+    "SuperficialAF": { title: "Arcuate Fascicle Ventral Segment", order: 3 },
+    "SuperficialSLF": { title: "Superior Longitudinal Fascicle III", order: 2 },
+    "SuperiortemporalGyrus003": { title: "Arcuate Fascicle Ventral Segment", order: 4 },
+  },
+  "05_Superficial_Arcuate_Annotated": {
+    "AF1": { title: "Arcuate Fascicle Dorsal Segment", order: 2 },
+    "AF2": { title: "Arcuate Fascicle Dorsal Segment", order: 3 },
+    "SLF001": { title: "Superior Longitudinal Fascicle II", order: 5 },
+    "SuperficialAF001": { title: "Arcuate Fascicle Dorsal Segment", order: 1 },
+    "SuperiortemporalGyrus006": { title: "Arcuate Fascicle Ventral Segment", order: 4 },
+  },
+  "06_Insula_Annotated": {
+    "AF1002": { title: "Arcuate Fascicle Dorsal Segment", order: 15 },
+    "AF2001": { title: "Arcuate Fascicle Dorsal Segment", order: 16 },
+    "AnteriorinsularP": { title: "Anterior Insular Point", order: 2 },
+    "Anteriorlimsulc": { title: "Anterior Limiting Sulcus", order: 1 },
+    "CentralsulcusI": { title: "Central Sulcus of Insula", order: 11 },
+    "FrontalLimenP": { title: "Frontal Limen Point", order: 7 },
+    "Inferiorlimsulc": { title: "Inferior Limiting Sulcus", order: 5 },
+    "Insularapex": { title: "Insular Apex", order: 9 },
+    "LimenI": { title: "Limen Insulae", order: 8 },
+    "LongGyri": { title: "Long Gyri of Insula", order: 12 },
+    "PosteriorinsularP": { title: "Posterior Insular Point", order: 4 },
+    "SLF002": { title: "Superior Longitudinal Fascicle II", order: 14 },
+    "SLF003": { title: "Superior Longitudinal Fascicle II", order: 13 },
+    "ShortGyri": { title: "Short Gyri of Insula", order: 10 },
+    "Superiorlimsulc": { title: "Superior Limiting Sulcus", order: 3 },
+    "SuperiortemporalGyrus004": { title: "Arcuate Fascicle Ventral Segment", order: 17 },
+    "TemporalLimenP": { title: "Temporal Limen Point", order: 6 },
+  },
+  "07_Extreme_Capsule_Annotated": {
+    "ExtremeCapsule": { title: "Extreme Capsule", order: 1 },
+  },
+  "09_Putamen_External_Capsule_Annotated": {
+    "ExternalCapsule": { title: "External Capsule", order: 1 },
+    "IFOF": { title: "Inferior Fronto-Occipital Fascicle", order: 3 },
+    "Putamen": { title: "Putamen", order: 2 },
+    "UF": { title: "Uncinate Fascicle", order: 4 },
+  },
+  "10_Lenticulostriate_Perforators_Annotated": {
+    "CoronaRadiata": { title: "Corona Radiata", order: 2 },
+    "IFOF001": { title: "Inferior Fronto-Occipital Fascicle", order: 3 },
+    "LenticulostriatePerforatorsM1": { title: "Lenticulostriate Arteries", order: 1 },
+    "UF001": { title: "Uncinate Fascicle", order: 4 },
+  },
+  "11_Anterior_Comissure_Annotated": {
+    "AnteriorCommissure": { title: "Anterior Commissure", order: 4 },
+    "CoronaRadiata001": { title: "Corona Radiata", order: 2 },
+    "GlobusPallidus": { title: "Globus Pallidus", order: 3 },
+    "InternalCapsule": { title: "Internal Capsule", order: 1 },
+  },
+});
+
+function makeAnnotations(modelId, names) {
+  return names.map((name, i) => {
+    const rule = ANNOTATION_RULES[modelId]?.[name] || {};
+    const originalOrder = i + 1;
+    return {
+      slotName: `hotspot-${String(originalOrder).padStart(2, '0')}`,
+      anchor: name,
+      title: rule.title || name,
+      navOrder: Number.isFinite(rule.order) ? rule.order : originalOrder,
+      originalOrder
     };
+  }).sort((a, b) =>
+    (a.navOrder - b.navOrder) ||
+    (a.originalOrder - b.originalOrder)
+  );
+}
+
+const ANNOTATIONS = {
+  "01_Veselled_Annotated": makeAnnotations("01_Veselled_Annotated", MODEL01_NAMES),
+  "02_Veselless_Annotated": makeAnnotations("02_Veselless_Annotated", MODEL02_NAMES),
+  "03_U_Fibers_Annotated": makeAnnotations("03_U_Fibers_Annotated", MODEL03_NAMES),
+  "04_Superficial_SLF_Annotated": makeAnnotations("04_Superficial_SLF_Annotated", MODEL04_NAMES),
+  "05_Superficial_Arcuate_Annotated": makeAnnotations("05_Superficial_Arcuate_Annotated", MODEL05_NAMES),
+  "06_Insula_Annotated": makeAnnotations("06_Insula_Annotated", MODEL06_NAMES),
+  "07_Extreme_Capsule_Annotated": makeAnnotations("07_Extreme_Capsule_Annotated", MODEL07_NAMES),
+  "09_Putamen_External_Capsule_Annotated": makeAnnotations("09_Putamen_External_Capsule_Annotated", MODEL09_NAMES),
+  "10_Lenticulostriate_Perforators_Annotated": makeAnnotations("10_Lenticulostriate_Perforators_Annotated", MODEL10_NAMES),
+  "11_Anterior_Comissure_Annotated": makeAnnotations("11_Anterior_Comissure_Annotated", MODEL11_NAMES),
+};
 
     // Cross-model anchor aliasing + OFFSET:
     const ANCHOR_ALIASES = {
@@ -575,7 +750,7 @@
         row.className = "row";
         const name = document.createElement('div');
         name.className = "name";
-        name.textContent = m.id;
+        name.textContent = MODEL_DISPLAY_NAMES[m.id] || m.id;
         const meta = document.createElement('div');
         meta.className = "meta";
         row.appendChild(name);
