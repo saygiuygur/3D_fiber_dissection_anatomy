@@ -1261,7 +1261,7 @@
       const P = st.pointMap.get(slotName);
       if (!P) return;
 
-      wheelZoomStep = WHEEL_ZOOM_MAX_STEP;
+      wheelZoomStep = 5;
       
       const C0 = baseCenter.get(currentShownId);
       if (!C0) return;
@@ -1448,9 +1448,6 @@
     async function showModel(modelId) {
       const token = ++swapToken;
     
-      if (focusCarryCam?.has?.(activeMv)) {
-    wheelZoomStep = WHEEL_ZOOM_MAX_STEP;
-    }
       const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
       savingEnabled = false;
 
