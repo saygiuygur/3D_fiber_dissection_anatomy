@@ -950,6 +950,32 @@ function getDtiSceneRoot(mv) {
   return null;
 }
 
+    function getDtiAttachRoot(mv) {
+  const scene = getMvScene(mv);
+  if (!scene || typeof scene.getObjectByName !== "function") return null;
+
+  const anns = ANNOTATIONS[currentShownId] || [];
+
+  for (const a of anns) {
+    const obj = scene.getObjectByName(a.anchor);
+    if (!obj) continue;
+
+    let root = obj;
+
+    while (root.parent && root.parent !== scene) {
+      root = root.parent;
+    }
+
+    // If the anchor is inside a top-level model group, attach DTI to that group.
+    // If the anchor is directly under the scene, attach DTI to the scene itself.
+    if (root !== obj) return root;
+    return scene;
+  }
+
+  // Fallback: if no annotation anchor is found, attach to the scene.
+  return scene;
+}
+    
 function getMountedDtiMap(mv) {
   let map = dtiMountedByMv.get(mv);
   if (!map) {
@@ -1017,29 +1043,13 @@ function cloneDtiObject(proto, dtiId) {
   const clone = proto.clone(true);
   return markAsDtiObject(clone, dtiId);
 }
-function getCurrentModelAutoShift(mv) {
-  if (!currentShownId) return new THREE.Vector3(0, 0, 0);
-  if (!baseCenter.has(currentShownId)) return new THREE.Vector3(0, 0, 0);
-  if (!baseTarget.has(currentShownId)) return new THREE.Vector3(0, 0, 0);
 
-  return computeShiftForModel(mv, currentShownId);
-}
+ const scene = getDtiSceneRoot(mv);
+const attachRoot = getDtiAttachRoot(mv);
 
-function applyDtiAutoShiftToViewer(mv) {
-  const mounted = getMountedDtiMap(mv);
-  if (!mounted.size) return;
-
-  const shift = getCurrentModelAutoShift(mv);
-
-  for (const obj of mounted.values()) {
-    obj.position.copy(shift);
-    obj.updateMatrixWorld?.(true);
-  }
-
-  const scene = getDtiSceneRoot(mv);
-  scene?.updateMatrixWorld?.(true);
-
-  try { mv.requestUpdate?.(); } catch (_) {}
+if (!scene || !attachRoot) {
+  requestAnimationFrame(refreshDtiSceneForActiveViewer);
+  return;
 }
 function unmountAllDtiFromViewer(mv) {
   const mounted = getMountedDtiMap(mv);
@@ -1099,17 +1109,14 @@ async function refreshDtiSceneForActiveViewer() {
 
      const obj = cloneDtiObject(proto, id);
 
-// Apply the same model-viewer auto-shift used by annotations/occlusion.
-obj.position.copy(getCurrentModelAutoShift(mv));
-
-scene.add(obj);
+// Do not apply computeShiftForModel or manual offset.
+// Attach DTI to the same anatomical root so it inherits the model-viewer transform.
+attachRoot.add(obj);
 mounted.set(id, obj);
-
-applyDtiAutoShiftToViewer(mv);
 
 scene.updateMatrixWorld?.(true);
 setDtiStatus(id, "✓");
-
+      
       try { mv.requestUpdate?.(); } catch (_) {}
     } catch (err) {
       console.warn("DTI model failed to load:", id, err);
@@ -1360,23 +1367,11 @@ function swapViewersNow() {
   mv.addEventListener('wheel', (e) => {
     handleFixedStepWheelZoom(mv, e);
     scheduleSettledCarrySnapshotManual();
-    applyDtiAutoShiftToViewer(mv);
   }, { passive: false, capture: true });
 
-  mv.addEventListener('pointerup', () => {
-    scheduleSettledCarrySnapshotManual();
-    applyDtiAutoShiftToViewer(mv);
-  }, { passive: true });
-
-  mv.addEventListener('touchend', () => {
-    scheduleSettledCarrySnapshotManual();
-    applyDtiAutoShiftToViewer(mv);
-  }, { passive: true });
-
-  mv.addEventListener('camera-change', () => {
-    scheduleSettledCarrySnapshotCameraChange();
-    applyDtiAutoShiftToViewer(mv);
-  }, { passive: true });
+  mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
+  mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
+  mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
 }
 
     function getMvScene(mv) {
