@@ -116,10 +116,84 @@
       inset:0;
       width:100%;
       height:100%;
+      z-index:10;
       background:var(--viewer-bg);
       --min-hotspot-opacity: 1;
     }
+/* ===== DTI overlay viewers + right-side DTI panel ===== */
 
+.dti-viewer{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  z-index:5;
+  pointer-events:none;
+  background: transparent !important;
+  --poster-color: transparent;
+}
+
+#dtiPanel{
+  position:absolute;
+  right:14px;
+  top:14px;
+  z-index:58;
+  width:260px;
+  max-height:calc(100vh - 28px);
+  overflow:auto;
+  padding:12px;
+  border-radius:14px;
+  background:rgba(255,255,255,0.88);
+  color:#111;
+  box-shadow:0 8px 24px rgba(0,0,0,0.18);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  box-sizing:border-box;
+}
+
+#dtiPanel h3{
+  margin:0 0 10px 0;
+  font-size:15px;
+  line-height:1.2;
+}
+
+.dti-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:7px 4px;
+  border-bottom:1px solid rgba(0,0,0,0.08);
+  font-size:13px;
+  user-select:none;
+  cursor:pointer;
+}
+
+.dti-row:last-child{
+  border-bottom:none;
+}
+
+.dti-row input{
+  width:16px;
+  height:16px;
+  flex:0 0 auto;
+  accent-color:#35c759;
+}
+
+.dti-name{
+  flex:1 1 auto;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.dti-status{
+  width:20px;
+  flex:0 0 20px;
+  text-align:center;
+  font-size:12px;
+  color:#666;
+}
     .hiddenViewer { visibility: hidden; pointer-events: none; }
     .shownViewer  { visibility: visible; pointer-events: auto; }
 
@@ -247,7 +321,12 @@
         <div id="annoLabel" class="navText">Select an annotation</div>
         <button id="annoNext" class="navBtn" aria-label="Next annotation" title="Next">›</button>
       </div>
-
+      
+<div id="dtiPanel" aria-label="DTI fiber tract models">
+  <h3>DTI Tracts</h3>
+  <div id="dtiList"></div>
+</div>
+      
       <model-viewer id="mvA" class="viewer shownViewer"
         camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
         min-camera-orbit="auto auto 0m"></model-viewer>
@@ -485,7 +564,45 @@ const ANNOTATION_RULES = Object.freeze({
     "InternalCapsule": { title: "Internal Capsule", order: 1 },
   },
 });
-
+    
+const DTI_MODELS = [
+  {
+    id: "CST",
+    name: "Corticospinal Tract",
+    url: "models/DTI/CST.glb"
+  },
+  {
+    id: "SLF_I",
+    name: "Superior Longitudinal Fascicle I",
+    url: "models/DTI/SLF_I.glb"
+  },
+  {
+    id: "SLF_II",
+    name: "Superior Longitudinal Fascicle II",
+    url: "models/DTI/SLF_II.glb"
+  },
+  {
+    id: "SLF_III",
+    name: "Superior Longitudinal Fascicle III",
+    url: "models/DTI/SLF_III.glb"
+  },
+  {
+    id: "AF",
+    name: "Arcuate Fascicle",
+    url: "models/DTI/AF.glb"
+  },
+  {
+    id: "IFOF",
+    name: "Inferior Fronto-Occipital Fascicle",
+    url: "models/DTI/IFOF.glb"
+  },  
+  {
+    id: "UF",
+    name: "Uncinate Fascicle",
+    url: "models/DTI/UF.glb"
+  }
+];
+    
 function makeAnnotations(modelId, names) {
   return names.map((name, i) => {
     const rule = ANNOTATION_RULES[modelId]?.[name] || {};
@@ -543,6 +660,8 @@ const ANNOTATIONS = {
     const annoPrev = document.getElementById('annoPrev');
     const annoNext = document.getElementById('annoNext');
     const annoLabel = document.getElementById('annoLabel');
+    
+    const dtiList = document.getElementById('dtiList');
 
     let activeMv = mvA;
     let idleMv = mvB;
@@ -801,6 +920,137 @@ function refreshAnnoNavWidth() {
       paintActive();
       paintDownloading(null);
     }
+    // ===== DTI tract overlay system =====
+// DTI models are separate from the main anatomical MODELS.
+// Multiple DTI models can be displayed at the same time.
+
+const dtiOverlayEls = new Map();
+let dtiSyncRaf = 0;
+
+function syncOneDtiCamera(dtiMv) {
+  if (!activeMv || !activeMv.src || !dtiMv) return;
+
+  const orbit = activeMv.getCameraOrbit?.();
+  const target = activeMv.getCameraTarget?.();
+  const fov = activeMv.getFieldOfView?.();
+
+  if (!orbit || !target) return;
+
+  dtiMv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${orbit.radius}m`;
+  dtiMv.cameraTarget = `${target.x}m ${target.y}m ${target.z}m`;
+
+  if (typeof fov === "number") {
+    dtiMv.fieldOfView = `${fov}deg`;
+  }
+
+  try { dtiMv.jumpCameraToGoal?.(); } catch (_) {}
+}
+
+function syncDtiCameras() {
+  if (dtiSyncRaf) return;
+
+  dtiSyncRaf = requestAnimationFrame(() => {
+    dtiSyncRaf = 0;
+
+    for (const dtiMv of dtiOverlayEls.values()) {
+      if (dtiMv.style.display === "none") continue;
+      syncOneDtiCamera(dtiMv);
+    }
+  });
+}
+
+function createDtiOverlayViewer(dti, statusEl, checkboxEl) {
+  const dtiMv = document.createElement('model-viewer');
+
+  dtiMv.className = "dti-viewer";
+  dtiMv.setAttribute("interaction-prompt", "none");
+  dtiMv.setAttribute("exposure", "1");
+  dtiMv.setAttribute("shadow-intensity", "0");
+  dtiMv.setAttribute("min-camera-orbit", "auto auto 0m");
+  dtiMv.dataset.dtiId = dti.id;
+
+  dtiMv.__dtiLoaded = false;
+
+  dtiMv.addEventListener('load', () => {
+    dtiMv.__dtiLoaded = true;
+    statusEl.textContent = "✓";
+    syncOneDtiCamera(dtiMv);
+  });
+
+  dtiMv.addEventListener('error', () => {
+    statusEl.textContent = "!";
+    checkboxEl.checked = false;
+    dtiMv.style.display = "none";
+    console.warn("DTI model failed to load:", dti.id, dti.url);
+  });
+
+  viewerWrap.appendChild(dtiMv);
+  dtiOverlayEls.set(dti.id, dtiMv);
+
+  statusEl.textContent = "…";
+  dtiMv.src = dti.url;
+
+  return dtiMv;
+}
+
+function setDtiVisible(dtiId, visible, statusEl, checkboxEl) {
+  const dti = DTI_MODELS.find(x => x.id === dtiId);
+  if (!dti) return;
+
+  let dtiMv = dtiOverlayEls.get(dtiId);
+
+  if (!visible) {
+    if (dtiMv) {
+      dtiMv.style.display = "none";
+      statusEl.textContent = dtiMv.__dtiLoaded ? "✓" : "";
+    } else {
+      statusEl.textContent = "";
+    }
+    return;
+  }
+
+  if (!dtiMv) {
+    dtiMv = createDtiOverlayViewer(dti, statusEl, checkboxEl);
+  } else {
+    dtiMv.style.display = "block";
+    statusEl.textContent = dtiMv.__dtiLoaded ? "✓" : "…";
+    syncOneDtiCamera(dtiMv);
+  }
+
+  syncDtiCameras();
+}
+
+function buildDtiListOnce() {
+  if (!dtiList) return;
+
+  dtiList.innerHTML = "";
+
+  for (const dti of DTI_MODELS) {
+    const row = document.createElement('label');
+    row.className = "dti-row";
+    row.title = dti.name;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = "checkbox";
+
+    const name = document.createElement('div');
+    name.className = "dti-name";
+    name.textContent = dti.name;
+
+    const status = document.createElement('div');
+    status.className = "dti-status";
+    status.textContent = "";
+
+    checkbox.addEventListener('change', () => {
+      setDtiVisible(dti.id, checkbox.checked, status, checkbox);
+    });
+
+    row.appendChild(checkbox);
+    row.appendChild(name);
+    row.appendChild(status);
+    dtiList.appendChild(row);
+  }
+}
 
     function maybeResumePreload() {
       if (!preloadEnabled) return;
@@ -967,14 +1217,16 @@ function refreshAnnoNavWidth() {
     }
 
     for (const mv of [mvA, mvB]) {
-      mv.addEventListener('wheel', (e) => {
-        handleFixedStepWheelZoom(mv, e);
-        scheduleSettledCarrySnapshotManual();
-      }, { passive: false, capture: true });
-      mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
-      mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
-      mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
-    }
+  mv.addEventListener('wheel', (e) => {
+    handleFixedStepWheelZoom(mv, e);
+    scheduleSettledCarrySnapshotManual();
+  }, { passive: false, capture: true });
+  mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
+  mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
+  mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
+
+  mv.addEventListener('camera-change', syncDtiCameras, { passive: true });
+}
 
     function getMvScene(mv) {
       const sym = Object.getOwnPropertySymbols(mv).find(s => s.description === 'scene');
@@ -1725,6 +1977,8 @@ async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
         cameraReady = true;
         startLoop(activeMv);
 
+        syncDtiCameras();
+
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
         updateSelectedHotspotVisual();
@@ -1800,6 +2054,7 @@ async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
 
     // init
     buildListOnce();
+    buildDtiListOnce();
     initBackgroundSelector();
     initAnnotationsToggle();
     refreshAnnoNavLabel();
