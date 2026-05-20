@@ -657,6 +657,7 @@
           st.status = "done";
           st.progressText = "";
           st.blobUrl = blobUrl;
+          prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
           refreshMeta(modelId);
 
           paintDownloading(null);
@@ -1345,7 +1346,50 @@
     const PRIME_MODEL_ID = "02_Veselless_Annotated";
     let prime02Started = false;
     let prime02Done = false;
+// ===== Prewarm base state for every model (hidden load) =====
+const prewarmDone = new Set();      // modelId
+const prewarmInFlight = new Map();  // modelId -> Promise
+let mvPrimeLock = Promise.resolve(); // serialize mvPrime usage
 
+async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
+  if (prewarmDone.has(modelId)) return;
+  if (prewarmInFlight.has(modelId)) return prewarmInFlight.get(modelId);
+
+  const p = (mvPrimeLock = mvPrimeLock.then(async () => {
+    if (prewarmDone.has(modelId)) return;
+
+    // Ensure we have a blob URL
+    let blobUrl = blobUrlMaybe;
+    if (!blobUrl) {
+      const st = state.get(modelId);
+      if (st?.status === "done" && st.blobUrl) blobUrl = st.blobUrl;
+      else blobUrl = await downloadToBlobUrl(modelId);
+    }
+
+    // Load into hidden mvPrime
+    if (mvPrime.src !== blobUrl) {
+      await new Promise(resolve => {
+        const onLoad = () => resolve();
+        mvPrime.addEventListener('load', onLoad, { once:true });
+        mvPrime.src = blobUrl;
+      });
+    }
+
+    // Let model-viewer settle 1–2 frames (important for default orbit)
+    await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => requestAnimationFrame(r));
+
+    // Capture base stats for this model (especially baseRadiusByModel)
+    captureAutoFrameBase(mvPrime, modelId);
+
+    prewarmDone.add(modelId);
+  })).finally(() => {
+    prewarmInFlight.delete(modelId);
+  });
+
+  prewarmInFlight.set(modelId, p);
+  return p;
+}
     function computeShiftForModel(mv, modelId) {
       const bt = baseTarget.get(modelId);
       const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
@@ -1380,15 +1424,37 @@
       }
     }
 
-    async function startPrimeModel02Once() {
-      if (prime02Started) return;
-      prime02Started = true;
+   async function startPrimeModel02Once() {
+  if (prime02Started) return;
+  prime02Started = true;
 
-      try {
-        if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
-          requestAnimationFrame(() => startPrimeModel02Once());
-          return;
-        }
+  try {
+    await (mvPrimeLock = mvPrimeLock.then(async () => {
+      if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
+        requestAnimationFrame(() => startPrimeModel02Once());
+        return;
+      }
+
+      const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+
+      if (mvPrime.src !== blobUrl) {
+        await new Promise(resolve => {
+          const onLoad = () => resolve();
+          mvPrime.addEventListener('load', onLoad, { once:true });
+          mvPrime.src = blobUrl;
+        });
+      }
+
+      await new Promise(r => requestAnimationFrame(r));
+      await new Promise(r => requestAnimationFrame(r));
+
+      primeCacheFromModel02(mvPrime);
+      prime02Done = true;
+    }));
+  } catch (_) {
+    prime02Started = false;
+  }
+}
 
         const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
 
@@ -1513,6 +1579,7 @@
           finalizeAfterBarrier();
         };
         idleMv.addEventListener('load', onIdleLoad, { once:true });
+        await prewarmModelBaseState(modelId, targetSrc);
         idleMv.src = targetSrc;
         return;
       }
@@ -1526,6 +1593,7 @@
 
       try {
         const blobUrl = await downloadToBlobUrl(modelId);
+        await prewarmModelBaseState(modelId, blobUrl);
         if (token !== swapToken) return;
         idleMv.src = blobUrl;
       } catch (_) {
