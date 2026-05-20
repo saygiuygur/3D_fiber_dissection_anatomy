@@ -1447,7 +1447,10 @@
 
     async function showModel(modelId) {
       const token = ++swapToken;
-
+    
+      if (focusCarryCam?.has?.(activeMv)) {
+    wheelZoomStep = WHEEL_ZOOM_MAX_STEP;
+    }
       const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
       savingEnabled = false;
 
