@@ -1316,11 +1316,9 @@
       const camPos0 = getCameraPositionHotspotSpace(activeMv);
       if (!camPos0) return;
 
-      const distToPoint = camPos0.distanceTo(P);
       const r0 = orbit0.radius;
-      const desiredR = Math.max(0.01, distToPoint * 0.65);
-      const FOCUS_MIN_RADIUS = 75;
-      const r1 = Math.max(FOCUS_MIN_RADIUS, Math.min(r0, desiredR));
+      const FOCUS_DISTANCE = 90; // meters
+      const r1 = FOCUS_DISTANCE;
 
       const camPos1 = P.clone().add(d.clone().multiplyScalar(r1));
       const off = camPos1.clone().sub(P);
