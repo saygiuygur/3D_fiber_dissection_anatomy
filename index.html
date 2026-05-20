@@ -1455,28 +1455,6 @@ async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
     prime02Started = false;
   }
 }
-
-        const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
-
-        if (mvPrime.src !== blobUrl) {
-          await new Promise(resolve => {
-            const onLoad = () => resolve();
-            mvPrime.addEventListener('load', onLoad, { once:true });
-            mvPrime.src = blobUrl;
-          });
-        }
-
-        await new Promise(r => requestAnimationFrame(r));
-        await new Promise(r => requestAnimationFrame(r));
-
-        primeCacheFromModel02(mvPrime);
-        prime02Done = true;
-
-      } catch (_) {
-        prime02Started = false;
-      }
-    }
-
     // ===== Swap / show model =====
     let swapToken = 0;
 
