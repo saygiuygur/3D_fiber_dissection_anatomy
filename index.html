@@ -161,24 +161,26 @@
     .annOff #hotspotTip{ display:none !important; }
 
     #annoNav{
-      position:absolute;
-      left:50%;
-      bottom:18px;
-      transform:translateX(-50%);
-      z-index:55;
-      display:flex;
-      align-items:center;
-      gap:14px;
-      padding:10px 16px;
-      border-radius:999px;
-      background: rgba(0,0,0,0.60);
-      color:#fff;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-      max-width: min(560px, 92%);
-      user-select:none;
-    }
+  position:absolute;
+  left:50%;
+  bottom:18px;
+  transform:translateX(-50%);
+  z-index:55;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  padding:10px 16px;
+  border-radius:999px;
+  background: rgba(0,0,0,0.60);
+  color:#fff;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  width: var(--anno-nav-width, 260px);
+  max-width: min(560px, 92vw);
+  box-sizing:border-box;
+  user-select:none;
+}
     #annoNav .navBtn{
       width:28px;
       height:28px;
@@ -549,13 +551,47 @@ const ANNOTATIONS = {
 
     let selectedAnnoIndex = -1;
 
-    function getAnnoListForCurrentModel() { return ANNOTATIONS[currentShownId] || []; }
-    function getSelectedSlotName() {
-      const arr = getAnnoListForCurrentModel();
-      if (!arr.length) return null;
-      if (selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) return null;
-      return arr[selectedAnnoIndex].slotName;
-    }
+    function getAnnoListForCurrentModel() { 
+  return ANNOTATIONS[currentShownId] || []; 
+}
+
+function getSelectedSlotName() {
+  const arr = getAnnoListForCurrentModel();
+  if (!arr.length) return null;
+  if (selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) return null;
+  return arr[selectedAnnoIndex].slotName;
+}
+
+function refreshAnnoNavWidth() {
+  const annotations = getAnnoListForCurrentModel();
+
+  const titles = annotations.map(a => a.title || a.anchor || "");
+  titles.push("Select an annotation");
+
+  const canvas = refreshAnnoNavWidth._canvas || (refreshAnnoNavWidth._canvas = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+
+  const labelStyle = window.getComputedStyle(annoLabel);
+  ctx.font = labelStyle.font || "600 14px sans-serif";
+
+  const widestTextPx = Math.max(
+    ...titles.map(t => ctx.measureText(t).width),
+    0
+  );
+
+  // Previous button + next button + gaps + horizontal padding + safety margin
+  const controlsAndPaddingPx = 28 + 28 + 14 + 14 + 16 + 16 + 18;
+
+  const widthPx = Math.ceil(widestTextPx + controlsAndPaddingPx);
+
+  const minWidth = 260;
+  const maxWidth = 560;
+
+  annoNav.style.setProperty(
+    "--anno-nav-width",
+    `${Math.max(minWidth, Math.min(widthPx, maxWidth))}px`
+  );
+}
 
     function updateSelectedHotspotVisual() {
       const mv = activeMv;
@@ -569,6 +605,8 @@ const ANNOTATIONS = {
 
     function setAnnoLabelText(text) { annoLabel.textContent = text || "Select an annotation"; }
     function refreshAnnoNavLabel() {
+      refreshAnnoNavWidth();
+      
       const arr = getAnnoListForCurrentModel();
       if (!arr.length || selectedAnnoIndex < 0 || selectedAnnoIndex >= arr.length) {
         setAnnoLabelText("Select an annotation");
