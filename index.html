@@ -1006,6 +1006,10 @@
     const WHEEL_ZOOM_MIN_STEP = 0;
     const WHEEL_ZOOM_MAX_STEP = 5;
     let wheelZoomStep = 0;
+   
+    window.__wheelDbg = window.__wheelDbg || {};
+    window.__wheelDbg.get = () => wheelZoomStep;
+    window.__wheelDbg.set = (v) => { wheelZoomStep = Number(v) || 0; };
 
     function handleFixedStepWheelZoom(mv, ev) {
       if (!mv.classList.contains('shownViewer')) return;
