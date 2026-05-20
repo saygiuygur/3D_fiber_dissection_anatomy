@@ -6,7 +6,15 @@
   <title>3D Fiber Dissection Anatomy</title>
   <link rel="icon" href="data:," />
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.172.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.172.0/examples/jsm/"
+  }
+}
+</script>
+  
   <style>
     :root{ --viewer-bg: #ffffff; }
     body { margin:0; font-family: system-ui, sans-serif; }
@@ -117,23 +125,11 @@
   width:100%;
   height:100%;
   z-index:10;
-  background: transparent !important;
-  --poster-color: transparent;
+  background:var(--viewer-bg);
   --min-hotspot-opacity: 1;
 }
-/* ===== DTI overlay viewers + right-side DTI panel ===== */
 
-.dti-viewer{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  z-index:5;
-  pointer-events:none;
-  background: transparent !important;
-  --poster-color: transparent;
-}
-
+/* ===== Right-side DTI panel ===== */
 #dtiPanel{
   position:absolute;
   right:14px;
@@ -352,7 +348,8 @@
   </div>
 
   <script type="module">
-    import * as THREE from "https://unpkg.com/three@0.172.0/build/three.module.js";
+    import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
     const MODELS = [
       { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
@@ -580,37 +577,37 @@ const ANNOTATION_RULES = Object.freeze({
 const DTI_MODELS = [
   {
     id: "CST",
-    name: "Corticospinal Tract",
+    name: "CST",
     url: "models/DTI/CST.glb"
   },
   {
     id: "SLF_I",
-    name: "Superior Longitudinal Fascicle I",
+    name: "SLF I",
     url: "models/DTI/SLF_I.glb"
   },
   {
     id: "SLF_II",
-    name: "Superior Longitudinal Fascicle II",
+    name: "SLF II",
     url: "models/DTI/SLF_II.glb"
   },
   {
     id: "SLF_III",
-    name: "Superior Longitudinal Fascicle III",
+    name: "SLF III",
     url: "models/DTI/SLF_III.glb"
   },
   {
     id: "AF",
-    name: "Arcuate Fascicle",
+    name: "AF",
     url: "models/DTI/AF.glb"
   },
   {
     id: "IFOF",
-    name: "Inferior Fronto-Occipital Fascicle",
+    name: "IFOF",
     url: "models/DTI/IFOF.glb"
   },  
   {
     id: "UF",
-    name: "Uncinate Fascicle",
+    name: "UF",
     url: "models/DTI/UF.glb"
   }
 ];
@@ -932,110 +929,198 @@ function refreshAnnoNavWidth() {
       paintActive();
       paintDownloading(null);
     }
-    // ===== DTI tract overlay system =====
-// DTI models are separate from the main anatomical MODELS.
-// Multiple DTI models can be displayed at the same time.
+   // ===== DTI tract system: load DTI GLBs into the SAME Three.js scene =====
+// This gives real 3D depth behavior with the anatomical model.
 
-const dtiOverlayEls = new Map();
-let dtiSyncRaf = 0;
+const dtiLoader = new GLTFLoader();
+const dtiPrototypePromises = new Map();
+const dtiEnabled = new Set();
+const dtiMountedByMv = new WeakMap();
+const dtiUi = new Map();
+let dtiRefreshToken = 0;
 
-function syncOneDtiCamera(dtiMv) {
-  if (!activeMv || !activeMv.src || !dtiMv) return;
+function getDtiSceneRoot(mv) {
+  const scene = getMvScene(mv);
+  if (!scene) return null;
 
-  const orbit = activeMv.getCameraOrbit?.();
-  const target = activeMv.getCameraTarget?.();
-  const fov = activeMv.getFieldOfView?.();
-
-  if (!orbit || !target) return;
-
-  dtiMv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${orbit.radius}m`;
-  dtiMv.cameraTarget = `${target.x}m ${target.y}m ${target.z}m`;
-
-  if (typeof fov === "number") {
-    dtiMv.fieldOfView = `${fov}deg`;
+  if (typeof scene.add === "function" && typeof scene.remove === "function") {
+    return scene;
   }
 
-  try { dtiMv.jumpCameraToGoal?.(); } catch (_) {}
+  return null;
 }
 
-function syncDtiCameras() {
-  if (dtiSyncRaf) return;
+function getMountedDtiMap(mv) {
+  let map = dtiMountedByMv.get(mv);
+  if (!map) {
+    map = new Map();
+    dtiMountedByMv.set(mv, map);
+  }
+  return map;
+}
 
-  dtiSyncRaf = requestAnimationFrame(() => {
-    dtiSyncRaf = 0;
+function setDtiStatus(id, text) {
+  const ui = dtiUi.get(id);
+  if (ui?.status) ui.status.textContent = text || "";
+}
 
-    for (const dtiMv of dtiOverlayEls.values()) {
-      if (dtiMv.style.display === "none") continue;
-      syncOneDtiCamera(dtiMv);
+function markAsDtiObject(root, dtiId) {
+  root.name = `DTI_${dtiId}`;
+  root.userData.__isDTI = true;
+
+  root.traverse?.(obj => {
+    obj.userData.__isDTI = true;
+
+    if (!obj.isMesh) return;
+
+    obj.frustumCulled = false;
+    obj.renderOrder = 0;
+
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+
+    for (const mat of mats) {
+      if (!mat) continue;
+
+      // Real 3D depth relationship with the anatomical model.
+      mat.depthTest = true;
+
+      // Solid DTI tracts should write depth.
+      if (!mat.transparent) {
+        mat.depthWrite = true;
+      }
+
+      mat.needsUpdate = true;
     }
   });
+
+  return root;
 }
 
-function createDtiOverlayViewer(dti, statusEl, checkboxEl) {
-  const dtiMv = document.createElement('model-viewer');
+async function loadDtiPrototype(dti) {
+  if (dtiPrototypePromises.has(dti.id)) {
+    return dtiPrototypePromises.get(dti.id);
+  }
 
-  dtiMv.className = "dti-viewer";
-  dtiMv.setAttribute("interaction-prompt", "none");
-  dtiMv.setAttribute("exposure", "1");
-  dtiMv.setAttribute("shadow-intensity", "0");
-  dtiMv.setAttribute("min-camera-orbit", "auto auto 0m");
-  dtiMv.dataset.dtiId = dti.id;
+  const p = dtiLoader.loadAsync(dti.url).then(gltf => {
+    const root = gltf.scene || gltf.scenes?.[0];
+    if (!root) throw new Error(`No scene found in ${dti.url}`);
 
-  dtiMv.__dtiLoaded = false;
-
-  dtiMv.addEventListener('load', () => {
-    dtiMv.__dtiLoaded = true;
-    statusEl.textContent = "✓";
-    syncOneDtiCamera(dtiMv);
+    markAsDtiObject(root, dti.id);
+    return root;
   });
 
-  dtiMv.addEventListener('error', () => {
-    statusEl.textContent = "!";
-    checkboxEl.checked = false;
-    dtiMv.style.display = "none";
-    console.warn("DTI model failed to load:", dti.id, dti.url);
-  });
-
-  viewerWrap.appendChild(dtiMv);
-  dtiOverlayEls.set(dti.id, dtiMv);
-
-  statusEl.textContent = "…";
-  dtiMv.src = dti.url;
-
-  return dtiMv;
+  dtiPrototypePromises.set(dti.id, p);
+  return p;
 }
 
-function setDtiVisible(dtiId, visible, statusEl, checkboxEl) {
-  const dti = DTI_MODELS.find(x => x.id === dtiId);
-  if (!dti) return;
+function cloneDtiObject(proto, dtiId) {
+  const clone = proto.clone(true);
+  return markAsDtiObject(clone, dtiId);
+}
 
-  let dtiMv = dtiOverlayEls.get(dtiId);
+function unmountAllDtiFromViewer(mv) {
+  const mounted = getMountedDtiMap(mv);
 
-  if (!visible) {
-    if (dtiMv) {
-      dtiMv.style.display = "none";
-      statusEl.textContent = dtiMv.__dtiLoaded ? "✓" : "";
-    } else {
-      statusEl.textContent = "";
-    }
+  for (const obj of mounted.values()) {
+    try {
+      if (obj.parent) obj.parent.remove(obj);
+    } catch (_) {}
+  }
+
+  mounted.clear();
+}
+
+async function refreshDtiSceneForActiveViewer() {
+  const mv = activeMv;
+  if (!mv || !mv.src) return;
+
+  const scene = getDtiSceneRoot(mv);
+
+  if (!scene) {
+    requestAnimationFrame(refreshDtiSceneForActiveViewer);
     return;
   }
 
-  if (!dtiMv) {
-    dtiMv = createDtiOverlayViewer(dti, statusEl, checkboxEl);
-  } else {
-    dtiMv.style.display = "block";
-    statusEl.textContent = dtiMv.__dtiLoaded ? "✓" : "…";
-    syncOneDtiCamera(dtiMv);
+  const token = ++dtiRefreshToken;
+
+  // Remove DTI from the hidden viewer after swaps.
+  unmountAllDtiFromViewer(idleMv);
+
+  const mounted = getMountedDtiMap(mv);
+
+  // Remove disabled DTI objects.
+  for (const [id, obj] of Array.from(mounted.entries())) {
+    if (!dtiEnabled.has(id) || !obj.parent) {
+      try {
+        if (obj.parent) obj.parent.remove(obj);
+      } catch (_) {}
+      mounted.delete(id);
+    }
   }
 
-  syncDtiCameras();
+  // Add enabled DTI objects into the same scene as the active anatomy.
+  for (const id of dtiEnabled) {
+    if (mounted.has(id) && mounted.get(id).parent) {
+      setDtiStatus(id, "✓");
+      continue;
+    }
+
+    const dti = DTI_MODELS.find(x => x.id === id);
+    if (!dti) continue;
+
+    try {
+      setDtiStatus(id, "…");
+
+      const proto = await loadDtiPrototype(dti);
+      if (token !== dtiRefreshToken || mv !== activeMv) return;
+
+      const obj = cloneDtiObject(proto, id);
+      scene.add(obj);
+      mounted.set(id, obj);
+
+      scene.updateMatrixWorld?.(true);
+      setDtiStatus(id, "✓");
+
+      try { mv.requestUpdate?.(); } catch (_) {}
+    } catch (err) {
+      console.warn("DTI model failed to load:", id, err);
+      dtiEnabled.delete(id);
+
+      const ui = dtiUi.get(id);
+      if (ui?.checkbox) ui.checkbox.checked = false;
+
+      setDtiStatus(id, "!");
+    }
+  }
+
+  scene.updateMatrixWorld?.(true);
+  try { mv.requestUpdate?.(); } catch (_) {}
+}
+
+function scheduleDtiRefreshAfterModelPrepared() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      refreshDtiSceneForActiveViewer();
+    });
+  });
+}
+
+function setDtiVisible(dtiId, visible) {
+  if (visible) {
+    dtiEnabled.add(dtiId);
+  } else {
+    dtiEnabled.delete(dtiId);
+    setDtiStatus(dtiId, "");
+  }
+
+  refreshDtiSceneForActiveViewer();
 }
 
 function buildDtiListOnce() {
   if (!dtiList) return;
 
   dtiList.innerHTML = "";
+  dtiUi.clear();
 
   for (const dti of DTI_MODELS) {
     const row = document.createElement('label');
@@ -1053,8 +1138,10 @@ function buildDtiListOnce() {
     status.className = "dti-status";
     status.textContent = "";
 
+    dtiUi.set(dti.id, { checkbox, status });
+
     checkbox.addEventListener('change', () => {
-      setDtiVisible(dti.id, checkbox.checked, status, checkbox);
+      setDtiVisible(dti.id, checkbox.checked);
     });
 
     row.appendChild(checkbox);
@@ -1063,7 +1150,6 @@ function buildDtiListOnce() {
     dtiList.appendChild(row);
   }
 }
-
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -1244,11 +1330,10 @@ function swapViewersNow() {
     handleFixedStepWheelZoom(mv, e);
     scheduleSettledCarrySnapshotManual();
   }, { passive: false, capture: true });
+
   mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
   mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
   mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
-
-  mv.addEventListener('camera-change', syncDtiCameras, { passive: true });
 }
 
     function getMvScene(mv) {
@@ -1388,7 +1473,8 @@ function swapViewersNow() {
       const occluders = [];
 
       scene.traverse(obj => {
-        if (!obj || !obj.isMesh || !obj.geometry) return;
+  if (!obj || obj.userData?.__isDTI) return;
+  if (!obj.isMesh || !obj.geometry) return;
 
         const g = obj.geometry;
         const geo = new THREE.BufferGeometry();
@@ -2000,7 +2086,7 @@ async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
         cameraReady = true;
         startLoop(activeMv);
 
-        syncDtiCameras();
+        scheduleDtiRefreshAfterModelPrepared();
 
         selectedAnnoIndex = -1;
         refreshAnnoNavLabel();
