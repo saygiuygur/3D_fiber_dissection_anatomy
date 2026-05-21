@@ -1174,7 +1174,34 @@ return scene;
 
 return null;
 }
+  
+function forceViewerRedraw(mv) {
+  if (!mv) return;
 
+  try { mv.requestUpdate?.(); } catch (_) {}
+
+  requestAnimationFrame(() => {
+    try {
+      const orbit = mv.getCameraOrbit?.();
+      const target = mv.getCameraTarget?.();
+
+      if (orbit && target) {
+        // Re-apply the same camera values. This does not change the view,
+        // but it wakes model-viewer rendering after external Three.js changes.
+        mv.cameraOrbit = `${orbit.theta}rad ${orbit.phi}rad ${orbit.radius}m`;
+        mv.cameraTarget = `${target.x}m ${target.y}m ${target.z}m`;
+      }
+
+      mv.jumpCameraToGoal?.();
+      mv.requestUpdate?.();
+    } catch (_) {}
+
+    requestAnimationFrame(() => {
+      try { mv.requestUpdate?.(); } catch (_) {}
+    });
+  });
+}
+  
 function cleanObjectName(name) {
 return String(name || "")
 .trim()
@@ -1762,7 +1789,7 @@ obj.updateMatrixWorld?.(true);
 const scene = getDtiSceneRoot(mv);
 scene?.updateMatrixWorld?.(true);
 
-try { mv.requestUpdate?.(); } catch (_) {}
+forceViewerRedraw(mv);
 }
 
 async function refreshDtiSceneForActiveViewer() {
@@ -1822,7 +1849,7 @@ applyDtiPanOffsetToViewer(mv);
 scene.updateMatrixWorld?.(true);
 setDtiStatus(id, "done");
 
-try { mv.requestUpdate?.(); } catch (_) {}
+forceViewerRedraw(mv);
 } catch (err) {
 console.warn("DTI model failed to load:", id, err);
 dtiEnabled.delete(id);
@@ -1914,7 +1941,7 @@ function applyModelOpacityToViewer(mv) {
   });
 
   scene.updateMatrixWorld?.(true);
-  try { mv.requestUpdate?.(); } catch (_) {}
+  forceViewerRedraw(mv);
 }
 
 function setModelOpacity(value) {
