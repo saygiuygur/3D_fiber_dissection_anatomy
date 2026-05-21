@@ -1564,18 +1564,30 @@ function buildDtiListOnce() {
 
         if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
   // Do not interrupt model 1 once it has started downloading.
-  // DTI alignment depends on model 1 reference data, so let it finish.
+  // Wait for model 1 to finish, then continue downloading the requested model.
   if (currentDownloadingId === PRIMARY_MODEL_ID) {
-    resumeRequested = true;
-    return inFlight.get(currentDownloadingId);
-  }
+    const primaryState = state.get(PRIMARY_MODEL_ID);
 
-  currentController.abort();
+    if (primaryState?.status === "loading") {
+      resumeRequested = true;
+      try {
+        await inFlight.get(PRIMARY_MODEL_ID);
+      } catch (_) {}
+    }
 
-  const prev = state.get(currentDownloadingId);
-  if (prev && prev.status === "loading") {
-    prev.status = "paused";
-    refreshMeta(currentDownloadingId);
+    // Clear stale primary download handles after model 1 is done.
+    if (state.get(PRIMARY_MODEL_ID)?.status !== "loading") {
+      currentDownloadingId = null;
+      currentController = null;
+    }
+  } else {
+    currentController.abort();
+
+    const prev = state.get(currentDownloadingId);
+    if (prev && prev.status === "loading") {
+      prev.status = "paused";
+      refreshMeta(currentDownloadingId);
+    }
   }
 }
 
@@ -1628,8 +1640,13 @@ function buildDtiListOnce() {
           maybeResumePreload();
           throw err;
         } finally {
-          inFlight.delete(modelId);
-        }
+  inFlight.delete(modelId);
+
+  if (currentDownloadingId === modelId) {
+    currentDownloadingId = null;
+    currentController = null;
+  }
+}
       })();
 
       inFlight.set(modelId, p);
