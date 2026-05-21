@@ -940,7 +940,15 @@ const dtiAlignedPrototypePromises = new Map(); // dtiId -> Promise<aligned root>
 const dtiEnabled = new Set();
 const dtiMountedByMv = new WeakMap();
 const dtiUi = new Map();
+const dtiState = new Map(); // dtiId -> { status, progressText }
 const dtiTargetReferenceCache = new Map(); // normalized model-1 reference key -> THREE.Vector3
+
+DTI_MODELS.forEach(dti => {
+  dtiState.set(dti.id, {
+    status: "idle",
+    progressText: ""
+  });
+});
 
 let dtiReferenceCacheLocked = false;
 let dtiRefreshToken = 0;
@@ -1030,9 +1038,42 @@ function getMountedDtiMap(mv) {
   return map;
 }
 
-function setDtiStatus(id, text) {
+function refreshDtiMeta(id) {
   const ui = dtiUi.get(id);
-  if (ui?.status) ui.status.textContent = text || "";
+  const st = dtiState.get(id);
+  if (!ui?.status || !st) return;
+
+  if (st.status === "done") {
+    ui.status.innerHTML = doneIconSVG();
+    return;
+  }
+
+  if (st.status === "paused") {
+    ui.status.innerHTML = pausedIconSVG();
+    return;
+  }
+
+  if (st.status === "error") {
+    ui.status.innerHTML = errorIconSVG();
+    return;
+  }
+
+  if (st.status === "loading") {
+    ui.status.innerHTML = loadingIconSVG(parsePercent(st.progressText));
+    return;
+  }
+
+  ui.status.innerHTML = "";
+}
+
+function setDtiStatus(id, status, progressText = "") {
+  const st = dtiState.get(id);
+  if (!st) return;
+
+  st.status = status;
+  st.progressText = progressText;
+
+  refreshDtiMeta(id);
 }
 
 function markAsDtiObject(root, dtiId) {
@@ -1065,12 +1106,37 @@ async function loadDtiPrototype(dti) {
     return dtiPrototypePromises.get(dti.id);
   }
 
-  const p = dtiLoader.loadAsync(dti.url).then(gltf => {
-    const root = gltf.scene || gltf.scenes?.[0];
-    if (!root) throw new Error(`No scene found in ${dti.url}`);
+  const p = new Promise((resolve, reject) => {
+    setDtiStatus(dti.id, "loading", "0%");
 
-    markAsDtiObject(root, dti.id);
-    return root;
+    dtiLoader.load(
+      dti.url,
+      gltf => {
+        const root = gltf.scene || gltf.scenes?.[0];
+
+        if (!root) {
+          setDtiStatus(dti.id, "error");
+          reject(new Error(`No scene found in ${dti.url}`));
+          return;
+        }
+
+        markAsDtiObject(root, dti.id);
+        setDtiStatus(dti.id, "done");
+        resolve(root);
+      },
+      event => {
+        if (event.lengthComputable && event.total > 0) {
+          const pct = Math.floor((event.loaded / event.total) * 100);
+          setDtiStatus(dti.id, "loading", `${pct}%`);
+        } else {
+          setDtiStatus(dti.id, "loading", "");
+        }
+      },
+      err => {
+        setDtiStatus(dti.id, "error");
+        reject(err);
+      }
+    );
   });
 
   dtiPrototypePromises.set(dti.id, p);
@@ -1438,7 +1504,7 @@ async function refreshDtiSceneForActiveViewer() {
 
   for (const id of dtiEnabled) {
     if (mounted.has(id) && mounted.get(id).parent) {
-      setDtiStatus(id, "✓");
+      setDtiStatus(id, "done");
       continue;
     }
 
@@ -1446,7 +1512,7 @@ async function refreshDtiSceneForActiveViewer() {
     if (!dti) continue;
 
     try {
-      setDtiStatus(id, "…");
+      setDtiStatus(id, "loading", "0%");
 
       const alignedProto = await getAlignedDtiPrototype(dti, mv);
       if (token !== dtiRefreshToken || mv !== activeMv) return;
@@ -1461,7 +1527,7 @@ async function refreshDtiSceneForActiveViewer() {
       applyDtiPanOffsetToViewer(mv);
 
       scene.updateMatrixWorld?.(true);
-      setDtiStatus(id, "✓");
+      setDtiStatus(id, "done");
 
       try { mv.requestUpdate?.(); } catch (_) {}
     } catch (err) {
@@ -1471,7 +1537,7 @@ async function refreshDtiSceneForActiveViewer() {
       const ui = dtiUi.get(id);
       if (ui?.checkbox) ui.checkbox.checked = false;
 
-      setDtiStatus(id, "!");
+      setDtiStatus(id, "error");
     }
   }
 
@@ -1490,9 +1556,16 @@ function scheduleDtiRefreshAfterModelPrepared() {
 function setDtiVisible(dtiId, visible) {
   if (visible) {
     dtiEnabled.add(dtiId);
+
+    const st = dtiState.get(dtiId);
+    if (!st || st.status !== "done") {
+      setDtiStatus(dtiId, "loading", st?.progressText || "0%");
+    } else {
+      setDtiStatus(dtiId, "done");
+    }
   } else {
     dtiEnabled.delete(dtiId);
-    setDtiStatus(dtiId, "");
+    setDtiStatus(dtiId, "paused");
   }
 
   refreshDtiSceneForActiveViewer();
@@ -1522,9 +1595,11 @@ function buildDtiListOnce() {
 
     dtiUi.set(dti.id, { checkbox, status });
 
-    checkbox.addEventListener('change', () => {
-      setDtiVisible(dti.id, checkbox.checked);
-    });
+refreshDtiMeta(dti.id);
+
+checkbox.addEventListener('change', () => {
+  setDtiVisible(dti.id, checkbox.checked);
+});
 
     row.appendChild(checkbox);
     row.appendChild(name);
