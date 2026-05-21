@@ -1010,12 +1010,15 @@ function findObjectByReferenceKey(scene, wantedNameOrKey) {
 
   scene.traverse?.(obj => {
     if (found) return;
+
+    // Important: never use copied DTI reference empties as anatomical targets.
+    if (isDtiObjectOrInsideDti(obj)) return;
+
     if (referenceKey(obj.name) === wantedKey) found = obj;
   });
 
   return found;
 }
-
 function getMountedDtiMap(mv) {
   let map = dtiMountedByMv.get(mv);
   if (!map) {
@@ -1351,24 +1354,10 @@ function unmountAllDtiFromViewer(mv) {
 
   mounted.clear();
 }
-function getCurrentModelPanDelta(mv, dtiObj = null) {
+function getCurrentModelPanDelta(mv) {
   const currentTarget = mv.getCameraTarget?.();
-  if (!currentTarget) return new THREE.Vector3(0, 0, 0);
+  if (!currentTarget) return lastDtiPanDelta.clone();
 
-  // Model 1 is the DTI reference model.
-  // Use the DTI object's own stored base target for model 1.
-  if (
-    currentShownId === DTI_REFERENCE_MODEL_ID &&
-    dtiObj?.__dtiBaseCameraTarget
-  ) {
-    return new THREE.Vector3(
-      currentTarget.x - dtiObj.__dtiBaseCameraTarget.x,
-      currentTarget.y - dtiObj.__dtiBaseCameraTarget.y,
-      currentTarget.z - dtiObj.__dtiBaseCameraTarget.z
-    );
-  }
-
-  // Other models use their original model-viewer base target.
   const modelBaseTarget = baseTarget.get(currentShownId);
 
   if (modelBaseTarget) {
@@ -1391,17 +1380,32 @@ function applyDtiPanOffsetToViewer(mv) {
   for (const obj of mounted.values()) {
   if (!obj.__dtiBasePosition) continue;
 
-  const panDelta = getCurrentModelPanDelta(mv, obj);
+ function applyDtiPanOffsetToViewer(mv) {
+  if (!mv || !mv.src) return;
+
+  const mounted = getMountedDtiMap(mv);
+  if (!mounted.size) return;
+
+  const panDelta = getCurrentModelPanDelta(mv);
   lastDtiPanDelta.copy(panDelta);
 
-  // Minus direction is correct for your viewer panning behavior.
-  obj.position.set(
-    obj.__dtiBasePosition.x - panDelta.x,
-    obj.__dtiBasePosition.y - panDelta.y,
-    obj.__dtiBasePosition.z - panDelta.z
-  );
+  for (const obj of mounted.values()) {
+    if (!obj.__dtiBasePosition) continue;
 
-  obj.updateMatrixWorld?.(true);
+    // Minus direction is correct for your viewer panning behavior.
+    obj.position.set(
+      obj.__dtiBasePosition.x - panDelta.x,
+      obj.__dtiBasePosition.y - panDelta.y,
+      obj.__dtiBasePosition.z - panDelta.z
+    );
+
+    obj.updateMatrixWorld?.(true);
+  }
+
+  const scene = getDtiSceneRoot(mv);
+  scene?.updateMatrixWorld?.(true);
+
+  try { mv.requestUpdate?.(); } catch (_) {}
 }
 
   const scene = getDtiSceneRoot(mv);
@@ -1475,22 +1479,8 @@ if (!aligned) {
 }
 
 // Store the aligned default DTI position.
+// Pan is handled uniformly from the active model's baseTarget.
 obj.__dtiBasePosition = obj.position.clone();
-
-// For model 1, use a DTI-specific base target.
-// If we arrived at model 1 with an already-carried pan, reconstruct the base target
-// so the current pan delta remains equal to lastDtiPanDelta.
-const currentTarget = mv.getCameraTarget?.();
-
-if (currentShownId === DTI_REFERENCE_MODEL_ID && currentTarget) {
-  obj.__dtiBaseCameraTarget = {
-    x: currentTarget.x - lastDtiPanDelta.x,
-    y: currentTarget.y - lastDtiPanDelta.y,
-    z: currentTarget.z - lastDtiPanDelta.z
-  };
-} else {
-  obj.__dtiBaseCameraTarget = null;
-}
 
 scene.add(obj);
 mounted.set(id, obj);
