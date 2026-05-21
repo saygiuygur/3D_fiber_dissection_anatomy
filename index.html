@@ -117,32 +117,73 @@ box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 margin-top:18px;
 }
 
+.opacity-row{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:12px;
+}
+
 .opacity-title{
 font-size:14px;
 font-weight:600;
-margin:0 0 10px 0;
+margin:0;
 }
 
-.opacity-options{
-display:flex;
-align-items:center;
-gap:8px;
-margin-bottom:8px;
-}
-
-.opacity-btn{
-border:1px solid #cfcfcf;
-background:#fff;
+.opacity-switch{
+position:relative;
+width:92px;
+height:30px;
+flex:0 0 92px;
 border-radius:999px;
-padding:5px 12px;
-font-size:13px;
-font-weight:600;
+background:#d9d9d9;
+box-shadow:inset 0 0 0 1px rgba(0,0,0,0.08);
 cursor:pointer;
+user-select:none;
 }
 
-.opacity-btn.selected{
-border-color:#111;
-box-shadow:0 0 0 2px rgba(0,0,0,0.12);
+.opacity-switch input{
+position:absolute;
+opacity:0;
+width:0;
+height:0;
+}
+
+.opacity-knob{
+position:absolute;
+top:3px;
+left:3px;
+width:42px;
+height:24px;
+border-radius:999px;
+background:#fff;
+box-shadow:0 2px 6px rgba(0,0,0,0.25);
+transition:transform .2s ease;
+z-index:2;
+}
+
+.opacity-switch input:checked ~ .opacity-knob{
+transform:translateX(44px);
+}
+
+.opacity-label{
+position:absolute;
+top:50%;
+transform:translateY(-50%);
+font-size:11px;
+font-weight:700;
+line-height:1;
+z-index:3;
+pointer-events:none;
+color:#555;
+}
+
+.opacity-label-50{
+left:11px;
+}
+
+.opacity-label-100{
+right:8px;
 }
   
 .swatch{
@@ -445,11 +486,16 @@ letter-spacing: 0.2px;
 </div>
 
 <div class="opacity-section">
-<div class="opacity-title">Model Opacity</div>
-<div class="opacity-options" id="opacityOptions">
-<button class="opacity-btn selected" data-opacity="1">100%</button>
-<button class="opacity-btn" data-opacity="0.5">50%</button>
-</div>
+  <div class="opacity-row">
+    <div class="opacity-title">Model Opacity</div>
+
+    <label class="opacity-switch" title="Toggle model opacity">
+      <input id="modelOpacityToggle" type="checkbox" checked />
+      <span class="opacity-knob"></span>
+      <span class="opacity-label opacity-label-50">50%</span>
+      <span class="opacity-label opacity-label-100">100%</span>
+    </label>
+  </div>
 </div>
   
 <div class="bg-section">
@@ -1872,35 +1918,32 @@ function applyModelOpacityToViewer(mv) {
 }
 
 function setModelOpacity(value) {
-  modelOpacity = Number(value) || 1;
+  modelOpacity = Number(value) === 0.5 ? 0.5 : 1;
 
   try {
     localStorage.setItem("modelOpacity", String(modelOpacity));
   } catch (_) {}
 
-  const opacityOptions = document.getElementById("opacityOptions");
-  opacityOptions?.querySelectorAll(".opacity-btn").forEach(btn => {
-    const v = Number(btn.dataset.opacity);
-    btn.classList.toggle("selected", Math.abs(v - modelOpacity) < 0.001);
-  });
+  const toggle = document.getElementById("modelOpacityToggle");
+  if (toggle) {
+    toggle.checked = modelOpacity >= 0.999;
+  }
 
   applyModelOpacityToViewer(activeMv);
   applyModelOpacityToViewer(idleMv);
 }
 
 function initModelOpacitySelector() {
-  const opacityOptions = document.getElementById("opacityOptions");
-  if (!opacityOptions) return;
+  const toggle = document.getElementById("modelOpacityToggle");
+  if (!toggle) return;
 
   let saved = null;
   try { saved = localStorage.getItem("modelOpacity"); } catch (_) {}
 
   const initial = saved === "0.5" ? 0.5 : 1;
 
-  opacityOptions.querySelectorAll(".opacity-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      setModelOpacity(Number(btn.dataset.opacity));
-    });
+  toggle.addEventListener("change", () => {
+    setModelOpacity(toggle.checked ? 1 : 0.5);
   });
 
   setModelOpacity(initial);
