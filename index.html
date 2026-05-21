@@ -1789,7 +1789,7 @@ obj.updateMatrixWorld?.(true);
 const scene = getDtiSceneRoot(mv);
 scene?.updateMatrixWorld?.(true);
 
-forceViewerRedraw(mv);
+try { mv.requestUpdate?.(); } catch (_) {}
 }
 
 async function refreshDtiSceneForActiveViewer() {
