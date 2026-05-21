@@ -1321,7 +1321,36 @@ function unmountAllDtiFromViewer(mv) {
 
   mounted.clear();
 }
+function applyDtiPanOffsetToViewer(mv) {
+  if (!mv || !mv.src) return;
 
+  const mounted = getMountedDtiMap(mv);
+  if (!mounted.size) return;
+
+  const currentTarget = mv.getCameraTarget?.();
+  if (!currentTarget) return;
+
+  for (const obj of mounted.values()) {
+    if (!obj.__dtiBasePosition || !obj.__dtiBaseCameraTarget) continue;
+
+    const dx = currentTarget.x - obj.__dtiBaseCameraTarget.x;
+    const dy = currentTarget.y - obj.__dtiBaseCameraTarget.y;
+    const dz = currentTarget.z - obj.__dtiBaseCameraTarget.z;
+
+    obj.position.set(
+      obj.__dtiBasePosition.x + dx,
+      obj.__dtiBasePosition.y + dy,
+      obj.__dtiBasePosition.z + dz
+    );
+
+    obj.updateMatrixWorld?.(true);
+  }
+
+  const scene = getDtiSceneRoot(mv);
+  scene?.updateMatrixWorld?.(true);
+
+  try { mv.requestUpdate?.(); } catch (_) {}
+}
 async function refreshDtiSceneForActiveViewer() {
   const mv = activeMv;
   if (!mv || !mv.src) return;
@@ -1375,20 +1404,30 @@ async function refreshDtiSceneForActiveViewer() {
       const obj = cloneDtiObject(proto, id);
 
       // Align DTI reference empties to cached model-1 anatomical empties.
-      const aligned = applyLandmarkAlignmentToDti(obj, mv, id);
+     const aligned = applyLandmarkAlignmentToDti(obj, mv, id);
 
-      if (!aligned) {
-        setDtiStatus(id, "!");
-        dtiEnabled.delete(id);
+if (!aligned) {
+  setDtiStatus(id, "!");
+  dtiEnabled.delete(id);
 
-        const ui = dtiUi.get(id);
-        if (ui?.checkbox) ui.checkbox.checked = false;
+  const ui = dtiUi.get(id);
+  if (ui?.checkbox) ui.checkbox.checked = false;
 
-        continue;
-      }
+  continue;
+}
 
-      scene.add(obj);
-      mounted.set(id, obj);
+// Store the aligned base position and the camera target at the moment of alignment.
+// Later, when model-viewer pans, we add the camera-target delta to this base position.
+const baseTarget = mv.getCameraTarget?.();
+
+obj.__dtiBasePosition = obj.position.clone();
+obj.__dtiBaseCameraTarget = baseTarget
+  ? { x: baseTarget.x, y: baseTarget.y, z: baseTarget.z }
+  : { x: 0, y: 0, z: 0 };
+
+scene.add(obj);
+mounted.set(id, obj);
+applyDtiPanOffsetToViewer(mv);
 
       scene.updateMatrixWorld?.(true);
       setDtiStatus(id, "✓");
@@ -1641,11 +1680,23 @@ function swapViewersNow() {
   mv.addEventListener('wheel', (e) => {
     handleFixedStepWheelZoom(mv, e);
     scheduleSettledCarrySnapshotManual();
+    applyDtiPanOffsetToViewer(mv);
   }, { passive: false, capture: true });
 
-  mv.addEventListener('pointerup', scheduleSettledCarrySnapshotManual, { passive: true });
-  mv.addEventListener('touchend', scheduleSettledCarrySnapshotManual, { passive: true });
-  mv.addEventListener('camera-change', scheduleSettledCarrySnapshotCameraChange, { passive: true });
+  mv.addEventListener('pointerup', () => {
+    scheduleSettledCarrySnapshotManual();
+    applyDtiPanOffsetToViewer(mv);
+  }, { passive: true });
+
+  mv.addEventListener('touchend', () => {
+    scheduleSettledCarrySnapshotManual();
+    applyDtiPanOffsetToViewer(mv);
+  }, { passive: true });
+
+  mv.addEventListener('camera-change', () => {
+    scheduleSettledCarrySnapshotCameraChange();
+    applyDtiPanOffsetToViewer(mv);
+  }, { passive: true });
 }
 
     function getMvScene(mv) {
@@ -1781,8 +1832,10 @@ function swapViewersNow() {
       const scene = getMvScene(mv);
       if (!scene || typeof scene.traverse !== "function") return null;
 
-      scene.updateMatrixWorld?.(true);
-      const occluders = [];
+      applyDtiPanOffsetToViewer(mv);
+
+scene.updateMatrixWorld?.(true);
+try { mv.requestUpdate?.(); } catch (_) {}
 
       scene.traverse(obj => {
   if (!obj || obj.userData?.__isDTI) return;
