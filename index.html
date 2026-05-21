@@ -403,7 +403,7 @@ background: rgba(255,255,255,0.65);
 cursor: pointer;
 transform: translate(-50%, -50%);
 box-sizing: border-box;
-touch-action:none;
+pointer-events:none;
 }
 .hotspot.selected{
 border-color: #1e88e5;
@@ -519,7 +519,7 @@ letter-spacing: 0.2px;
 </div>
 
 <div class="small">
-Select a model, then use annotations to focus anatomical structures.
+Select a model, use the mouse to rotate, zoom, and pan, and click annotations to focus anatomical structures.
 </div>
 </div>
 
@@ -1021,193 +1021,141 @@ setAnnotationsEnabled(enabled);
 annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.checked));
 }
 
-// Tooltip (LOCKED)
-let hotspotPointerState = null;
-const HOTSPOT_DRAG_THRESHOLD = 4;
+// Tooltip + annotation mouse behavior
+// Hotspots are visually present but pointer-transparent.
+// This lets model-viewer keep normal zoom / rotate / pan behavior.
 
-function dispatchPointerToViewer(type, ev, buttonsOverride = null) {
-  const mv = activeMv;
-  if (!mv) return;
+const HOTSPOT_HIT_PAD = 5;
+const HOTSPOT_CLICK_MOVE_THRESHOLD = 4;
+let hotspotClickCandidate = null;
 
-  const init = {
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    pointerId: ev.pointerId || 1,
-    pointerType: ev.pointerType || "mouse",
-    isPrimary: ev.isPrimary !== false,
-    clientX: ev.clientX,
-    clientY: ev.clientY,
-    screenX: ev.screenX,
-    screenY: ev.screenY,
-    button: ev.button ?? 0,
-    buttons: buttonsOverride ?? ev.buttons,
-    ctrlKey: ev.ctrlKey,
-    shiftKey: ev.shiftKey,
-    altKey: ev.altKey,
-    metaKey: ev.metaKey
-  };
-
-  try {
-    mv.dispatchEvent(new PointerEvent(type, init));
-  } catch (_) {}
-}
-
-function dispatchWheelToViewer(ev) {
-  const mv = activeMv;
-  if (!mv) return;
-
-  const init = {
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    deltaX: ev.deltaX,
-    deltaY: ev.deltaY,
-    deltaZ: ev.deltaZ,
-    deltaMode: ev.deltaMode,
-    clientX: ev.clientX,
-    clientY: ev.clientY,
-    screenX: ev.screenX,
-    screenY: ev.screenY,
-    ctrlKey: ev.ctrlKey,
-    shiftKey: ev.shiftKey,
-    altKey: ev.altKey,
-    metaKey: ev.metaKey
-  };
-
-  try {
-    mv.dispatchEvent(new WheelEvent("wheel", init));
-  } catch (_) {}
-}
-
-function setHotspotsPointerPassthrough(enabled) {
-  const mv = activeMv;
-  if (!mv) return;
-
-  mv.querySelectorAll(".hotspot").forEach(h => {
-    h.style.pointerEvents = enabled ? "none" : "";
-  });
+function hideTip(){
+  hotspotTip.style.display = 'none';
 }
 
 function attachTip(el, slotName = null) {
-  el.addEventListener('mouseenter', (e) => {
-    const text = el.dataset.label || "";
-    if (!text) return;
-
-    hotspotTip.textContent = text;
-    hotspotTip.style.display = 'block';
-
-    const rect = viewerWrap.getBoundingClientRect();
-    hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-    hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-  });
-
-  el.addEventListener('mousemove', (e) => {
-    if (hotspotTip.style.display !== 'block') return;
-
-    const rect = viewerWrap.getBoundingClientRect();
-    hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-    hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-  });
-
-  el.addEventListener('mouseleave', () => {
-    hotspotTip.style.display = 'none';
-  });
-
-  // Allow wheel zoom even when the mouse is over an annotation hotspot.
-  el.addEventListener('wheel', (e) => {
-    hideTip();
-    e.preventDefault();
-    e.stopPropagation();
-    dispatchWheelToViewer(e);
-  }, { passive:false });
-
-  // We handle click-vs-drag manually:
-  // - click/release on hotspot focuses annotation
-  // - drag away passes movement to model-viewer
-  el.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-
-    hotspotPointerState = {
-      el,
-      slotName,
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      downEvent: e,
-      dragging: false
-    };
-
-    try { el.setPointerCapture?.(e.pointerId); } catch (_) {}
-
-    e.preventDefault();
-    e.stopPropagation();
-  });
+  el.dataset.slotName = slotName || "";
 }
 
-function hideTip(){ hotspotTip.style.display = 'none'; }
+function isViewerUiEventTarget(target) {
+  return !!target?.closest?.("#dtiPanel, #annoNav, .sidebar");
+}
 
-  document.addEventListener('pointermove', (e) => {
-  if (!hotspotPointerState) return;
+function getHotspotAtClientPoint(clientX, clientY) {
+  if (!activeMv) return null;
 
-  const s = hotspotPointerState;
-  const dx = e.clientX - s.startX;
-  const dy = e.clientY - s.startY;
-  const moved = Math.sqrt(dx * dx + dy * dy) > HOTSPOT_DRAG_THRESHOLD;
+  const hotspots = Array.from(activeMv.querySelectorAll(".hotspot"));
 
-  if (!s.dragging && moved) {
-    s.dragging = true;
-    hideTip();
+  for (const el of hotspots) {
+    if (el.classList.contains("occluded")) continue;
 
-    try { s.el.releasePointerCapture?.(s.pointerId); } catch (_) {}
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) continue;
 
-    // Temporarily let the pointer pass through hotspots.
-    setHotspotsPointerPassthrough(true);
+    const r = el.getBoundingClientRect();
 
-    // Start model-viewer interaction from the original pointerdown.
-    dispatchPointerToViewer('pointerdown', s.downEvent, 1);
-  }
-
-  if (s.dragging) {
-    dispatchPointerToViewer('pointermove', e, e.buttons || 1);
-  }
-}, { capture:true });
-
-document.addEventListener('pointerup', (e) => {
-  if (!hotspotPointerState) return;
-
-  const s = hotspotPointerState;
-
-  if (s.dragging) {
-    dispatchPointerToViewer('pointerup', e, 0);
-
-    requestAnimationFrame(() => {
-      setHotspotsPointerPassthrough(false);
-    });
-  } else {
-    const under = document.elementFromPoint(e.clientX, e.clientY);
-    const releasedOnSameHotspot = under === s.el || s.el.contains(under);
-
-    if (releasedOnSameHotspot && s.slotName) {
-      hideTip();
-      setSelectedAnnoBySlot(s.slotName);
-      focusHotspot(s.slotName);
+    if (
+      clientX >= r.left - HOTSPOT_HIT_PAD &&
+      clientX <= r.right + HOTSPOT_HIT_PAD &&
+      clientY >= r.top - HOTSPOT_HIT_PAD &&
+      clientY <= r.bottom + HOTSPOT_HIT_PAD
+    ) {
+      return el;
     }
   }
 
-  hotspotPointerState = null;
-}, { capture:true });
+  return null;
+}
 
-document.addEventListener('pointercancel', (e) => {
-  if (!hotspotPointerState) return;
-
-  if (hotspotPointerState.dragging) {
-    dispatchPointerToViewer('pointercancel', e, 0);
+function showTipForHotspot(el, clientX, clientY) {
+  const text = el?.dataset?.label || "";
+  if (!text) {
+    hideTip();
+    return;
   }
 
-  hotspotPointerState = null;
-  setHotspotsPointerPassthrough(false);
-}, { capture:true });
+  hotspotTip.textContent = text;
+  hotspotTip.style.display = "block";
+
+  const rect = viewerWrap.getBoundingClientRect();
+  hotspotTip.style.left = (clientX - rect.left + 12) + "px";
+  hotspotTip.style.top  = (clientY - rect.top + 12) + "px";
+}
+
+viewerWrap.addEventListener("pointermove", (e) => {
+  if (isViewerUiEventTarget(e.target)) {
+    hideTip();
+    return;
+  }
+
+  const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
+
+  if (hit) {
+    showTipForHotspot(hit, e.clientX, e.clientY);
+  } else {
+    hideTip();
+  }
+
+  if (hotspotClickCandidate) {
+    const dx = e.clientX - hotspotClickCandidate.startX;
+    const dy = e.clientY - hotspotClickCandidate.startY;
+
+    if (Math.sqrt(dx * dx + dy * dy) > HOTSPOT_CLICK_MOVE_THRESHOLD) {
+      hotspotClickCandidate.moved = true;
+      hideTip();
+    }
+  }
+}, { passive:true });
+
+viewerWrap.addEventListener("pointerleave", () => {
+  hideTip();
+}, { passive:true });
+
+viewerWrap.addEventListener("pointerdown", (e) => {
+  if (isViewerUiEventTarget(e.target)) return;
+  if (e.button !== 0) return;
+
+  const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
+
+  hotspotClickCandidate = hit
+    ? {
+        el: hit,
+        slotName: hit.dataset.slotName || "",
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false
+      }
+    : null;
+
+  // Do not preventDefault / stopPropagation.
+  // Model-viewer must receive pointerdown for drag / pan / rotate.
+}, { passive:true });
+
+viewerWrap.addEventListener("pointerup", (e) => {
+  if (!hotspotClickCandidate) return;
+
+  const candidate = hotspotClickCandidate;
+  hotspotClickCandidate = null;
+
+  const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
+  const releasedOnSameHotspot = hit === candidate.el;
+
+  if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
+    hideTip();
+    setSelectedAnnoBySlot(candidate.slotName);
+    focusHotspot(candidate.slotName);
+  }
+
+  // If mouse moved before release, do nothing here.
+  // Model-viewer already handled the drag normally.
+}, { passive:true });
+
+viewerWrap.addEventListener("wheel", (e) => {
+  // Do not preventDefault.
+  // Model-viewer receives wheel normally because hotspots do not capture pointer events.
+  const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
+  if (hit) showTipForHotspot(hit, e.clientX, e.clientY);
+}, { passive:true });
 
 // Download/progress icons + download behavior (LOCKED)
 const state = new Map();
