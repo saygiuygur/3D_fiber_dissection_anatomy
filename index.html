@@ -191,7 +191,50 @@ height:16px;
   background:var(--dti-color, #777);
   box-shadow:0 0 0 2px rgba(255,255,255,0.9) inset;
 }
+  
+.dti-row.dti-all-row{
+  font-weight:600;
+  border-bottom:1px solid rgba(0,0,0,0.14);
+  margin-bottom:4px;
+}
 
+.dti-row.dti-disabled{
+  opacity:0.55;
+  cursor:default;
+}
+
+.dti-row.dti-disabled .dti-dot{
+  filter:grayscale(1);
+}
+
+.dti-dot.all-dot{
+  border-color:#8a8a8a;
+}
+
+.dti-row input:checked + .dti-dot.all-dot{
+  border-color:#7a7a7a;
+  background:
+    radial-gradient(circle at 30% 22%,
+      rgba(255,255,255,0.96) 0%,
+      rgba(255,255,255,0.62) 23%,
+      rgba(255,255,255,0.10) 43%,
+      rgba(0,0,0,0.18) 72%,
+      rgba(255,255,255,0.28) 100%
+    ),
+    conic-gradient(
+      from 0deg,
+      #ff0000,
+      #ffff00,
+      #00ff00,
+      #00ffff,
+      #0000ff,
+      #ff00ff,
+      #ff0000
+    );
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,0.85),
+    inset 0 -1px 2px rgba(0,0,0,0.30);
+}
 .dti-name{
 flex:1 1 auto;
 min-width:0;
@@ -966,13 +1009,20 @@ const dtiEnabled = new Set();
 const dtiMountedByMv = new WeakMap();
 const dtiUi = new Map();
 const dtiState = new Map(); // dtiId -> { status, progressText }
+const dtiLoadedBytes = new Map(); // dtiId -> loaded bytes
+const dtiTotalBytes = new Map();  // dtiId -> total bytes
+let dtiTotalBytesPromise = null;
+let dtiAllUi = null;
 const dtiTargetReferenceCache = new Map(); // normalized model-1 reference key -> THREE.Vector3
 
 DTI_MODELS.forEach(dti => {
-dtiState.set(dti.id, {
-status: "idle",
-progressText: ""
-});
+  dtiState.set(dti.id, {
+    status: "idle",
+    progressText: ""
+  });
+
+  dtiLoadedBytes.set(dti.id, 0);
+  dtiTotalBytes.set(dti.id, 0);
 });
 
 let dtiReferenceCacheLocked = false;
@@ -1091,14 +1141,91 @@ return;
 ui.status.innerHTML = "";
 }
 
+  function getDtiAggregateProgressPercent() {
+  let loaded = 0;
+  let total = 0;
+
+  for (const dti of DTI_MODELS) {
+    loaded += dtiLoadedBytes.get(dti.id) || 0;
+    total += dtiTotalBytes.get(dti.id) || 0;
+  }
+
+  if (!total) return 0;
+  return Math.max(0, Math.min(100, Math.floor((loaded / total) * 100)));
+}
+
+function areAllDtiDownloaded() {
+  return DTI_MODELS.every(dti => dtiState.get(dti.id)?.status === "done");
+}
+
+function areAllDtiVisible() {
+  return DTI_MODELS.every(dti => dtiEnabled.has(dti.id));
+}
+
+function refreshDtiAllMeta() {
+  if (!dtiAllUi) return;
+
+  const allDownloaded = areAllDtiDownloaded();
+  const anyError = DTI_MODELS.some(dti => dtiState.get(dti.id)?.status === "error");
+  const anyLoading = DTI_MODELS.some(dti => dtiState.get(dti.id)?.status === "loading");
+  const pct = getDtiAggregateProgressPercent();
+
+  dtiAllUi.checkbox.disabled = !allDownloaded;
+  dtiAllUi.row.classList.toggle("dti-disabled", !allDownloaded);
+  dtiAllUi.checkbox.checked = allDownloaded && areAllDtiVisible();
+
+  if (allDownloaded) {
+    dtiAllUi.status.innerHTML = doneIconSVG();
+    return;
+  }
+
+  if (anyError && !anyLoading) {
+    dtiAllUi.status.innerHTML = errorIconSVG();
+    return;
+  }
+
+  if (anyLoading || pct > 0) {
+    dtiAllUi.status.innerHTML = loadingIconSVG(pct);
+    return;
+  }
+
+  dtiAllUi.status.innerHTML = "";
+}
+
+async function initDtiTotalBytesOnce() {
+  if (dtiTotalBytesPromise) return dtiTotalBytesPromise;
+
+  dtiTotalBytesPromise = Promise.all(
+    DTI_MODELS.map(async dti => {
+      try {
+        const res = await fetch(dti.url, { method: "HEAD" });
+        const total = Number(res.headers.get("Content-Length")) || 0;
+        if (total > 0) dtiTotalBytes.set(dti.id, total);
+      } catch (_) {
+        // Fallback: GLTFLoader progress events may still provide total bytes.
+      }
+    })
+  ).finally(() => {
+    refreshDtiAllMeta();
+  });
+
+  return dtiTotalBytesPromise;
+}
+  
 function setDtiStatus(id, status, progressText = "") {
-const st = dtiState.get(id);
-if (!st) return;
+  const st = dtiState.get(id);
+  if (!st) return;
 
-st.status = status;
-st.progressText = progressText;
+  st.status = status;
+  st.progressText = progressText;
 
-refreshDtiMeta(id);
+  if (status === "done") {
+    const total = dtiTotalBytes.get(id) || 0;
+    if (total > 0) dtiLoadedBytes.set(id, total);
+  }
+
+  refreshDtiMeta(id);
+  refreshDtiAllMeta();
 }
 
 function markAsDtiObject(root, dtiId) {
@@ -1127,45 +1254,54 @@ return root;
 }
 
 async function loadDtiPrototype(dti) {
-if (dtiPrototypePromises.has(dti.id)) {
-return dtiPrototypePromises.get(dti.id);
-}
+  if (dtiPrototypePromises.has(dti.id)) {
+    return dtiPrototypePromises.get(dti.id);
+  }
 
-const p = new Promise((resolve, reject) => {
-setDtiStatus(dti.id, "loading", "0%");
+  const p = new Promise((resolve, reject) => {
+    setDtiStatus(dti.id, "loading", "0%");
 
-dtiLoader.load(
-dti.url,
-gltf => {
-const root = gltf.scene || gltf.scenes?.[0];
+    dtiLoader.load(
+      dti.url,
 
-if (!root) {
-setDtiStatus(dti.id, "error");
-reject(new Error(`No scene found in ${dti.url}`));
-return;
-}
+      gltf => {
+        const root = gltf.scene || gltf.scenes?.[0];
 
-markAsDtiObject(root, dti.id);
-setDtiStatus(dti.id, "done");
-resolve(root);
-},
-event => {
-if (event.lengthComputable && event.total > 0) {
-const pct = Math.floor((event.loaded / event.total) * 100);
-setDtiStatus(dti.id, "loading", `${pct}%`);
-} else {
-setDtiStatus(dti.id, "loading", "");
-}
-},
-err => {
-setDtiStatus(dti.id, "error");
-reject(err);
-}
-);
-});
+        if (!root) {
+          setDtiStatus(dti.id, "error");
+          reject(new Error(`No scene found in ${dti.url}`));
+          return;
+        }
 
-dtiPrototypePromises.set(dti.id, p);
-return p;
+        markAsDtiObject(root, dti.id);
+        setDtiStatus(dti.id, "done");
+        resolve(root);
+      },
+
+      event => {
+        const loaded = Number(event.loaded) || 0;
+        dtiLoadedBytes.set(dti.id, loaded);
+
+        if (event.lengthComputable && event.total > 0) {
+          dtiTotalBytes.set(dti.id, Number(event.total) || 0);
+          const pct = Math.floor((loaded / event.total) * 100);
+          setDtiStatus(dti.id, "loading", `${pct}%`);
+        } else {
+          setDtiStatus(dti.id, "loading", "");
+        }
+
+        refreshDtiAllMeta();
+      },
+
+      err => {
+        setDtiStatus(dti.id, "error");
+        reject(err);
+      }
+    );
+  });
+
+  dtiPrototypePromises.set(dti.id, p);
+  return p;
 }
 
 function cloneDtiObject(proto, dtiId) {
@@ -1579,108 +1715,156 @@ refreshDtiSceneForActiveViewer();
 }
 
 function setDtiVisible(dtiId, visible) {
-if (visible) {
-dtiEnabled.add(dtiId);
+  if (visible) {
+    dtiEnabled.add(dtiId);
 
-const st = dtiState.get(dtiId);
-if (!st || st.status !== "done") {
-setDtiStatus(dtiId, "loading", st?.progressText || "0%");
-} else {
-setDtiStatus(dtiId, "done");
-}
-} else {
-dtiEnabled.delete(dtiId);
-setDtiStatus(dtiId, "paused");
-}
+    const st = dtiState.get(dtiId);
 
-refreshDtiSceneForActiveViewer();
+    if (!st || st.status === "idle" || st.status === "paused") {
+      setDtiStatus(dtiId, "loading", st?.progressText || "0%");
+    } else {
+      refreshDtiMeta(dtiId);
+    }
+  } else {
+    dtiEnabled.delete(dtiId);
+
+    // Hiding DTI should not change its download status.
+    refreshDtiMeta(dtiId);
+  }
+
+  refreshDtiAllMeta();
+  refreshDtiSceneForActiveViewer();
 }
 
 function buildDtiListOnce() {
-if (!dtiList) return;
+  if (!dtiList) return;
 
-dtiList.innerHTML = "";
-dtiUi.clear();
+  dtiList.innerHTML = "";
+  dtiUi.clear();
 
-for (const dti of DTI_MODELS) {
-const row = document.createElement('label');
+  // Select All row
+  const allRow = document.createElement('label');
+  allRow.className = "dti-row dti-all-row dti-disabled";
+  allRow.title = "Select all DTI tracts";
+
+  const allCheckbox = document.createElement('input');
+  allCheckbox.type = "checkbox";
+  allCheckbox.disabled = true;
+
+  const allDot = document.createElement('span');
+  allDot.className = "dti-dot all-dot";
+  allDot.setAttribute("aria-hidden", "true");
+
+  const allName = document.createElement('div');
+  allName.className = "dti-name";
+  allName.textContent = "Select all";
+
+  const allStatus = document.createElement('div');
+  allStatus.className = "dti-status";
+  allStatus.textContent = "";
+
+  allCheckbox.addEventListener('change', () => {
+    if (!areAllDtiDownloaded()) {
+      allCheckbox.checked = false;
+      return;
+    }
+
+    const turnOn = allCheckbox.checked;
+
+    for (const dti of DTI_MODELS) {
+      if (turnOn) dtiEnabled.add(dti.id);
+      else dtiEnabled.delete(dti.id);
+
+      const ui = dtiUi.get(dti.id);
+      if (ui?.checkbox) ui.checkbox.checked = turnOn;
+    }
+
+    refreshDtiAllMeta();
+    refreshDtiSceneForActiveViewer();
+  });
+
+  allRow.appendChild(allCheckbox);
+  allRow.appendChild(allDot);
+  allRow.appendChild(allName);
+  allRow.appendChild(allStatus);
+  dtiList.appendChild(allRow);
+
+  dtiAllUi = {
+    row: allRow,
+    checkbox: allCheckbox,
+    status: allStatus
+  };
+
+  // Individual DTI rows
+  for (const dti of DTI_MODELS) {
+    const row = document.createElement('label');
     row.className = "dti-row";
     row.title = dti.name;
-row.className = "dti-row";
-row.title = dti.name;
-row.style.setProperty("--dti-color", DTI_COLORS[dti.id] || "#777777");
-
-const checkbox = document.createElement('input');
-checkbox.type = "checkbox";
+    row.style.setProperty("--dti-color", DTI_COLORS[dti.id] || "#777777");
 
     const checkbox = document.createElement('input');
     checkbox.type = "checkbox";
-const dot = document.createElement('span');
-dot.className = "dti-dot";
-dot.setAttribute("aria-hidden", "true");
+
+    const dot = document.createElement('span');
+    dot.className = "dti-dot";
+    dot.setAttribute("aria-hidden", "true");
 
     const name = document.createElement('div');
     name.className = "dti-name";
     name.textContent = dti.name;
-const name = document.createElement('div');
-name.className = "dti-name";
-name.textContent = dti.name;
 
     const status = document.createElement('div');
     status.className = "dti-status";
     status.textContent = "";
-const status = document.createElement('div');
-status.className = "dti-status";
-status.textContent = "";
 
     dtiUi.set(dti.id, { checkbox, status });
-dtiUi.set(dti.id, { checkbox, status });
 
-refreshDtiMeta(dti.id);
+    refreshDtiMeta(dti.id);
 
-checkbox.addEventListener('change', () => {
-setDtiVisible(dti.id, checkbox.checked);
-});
+    checkbox.addEventListener('change', () => {
+      setDtiVisible(dti.id, checkbox.checked);
+      refreshDtiAllMeta();
+    });
 
     row.appendChild(checkbox);
+    row.appendChild(dot);
     row.appendChild(name);
     row.appendChild(status);
     dtiList.appendChild(row);
-row.appendChild(checkbox);
-row.appendChild(dot);
-row.appendChild(name);
-row.appendChild(status);
-dtiList.appendChild(row);
-}
+  }
+
+  refreshDtiAllMeta();
 }
 const PRIMARY_MODEL_ID = "01_Veselled_Annotated";
 let dtiPreloadStarted = false;
 let dtiPreloadRunning = false;
 
 async function startDtiPreloadOnce() {
-if (dtiPreloadStarted || dtiPreloadRunning) return;
+  if (dtiPreloadStarted || dtiPreloadRunning) return;
 
-dtiPreloadStarted = true;
-dtiPreloadRunning = true;
+  dtiPreloadStarted = true;
+  dtiPreloadRunning = true;
 
-try {
-for (const dti of DTI_MODELS) {
-const st = dtiState.get(dti.id);
+  try {
+    await initDtiTotalBytesOnce();
 
-// Skip already downloaded DTI models.
-if (st?.status === "done") continue;
+    for (const dti of DTI_MODELS) {
+      const st = dtiState.get(dti.id);
+      if (st?.status === "done") continue;
 
-try {
-await loadDtiPrototype(dti);
-} catch (err) {
-console.warn("DTI preload failed:", dti.id, err);
-setDtiStatus(dti.id, "error");
-// Continue with the next DTI instead of stopping the whole queue.
-}
-}
-} finally {
-dtiPreloadRunning = false;
-}
+      try {
+        await loadDtiPrototype(dti);
+      } catch (err) {
+        console.warn("DTI preload failed:", dti.id, err);
+        setDtiStatus(dti.id, "error");
+      }
+
+      refreshDtiAllMeta();
+    }
+  } finally {
+    dtiPreloadRunning = false;
+    refreshDtiAllMeta();
+  }
 }
 function maybeResumePreload() {
 if (!preloadEnabled) return;
