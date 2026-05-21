@@ -1377,15 +1377,6 @@ function applyDtiPanOffsetToViewer(mv) {
   const mounted = getMountedDtiMap(mv);
   if (!mounted.size) return;
 
-  for (const obj of mounted.values()) {
-  if (!obj.__dtiBasePosition) continue;
-
- function applyDtiPanOffsetToViewer(mv) {
-  if (!mv || !mv.src) return;
-
-  const mounted = getMountedDtiMap(mv);
-  if (!mounted.size) return;
-
   const panDelta = getCurrentModelPanDelta(mv);
   lastDtiPanDelta.copy(panDelta);
 
@@ -1401,12 +1392,6 @@ function applyDtiPanOffsetToViewer(mv) {
 
     obj.updateMatrixWorld?.(true);
   }
-
-  const scene = getDtiSceneRoot(mv);
-  scene?.updateMatrixWorld?.(true);
-
-  try { mv.requestUpdate?.(); } catch (_) {}
-}
 
   const scene = getDtiSceneRoot(mv);
   scene?.updateMatrixWorld?.(true);
