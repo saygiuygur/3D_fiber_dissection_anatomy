@@ -1923,7 +1923,7 @@ function buildDtiListOnce() {
 
   refreshDtiAllMeta();
 }
-    const PRIMARY_MODEL_ID = "01_Veselled_Annotated";
+   const PRIMARY_MODEL_ID = "01_Veselled_Annotated";
 
 let dtiPreloadStarted = false;
 let dtiPreloadRunning = false;
@@ -1955,7 +1955,6 @@ async function startDtiPreloadOnce() {
     refreshDtiAllMeta();
   }
 }
-    
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
