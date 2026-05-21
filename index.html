@@ -1028,7 +1028,53 @@ function refreshAnnoNavWidth() {
 // DTI GLBs contain copied reference empties from model 1.
 // Names do NOT need to match exactly at the final number.
 // The landmark alignment is calculated ONCE per DTI, then reused.
+const DTI_MODELS = [
+  {
+    id: "CST",
+    name: "CST",
+    url: "models/DTI/CST.glb"
+  },
+  {
+    id: "SLF_I",
+    name: "SLF I",
+    url: "models/DTI/SLF_I.glb"
+  },
+  {
+    id: "SLF_II",
+    name: "SLF II",
+    url: "models/DTI/SLF_II.glb"
+  },
+  {
+    id: "SLF_III",
+    name: "SLF III",
+    url: "models/DTI/SLF_III.glb"
+  },
+  {
+    id: "AF",
+    name: "AF",
+    url: "models/DTI/AF.glb"
+  },
+  {
+    id: "IFOF",
+    name: "IFOF",
+    url: "models/DTI/IFOF.glb"
+  },
+  {
+    id: "UF",
+    name: "UF",
+    url: "models/DTI/UF.glb"
+  }
+];
 
+const DTI_COLORS = {
+  CST: "#0000FFFF",
+  IFOF: "#FFFF00FF",
+  SLF_I: "#00D5BBFF",
+  SLF_II: "#00D5BBFF",
+  SLF_III: "#00D5BBFF",
+  UF: "#9C00FFFF",
+  AF: "#FF0000FF"
+};
 const dtiLoader = new GLTFLoader();
 const dtiPrototypePromises = new Map();
 const dtiAlignedPrototypePromises = new Map(); // dtiId -> Promise<aligned root>
