@@ -929,15 +929,20 @@ function refreshAnnoNavWidth() {
       paintActive();
       paintDownloading(null);
     }
-   // ===== DTI tract system: load DTI GLBs into the SAME Three.js scene =====
-// This gives real 3D depth behavior with the anatomical model.
+   // ===== DTI tract system: model-1-empty landmark alignment =====
+// DTI GLBs contain copied reference empties from model 1.
+// Names do NOT need to match exactly at the final number.
+// Example: TrolardV001, TrolardV002, TrolardV.001 all match as "trolardv".
 
 const dtiLoader = new GLTFLoader();
 const dtiPrototypePromises = new Map();
 const dtiEnabled = new Set();
 const dtiMountedByMv = new WeakMap();
 const dtiUi = new Map();
+const dtiTargetReferenceCache = new Map(); // normalized model-1 reference key -> THREE.Vector3
 let dtiRefreshToken = 0;
+
+const DTI_MIN_REFERENCE_PAIRS = 3;
 
 function getDtiSceneRoot(mv) {
   const scene = getMvScene(mv);
@@ -950,32 +955,37 @@ function getDtiSceneRoot(mv) {
   return null;
 }
 
-    function getDtiAttachRoot(mv) {
-  const scene = getMvScene(mv);
-  if (!scene || typeof scene.getObjectByName !== "function") return null;
-
-  const anns = ANNOTATIONS[currentShownId] || [];
-
-  for (const a of anns) {
-    const obj = scene.getObjectByName(a.anchor);
-    if (!obj) continue;
-
-    let root = obj;
-
-    while (root.parent && root.parent !== scene) {
-      root = root.parent;
-    }
-
-    // If the anchor is inside a top-level model group, attach DTI to that group.
-    // If the anchor is directly under the scene, attach DTI to the scene itself.
-    if (root !== obj) return root;
-    return scene;
-  }
-
-  // Fallback: if no annotation anchor is found, attach to the scene.
-  return scene;
+function cleanObjectName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/\.\d+$/, ""); // Blender duplicate suffix: .001, .002
 }
-    
+
+function referenceKey(name) {
+  return cleanObjectName(name)
+    .replace(/[\s_\-]+/g, "") // remove spaces, underscores, hyphens
+    .replace(/\d+$/g, "")     // remove final numbers: 001, 002, etc.
+    .toLowerCase();
+}
+
+function getModel1ReferenceKeySet() {
+  return new Set(MODEL01_NAMES.map(referenceKey));
+}
+
+function findObjectByReferenceKey(scene, wantedNameOrKey) {
+  if (!scene || !wantedNameOrKey) return null;
+
+  const wantedKey = referenceKey(wantedNameOrKey);
+  let found = null;
+
+  scene.traverse?.(obj => {
+    if (found) return;
+    if (referenceKey(obj.name) === wantedKey) found = obj;
+  });
+
+  return found;
+}
+
 function getMountedDtiMap(mv) {
   let map = dtiMountedByMv.get(mv);
   if (!map) {
@@ -1044,6 +1054,262 @@ function cloneDtiObject(proto, dtiId) {
   return markAsDtiObject(clone, dtiId);
 }
 
+function collectDtiReferencePoints(dtiRoot) {
+  const refs = new Map();
+  const model1Keys = getModel1ReferenceKeySet();
+
+  dtiRoot.updateMatrixWorld?.(true);
+
+  dtiRoot.traverse?.(obj => {
+    if (obj.isMesh) return;
+
+    const key = referenceKey(obj.name);
+    if (!model1Keys.has(key)) return;
+
+    const p = obj.getWorldPosition
+      ? obj.getWorldPosition(new THREE.Vector3())
+      : null;
+
+    if (p && !refs.has(key)) {
+      refs.set(key, p.clone());
+    }
+  });
+
+  return refs;
+}
+
+function cacheModel1ReferencePointsFromViewer(mv) {
+  const scene = getDtiSceneRoot(mv);
+  if (!scene) return;
+
+  scene.updateMatrixWorld?.(true);
+
+  let cachedCount = 0;
+
+  for (const name of MODEL01_NAMES) {
+    const key = referenceKey(name);
+    const obj = findObjectByReferenceKey(scene, name);
+    if (!obj) continue;
+
+    const p = obj.getWorldPosition
+      ? obj.getWorldPosition(new THREE.Vector3())
+      : null;
+
+    if (p) {
+      dtiTargetReferenceCache.set(key, p.clone());
+      cachedCount++;
+    }
+  }
+
+  if (cachedCount) {
+    console.log(`Cached ${cachedCount} model-1 DTI reference points.`);
+  }
+}
+
+function collectTargetReferencePoints(mv, wantedKeys) {
+  const scene = getDtiSceneRoot(mv);
+  const refs = new Map();
+
+  if (scene) {
+    scene.updateMatrixWorld?.(true);
+  }
+
+  for (const keyOrName of wantedKeys) {
+    const key = referenceKey(keyOrName);
+
+    let p = null;
+
+    // First use cached model-1 references.
+    if (dtiTargetReferenceCache.has(key)) {
+      p = dtiTargetReferenceCache.get(key).clone();
+    }
+
+    // Fallback: if active scene has the same reference empty, use it.
+    if (!p && scene) {
+      const obj = findObjectByReferenceKey(scene, key);
+      if (obj?.getWorldPosition) {
+        p = obj.getWorldPosition(new THREE.Vector3());
+      }
+    }
+
+    if (p) refs.set(key, p);
+  }
+
+  return refs;
+}
+
+function makeReferencePairs(sourceRefs, targetRefs) {
+  const pairs = [];
+
+  for (const [key, sourcePoint] of sourceRefs.entries()) {
+    const targetPoint = targetRefs.get(key);
+    if (!targetPoint) continue;
+
+    pairs.push({
+      name: key,
+      source: sourcePoint.clone(),
+      target: targetPoint.clone()
+    });
+  }
+
+  return pairs;
+}
+
+function pointLineDistance(p, a, b) {
+  const ab = b.clone().sub(a);
+  const len = ab.length();
+  if (len < 1e-9) return 0;
+
+  const ap = p.clone().sub(a);
+  return ap.cross(ab).length() / len;
+}
+
+function chooseStableReferenceTriangle(pairs) {
+  if (pairs.length < 3) return null;
+
+  let bestI = 0;
+  let bestJ = 1;
+  let bestDist = -Infinity;
+
+  // Choose the farthest target pair as A-B.
+  for (let i = 0; i < pairs.length; i++) {
+    for (let j = i + 1; j < pairs.length; j++) {
+      const d = pairs[i].target.distanceTo(pairs[j].target);
+      if (d > bestDist) {
+        bestDist = d;
+        bestI = i;
+        bestJ = j;
+      }
+    }
+  }
+
+  if (!Number.isFinite(bestDist) || bestDist < 1e-6) return null;
+
+  let bestK = -1;
+  let bestHeight = -Infinity;
+
+  const a = pairs[bestI].target;
+  const b = pairs[bestJ].target;
+
+  // Choose C as the point farthest from line A-B.
+  for (let k = 0; k < pairs.length; k++) {
+    if (k === bestI || k === bestJ) continue;
+
+    const h = pointLineDistance(pairs[k].target, a, b);
+    if (h > bestHeight) {
+      bestHeight = h;
+      bestK = k;
+    }
+  }
+
+  if (bestK < 0 || !Number.isFinite(bestHeight) || bestHeight < 1e-6) return null;
+
+  return [pairs[bestI], pairs[bestJ], pairs[bestK]];
+}
+
+function makeFrameFromTriangle(a, b, c) {
+  const x = b.clone().sub(a);
+  const xLen = x.length();
+  if (xLen < 1e-9) return null;
+
+  const u = x.clone().normalize();
+
+  const ac = c.clone().sub(a);
+  const normal = x.clone().cross(ac);
+  const normalLen = normal.length();
+  if (normalLen < 1e-9) return null;
+
+  const w = normal.clone().normalize();
+  const v = w.clone().cross(u).normalize();
+
+  const height = pointLineDistance(c, a, b);
+
+  return {
+    origin: a.clone(),
+    u,
+    v,
+    w,
+    lengthAB: xLen,
+    height
+  };
+}
+
+function makeBasisMatrix(frame, scale = 1) {
+  const m = new THREE.Matrix4();
+
+  m.makeBasis(
+    frame.u.clone().multiplyScalar(scale),
+    frame.v.clone().multiplyScalar(scale),
+    frame.w.clone().multiplyScalar(scale)
+  );
+
+  m.setPosition(frame.origin);
+  return m;
+}
+
+function buildAlignmentMatrixFromPairs(pairs) {
+  const tri = chooseStableReferenceTriangle(pairs);
+  if (!tri) return null;
+
+  const [A, B, C] = tri;
+
+  const sourceFrame = makeFrameFromTriangle(A.source, B.source, C.source);
+  const targetFrame = makeFrameFromTriangle(A.target, B.target, C.target);
+
+  if (!sourceFrame || !targetFrame) return null;
+
+  const scaleCandidates = [];
+
+  if (sourceFrame.lengthAB > 1e-9) {
+    scaleCandidates.push(targetFrame.lengthAB / sourceFrame.lengthAB);
+  }
+
+  if (sourceFrame.height > 1e-9) {
+    scaleCandidates.push(targetFrame.height / sourceFrame.height);
+  }
+
+  const scale = scaleCandidates.length
+    ? scaleCandidates.reduce((a, b) => a + b, 0) / scaleCandidates.length
+    : 1;
+
+  if (!Number.isFinite(scale) || scale <= 0) return null;
+
+  const sourceMatrix = makeBasisMatrix(sourceFrame, 1);
+  const targetMatrix = makeBasisMatrix(targetFrame, scale);
+
+  return targetMatrix.multiply(sourceMatrix.clone().invert());
+}
+
+function applyLandmarkAlignmentToDti(dtiObj, mv, dtiId) {
+  const sourceRefs = collectDtiReferencePoints(dtiObj);
+
+  if (sourceRefs.size < DTI_MIN_REFERENCE_PAIRS) {
+    console.warn(`DTI ${dtiId}: only ${sourceRefs.size} matching model-1 reference empties found.`);
+    return false;
+  }
+
+  const targetRefs = collectTargetReferencePoints(mv, sourceRefs.keys());
+  const pairs = makeReferencePairs(sourceRefs, targetRefs);
+
+  if (pairs.length < DTI_MIN_REFERENCE_PAIRS) {
+    console.warn(`DTI ${dtiId}: only ${pairs.length} reference pairs found.`);
+    return false;
+  }
+
+  const matrix = buildAlignmentMatrixFromPairs(pairs);
+
+  if (!matrix) {
+    console.warn(`DTI ${dtiId}: could not build alignment matrix.`);
+    return false;
+  }
+
+  dtiObj.applyMatrix4(matrix);
+  dtiObj.updateMatrixWorld?.(true);
+
+  console.log(`Aligned DTI ${dtiId} using ${pairs.length} reference pairs.`);
+  return true;
+}
+
 function unmountAllDtiFromViewer(mv) {
   const mounted = getMountedDtiMap(mv);
 
@@ -1061,11 +1327,16 @@ async function refreshDtiSceneForActiveViewer() {
   if (!mv || !mv.src) return;
 
   const scene = getDtiSceneRoot(mv);
-  const attachRoot = getDtiAttachRoot(mv);
 
-  if (!scene || !attachRoot) {
+  if (!scene) {
     requestAnimationFrame(refreshDtiSceneForActiveViewer);
     return;
+  }
+
+  // Cache model 1 references whenever model 1 is the active scene.
+  // Your viewer starts from model 1, so this should usually happen automatically.
+  if (currentShownId === "01_Veselled_Annotated") {
+    cacheModel1ReferencePointsFromViewer(mv);
   }
 
   const token = ++dtiRefreshToken;
@@ -1085,7 +1356,7 @@ async function refreshDtiSceneForActiveViewer() {
     }
   }
 
-  // Add enabled DTI objects into the same scene/root as the active anatomical model.
+  // Add enabled DTI objects into the same Three.js scene as the active anatomy.
   for (const id of dtiEnabled) {
     if (mounted.has(id) && mounted.get(id).parent) {
       setDtiStatus(id, "✓");
@@ -1103,9 +1374,20 @@ async function refreshDtiSceneForActiveViewer() {
 
       const obj = cloneDtiObject(proto, id);
 
-      // No manual offset and no computeShiftForModel here.
-      // The DTI object is attached to the same anatomical root.
-      attachRoot.add(obj);
+      // Align DTI reference empties to cached model-1 anatomical empties.
+      const aligned = applyLandmarkAlignmentToDti(obj, mv, id);
+
+      if (!aligned) {
+        setDtiStatus(id, "!");
+        dtiEnabled.delete(id);
+
+        const ui = dtiUi.get(id);
+        if (ui?.checkbox) ui.checkbox.checked = false;
+
+        continue;
+      }
+
+      scene.add(obj);
       mounted.set(id, obj);
 
       scene.updateMatrixWorld?.(true);
