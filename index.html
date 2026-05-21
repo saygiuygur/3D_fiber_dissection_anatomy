@@ -1347,26 +1347,41 @@ function unmountAllDtiFromViewer(mv) {
 
   mounted.clear();
 }
+function getCurrentModelPanDelta(mv) {
+  const currentTarget = mv.getCameraTarget?.();
+  if (!currentTarget) return new THREE.Vector3(0, 0, 0);
+
+  // This is the original, unpanned base target of the active model.
+  // It is captured by captureAutoFrameBase().
+  const modelBaseTarget = baseTarget.get(currentShownId);
+
+  if (modelBaseTarget) {
+    return new THREE.Vector3(
+      currentTarget.x - modelBaseTarget.x,
+      currentTarget.y - modelBaseTarget.y,
+      currentTarget.z - modelBaseTarget.z
+    );
+  }
+
+  return new THREE.Vector3(0, 0, 0);
+}
+
 function applyDtiPanOffsetToViewer(mv) {
   if (!mv || !mv.src) return;
 
   const mounted = getMountedDtiMap(mv);
   if (!mounted.size) return;
 
-  const currentTarget = mv.getCameraTarget?.();
-  if (!currentTarget) return;
+  const panDelta = getCurrentModelPanDelta(mv);
 
   for (const obj of mounted.values()) {
-    if (!obj.__dtiBasePosition || !obj.__dtiBaseCameraTarget) continue;
+    if (!obj.__dtiBasePosition) continue;
 
-    const dx = currentTarget.x - obj.__dtiBaseCameraTarget.x;
-    const dy = currentTarget.y - obj.__dtiBaseCameraTarget.y;
-    const dz = currentTarget.z - obj.__dtiBaseCameraTarget.z;
-
+    // Minus direction is correct for your viewer panning behavior.
     obj.position.set(
-      obj.__dtiBasePosition.x - dx,
-      obj.__dtiBasePosition.y - dy,
-      obj.__dtiBasePosition.z - dz
+      obj.__dtiBasePosition.x - panDelta.x,
+      obj.__dtiBasePosition.y - panDelta.y,
+      obj.__dtiBasePosition.z - panDelta.z
     );
 
     obj.updateMatrixWorld?.(true);
@@ -1442,14 +1457,10 @@ if (!aligned) {
   continue;
 }
 
-// Store the aligned base position and the camera target at the moment of alignment.
-// Later, when model-viewer pans, we add the camera-target delta to this base position.
-const baseTarget = mv.getCameraTarget?.();
-
+// Store the aligned default DTI position.
+// Panning is calculated from the active model's original baseTarget,
+// so DTI keeps the carried-over pan after model changes.
 obj.__dtiBasePosition = obj.position.clone();
-obj.__dtiBaseCameraTarget = baseTarget
-  ? { x: baseTarget.x, y: baseTarget.y, z: baseTarget.z }
-  : { x: 0, y: 0, z: 0 };
 
 scene.add(obj);
 mounted.set(id, obj);
