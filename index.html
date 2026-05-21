@@ -1708,13 +1708,13 @@ console.log(`Aligned DTI ${dtiId} using ${pairs.length} reference pairs.`);
 return true;
 }
 
-async function getAlignedDtiPrototype(dti, mv) {
+async function getAlignedDtiPrototype(dti, mv, modelId = currentShownId) {
 if (dtiAlignedPrototypePromises.has(dti.id)) {
 return dtiAlignedPrototypePromises.get(dti.id);
 }
 
 const p = (async () => {
-if (!dtiReferenceCacheLocked && currentShownId === DTI_REFERENCE_MODEL_ID) {
+if (!dtiReferenceCacheLocked && modelId === DTI_REFERENCE_MODEL_ID) {
 cacheModel1ReferencePointsFromViewer(mv);
 }
 
@@ -1761,11 +1761,11 @@ function unmountDtiFromViewer(mv, dtiId) {
   const scene = getDtiSceneRoot(mv);
   scene?.updateMatrixWorld?.(true);
 }
-function getCurrentModelPanDelta(mv) {
+function getCurrentModelPanDelta(mv, modelId = currentShownId) {
 const currentTarget = mv.getCameraTarget?.();
 if (!currentTarget) return lastDtiPanDelta.clone();
 
-const modelBaseTarget = baseTarget.get(currentShownId);
+const modelBaseTarget = baseTarget.get(modelId);
 
 if (modelBaseTarget) {
 return new THREE.Vector3(
@@ -1778,13 +1778,13 @@ currentTarget.z - modelBaseTarget.z
 return lastDtiPanDelta.clone();
 }
 
-function applyDtiPanOffsetToViewer(mv) {
+function applyDtiPanOffsetToViewer(mv, modelId = currentShownId) {
 if (!mv || !mv.src) return;
 
 const mounted = getMountedDtiMap(mv);
 if (!mounted.size) return;
 
-const panDelta = getCurrentModelPanDelta(mv);
+const panDelta = getCurrentModelPanDelta(mv, modelId);
 lastDtiPanDelta.copy(panDelta);
 
 for (const obj of mounted.values()) {
@@ -1805,24 +1805,29 @@ scene?.updateMatrixWorld?.(true);
 try { mv.requestUpdate?.(); } catch (_) {}
 }
 
-async function refreshDtiSceneForActiveViewer() {
-const mv = activeMv;
+async function refreshDtiSceneForViewer(mv, modelId = currentShownId) {
 if (!mv || !mv.src) return;
 
 const scene = getDtiSceneRoot(mv);
 
 if (!scene) {
-requestAnimationFrame(refreshDtiSceneForActiveViewer);
+requestAnimationFrame(() => refreshDtiSceneForViewer(mv, modelId));
 return;
 }
 
-if (currentShownId === DTI_REFERENCE_MODEL_ID) {
+if (modelId === DTI_REFERENCE_MODEL_ID) {
 cacheModel1ReferencePointsFromViewer(mv);
 }
 
 const token = ++dtiRefreshToken;
 
+// If preparing the hidden viewer before swap, clear only that hidden viewer.
+// Do not clear the currently visible viewer, otherwise the user sees flicker.
+if (mv === idleMv) {
 unmountAllDtiFromViewer(idleMv);
+} else if (mv === activeMv) {
+unmountAllDtiFromViewer(idleMv);
+}
 
 const mounted = getMountedDtiMap(mv);
 
@@ -1847,8 +1852,8 @@ if (!dti) continue;
 try {
 setDtiStatus(id, "loading", "0%");
 
-const alignedProto = await getAlignedDtiPrototype(dti, mv);
-if (token !== dtiRefreshToken || mv !== activeMv) return;
+const alignedProto = await getAlignedDtiPrototype(dti, mv, modelId);
+if (token !== dtiRefreshToken) return;
 
 const obj = cloneDtiObject(alignedProto, id);
 
@@ -1857,7 +1862,7 @@ obj.__dtiBasePosition = obj.position.clone();
 
 scene.add(obj);
 mounted.set(id, obj);
-applyDtiPanOffsetToViewer(mv);
+applyDtiPanOffsetToViewer(mv, modelId);
 
 scene.updateMatrixWorld?.(true);
 setDtiStatus(id, "done");
@@ -1875,9 +1880,13 @@ setDtiStatus(id, "error");
 }
 
 scene.updateMatrixWorld?.(true);
-try { mv.requestUpdate?.(); } catch (_) {}
+forceViewerRedraw(mv);
 }
 
+async function refreshDtiSceneForActiveViewer() {
+return refreshDtiSceneForViewer(activeMv, currentShownId);
+}
+  
 function scheduleDtiRefreshAfterModelPrepared() {
 requestAnimationFrame(() => {
 requestAnimationFrame(() => {
@@ -3102,13 +3111,19 @@ paintActive();
 const st = state.get(modelId);
 const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
-const finalizeSwap = () => {
+const finalizeSwap = async () => {
 prepareAnnotationsAndOcclusion(idleMv, modelId);
+
+// Mount enabled DTI tracts into the hidden/idle viewer before the viewer swap.
+// This prevents the visible split-second DTI disappearance during model changes.
+await refreshDtiSceneForViewer(idleMv, modelId);
+
 swapViewersNow();
 currentShownId = modelId;
 cameraReady = true;
 startLoop(activeMv);
 
+// Keep this as cleanup/safety after swap.
 scheduleDtiRefreshAfterModelPrepared();
 
 selectedAnnoIndex = -1;
@@ -3133,9 +3148,10 @@ const applyAfterLoad = () => {
 };
 
 const finalizeAfterBarrier = () => {
-requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(async () => {
 if (token !== swapToken) return;
-finalizeSwap();
+await finalizeSwap();
+if (token !== swapToken) return;
 if (!prime02Done) startPrimeModel02Once();
 })));
 };
