@@ -1532,6 +1532,7 @@ function buildDtiListOnce() {
     dtiList.appendChild(row);
   }
 }
+    const PRIMARY_MODEL_ID = "01_Veselled_Annotated";
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -1561,16 +1562,22 @@ function buildDtiListOnce() {
         st.progressText = "";
         refreshMeta(modelId);
 
-        if (currentController) {
-          currentController.abort();
-          if (currentDownloadingId && currentDownloadingId !== modelId) {
-            const prev = state.get(currentDownloadingId);
-            if (prev && prev.status === "loading") {
-              prev.status = "paused";
-              refreshMeta(currentDownloadingId);
-            }
-          }
-        }
+        if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
+  // Do not interrupt model 1 once it has started downloading.
+  // DTI alignment depends on model 1 reference data, so let it finish.
+  if (currentDownloadingId === PRIMARY_MODEL_ID) {
+    resumeRequested = true;
+    return inFlight.get(currentDownloadingId);
+  }
+
+  currentController.abort();
+
+  const prev = state.get(currentDownloadingId);
+  if (prev && prev.status === "loading") {
+    prev.status = "paused";
+    refreshMeta(currentDownloadingId);
+  }
+}
 
         currentController = new AbortController();
         currentDownloadingId = modelId;
@@ -2549,11 +2556,25 @@ async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
       }
     }
 
-    function onUserSelect(modelId) {
-      const st = state.get(modelId);
-      if (!(st.status === "done" && st.blobUrl)) pausePreloadForAWhile();
-      showModel(modelId);
-    }
+    async function onUserSelect(modelId) {
+  const st = state.get(modelId);
+
+  // If model 1 is currently downloading, do not abort it.
+  // Wait until it finishes, then show the clicked model.
+  if (
+    currentDownloadingId === PRIMARY_MODEL_ID &&
+    state.get(PRIMARY_MODEL_ID)?.status === "loading" &&
+    modelId !== PRIMARY_MODEL_ID
+  ) {
+    try {
+      await inFlight.get(PRIMARY_MODEL_ID);
+    } catch (_) {}
+  } else if (!(st.status === "done" && st.blobUrl)) {
+    pausePreloadForAWhile();
+  }
+
+  showModel(modelId);
+}
 
     // init
     buildListOnce();
