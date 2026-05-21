@@ -1333,6 +1333,7 @@ async function loadDtiPrototype(dti) {
 
     dtiLoader.load(
       dti.url,
+
       gltf => {
         const root = gltf.scene || gltf.scenes?.[0];
 
@@ -1346,26 +1347,32 @@ async function loadDtiPrototype(dti) {
         setDtiStatus(dti.id, "done");
         resolve(root);
       },
+
       event => {
-  const loaded = Number(event.loaded) || 0;
-  dtiLoadedBytes.set(dti.id, loaded);
+        const loaded = Number(event.loaded) || 0;
+        dtiLoadedBytes.set(dti.id, loaded);
 
-  if (event.lengthComputable && event.total > 0) {
-    dtiTotalBytes.set(dti.id, Number(event.total) || 0);
-    const pct = Math.floor((loaded / event.total) * 100);
-    setDtiStatus(dti.id, "loading", `${pct}%`);
-  } else {
-    setDtiStatus(dti.id, "loading", "");
-  }
+        if (event.lengthComputable && event.total > 0) {
+          dtiTotalBytes.set(dti.id, Number(event.total) || 0);
+          const pct = Math.floor((loaded / event.total) * 100);
+          setDtiStatus(dti.id, "loading", `${pct}%`);
+        } else {
+          setDtiStatus(dti.id, "loading", "");
+        }
 
-  refreshDtiAllMeta();
-};
+        refreshDtiAllMeta();
+      },
+
+      err => {
+        setDtiStatus(dti.id, "error");
+        reject(err);
+      }
+    );
   });
 
   dtiPrototypePromises.set(dti.id, p);
   return p;
 }
-
 function cloneDtiObject(proto, dtiId) {
   const clone = proto.clone(true);
   return markAsDtiObject(clone, dtiId);
