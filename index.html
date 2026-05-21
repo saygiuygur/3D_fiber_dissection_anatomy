@@ -403,6 +403,7 @@ background: rgba(255,255,255,0.65);
 cursor: pointer;
 transform: translate(-50%, -50%);
 box-sizing: border-box;
+touch-action:none;
 }
 .hotspot.selected{
 border-color: #1e88e5;
@@ -1021,25 +1022,192 @@ annToggle.addEventListener('change', () => setAnnotationsEnabled(annToggle.check
 }
 
 // Tooltip (LOCKED)
-function attachTip(el) {
-el.addEventListener('mouseenter', (e) => {
-const text = el.dataset.label || "";
-if (!text) return;
-hotspotTip.textContent = text;
-hotspotTip.style.display = 'block';
-const rect = viewerWrap.getBoundingClientRect();
-hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-});
-el.addEventListener('mousemove', (e) => {
-if (hotspotTip.style.display !== 'block') return;
-const rect = viewerWrap.getBoundingClientRect();
-hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
-hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
-});
-el.addEventListener('mouseleave', () => { hotspotTip.style.display = 'none'; });
+let hotspotPointerState = null;
+const HOTSPOT_DRAG_THRESHOLD = 4;
+
+function dispatchPointerToViewer(type, ev, buttonsOverride = null) {
+  const mv = activeMv;
+  if (!mv) return;
+
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    pointerId: ev.pointerId || 1,
+    pointerType: ev.pointerType || "mouse",
+    isPrimary: ev.isPrimary !== false,
+    clientX: ev.clientX,
+    clientY: ev.clientY,
+    screenX: ev.screenX,
+    screenY: ev.screenY,
+    button: ev.button ?? 0,
+    buttons: buttonsOverride ?? ev.buttons,
+    ctrlKey: ev.ctrlKey,
+    shiftKey: ev.shiftKey,
+    altKey: ev.altKey,
+    metaKey: ev.metaKey
+  };
+
+  try {
+    mv.dispatchEvent(new PointerEvent(type, init));
+  } catch (_) {}
 }
+
+function dispatchWheelToViewer(ev) {
+  const mv = activeMv;
+  if (!mv) return;
+
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    deltaX: ev.deltaX,
+    deltaY: ev.deltaY,
+    deltaZ: ev.deltaZ,
+    deltaMode: ev.deltaMode,
+    clientX: ev.clientX,
+    clientY: ev.clientY,
+    screenX: ev.screenX,
+    screenY: ev.screenY,
+    ctrlKey: ev.ctrlKey,
+    shiftKey: ev.shiftKey,
+    altKey: ev.altKey,
+    metaKey: ev.metaKey
+  };
+
+  try {
+    mv.dispatchEvent(new WheelEvent("wheel", init));
+  } catch (_) {}
+}
+
+function setHotspotsPointerPassthrough(enabled) {
+  const mv = activeMv;
+  if (!mv) return;
+
+  mv.querySelectorAll(".hotspot").forEach(h => {
+    h.style.pointerEvents = enabled ? "none" : "";
+  });
+}
+
+function attachTip(el, slotName = null) {
+  el.addEventListener('mouseenter', (e) => {
+    const text = el.dataset.label || "";
+    if (!text) return;
+
+    hotspotTip.textContent = text;
+    hotspotTip.style.display = 'block';
+
+    const rect = viewerWrap.getBoundingClientRect();
+    hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
+    hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
+  });
+
+  el.addEventListener('mousemove', (e) => {
+    if (hotspotTip.style.display !== 'block') return;
+
+    const rect = viewerWrap.getBoundingClientRect();
+    hotspotTip.style.left = (e.clientX - rect.left + 12) + 'px';
+    hotspotTip.style.top  = (e.clientY - rect.top + 12) + 'px';
+  });
+
+  el.addEventListener('mouseleave', () => {
+    hotspotTip.style.display = 'none';
+  });
+
+  // Allow wheel zoom even when the mouse is over an annotation hotspot.
+  el.addEventListener('wheel', (e) => {
+    hideTip();
+    e.preventDefault();
+    e.stopPropagation();
+    dispatchWheelToViewer(e);
+  }, { passive:false });
+
+  // We handle click-vs-drag manually:
+  // - click/release on hotspot focuses annotation
+  // - drag away passes movement to model-viewer
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+
+    hotspotPointerState = {
+      el,
+      slotName,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      downEvent: e,
+      dragging: false
+    };
+
+    try { el.setPointerCapture?.(e.pointerId); } catch (_) {}
+
+    e.preventDefault();
+    e.stopPropagation();
+  });
+}
+
 function hideTip(){ hotspotTip.style.display = 'none'; }
+
+  document.addEventListener('pointermove', (e) => {
+  if (!hotspotPointerState) return;
+
+  const s = hotspotPointerState;
+  const dx = e.clientX - s.startX;
+  const dy = e.clientY - s.startY;
+  const moved = Math.sqrt(dx * dx + dy * dy) > HOTSPOT_DRAG_THRESHOLD;
+
+  if (!s.dragging && moved) {
+    s.dragging = true;
+    hideTip();
+
+    try { s.el.releasePointerCapture?.(s.pointerId); } catch (_) {}
+
+    // Temporarily let the pointer pass through hotspots.
+    setHotspotsPointerPassthrough(true);
+
+    // Start model-viewer interaction from the original pointerdown.
+    dispatchPointerToViewer('pointerdown', s.downEvent, 1);
+  }
+
+  if (s.dragging) {
+    dispatchPointerToViewer('pointermove', e, e.buttons || 1);
+  }
+}, { capture:true });
+
+document.addEventListener('pointerup', (e) => {
+  if (!hotspotPointerState) return;
+
+  const s = hotspotPointerState;
+
+  if (s.dragging) {
+    dispatchPointerToViewer('pointerup', e, 0);
+
+    requestAnimationFrame(() => {
+      setHotspotsPointerPassthrough(false);
+    });
+  } else {
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const releasedOnSameHotspot = under === s.el || s.el.contains(under);
+
+    if (releasedOnSameHotspot && s.slotName) {
+      hideTip();
+      setSelectedAnnoBySlot(s.slotName);
+      focusHotspot(s.slotName);
+    }
+  }
+
+  hotspotPointerState = null;
+}, { capture:true });
+
+document.addEventListener('pointercancel', (e) => {
+  if (!hotspotPointerState) return;
+
+  if (hotspotPointerState.dragging) {
+    dispatchPointerToViewer('pointercancel', e, 0);
+  }
+
+  hotspotPointerState = null;
+  setHotspotsPointerPassthrough(false);
+}, { capture:true });
 
 // Download/progress icons + download behavior (LOCKED)
 const state = new Map();
@@ -2484,15 +2652,7 @@ btn.className = 'hotspot';
 btn.setAttribute('slot', a.slotName);
 btn.dataset.label = a.title;
 btn.setAttribute('aria-label', a.title);
-attachTip(btn);
-
-btn.addEventListener('click', (e) => {
-e.preventDefault();
-e.stopPropagation();
-hideTip();
-setSelectedAnnoBySlot(a.slotName);
-focusHotspot(a.slotName);
-});
+attachTip(btn, a.slotName);
 
 mv.appendChild(btn);
 }
