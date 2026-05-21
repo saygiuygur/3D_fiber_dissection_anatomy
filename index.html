@@ -181,7 +181,7 @@
   flex:0 0 18px;
   border-radius:50%;
   box-sizing:border-box;
-  border:1.4px solid #222;
+  border:1.3px solid #8a8a8a;
   background:
     radial-gradient(circle at 30% 22%,
       rgba(255,255,255,0.95) 0%,
@@ -202,7 +202,7 @@
 }
 
 .dti-row input:checked + .dti-dot{
-  border-color:#222;
+  border-color:#7a7a7a;
   background:
     radial-gradient(circle at 30% 22%,
       rgba(255,255,255,0.92) 0%,
@@ -1611,14 +1611,20 @@ function setDtiVisible(dtiId, visible) {
     dtiEnabled.add(dtiId);
 
     const st = dtiState.get(dtiId);
-    if (!st || st.status !== "done") {
+
+    // If not downloaded yet, trigger/show loading.
+    // If already downloaded, keep green tick.
+    if (!st || st.status === "idle" || st.status === "paused") {
       setDtiStatus(dtiId, "loading", st?.progressText || "0%");
     } else {
-      setDtiStatus(dtiId, "done");
+      refreshDtiMeta(dtiId);
     }
   } else {
     dtiEnabled.delete(dtiId);
-    setDtiStatus(dtiId, "paused");
+
+    // Do NOT change download status when hiding the DTI.
+    // If it is downloaded, it should stay green tick.
+    refreshDtiMeta(dtiId);
   }
 
   refreshDtiSceneForActiveViewer();
