@@ -380,12 +380,12 @@ border-top:1px solid rgba(0,0,0,0.08);
 }
   
 .hiddenViewer {
-visibility: hidden;
+visibility: visible;
 opacity: 0;
 pointer-events: none;
 z-index: 9 !important;
 }
-
+  
 .shownViewer {
 visibility: visible;
 opacity: 1;
@@ -2490,7 +2490,9 @@ function setMainViewerShown(mv, shown) {
 mv.classList.toggle('shownViewer', shown);
 mv.classList.toggle('hiddenViewer', !shown);
 
-mv.style.visibility = shown ? 'visible' : 'hidden';
+// Important: hidden viewer remains visibility:visible so model-viewer can keep rendering.
+// It is invisible only because opacity is 0 and it sits behind the active viewer.
+mv.style.visibility = 'visible';
 mv.style.opacity = shown ? '1' : '0';
 mv.style.pointerEvents = shown ? 'auto' : 'none';
 mv.style.zIndex = shown ? '20' : '9';
