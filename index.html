@@ -1747,7 +1747,20 @@ if (obj.parent) obj.parent.remove(obj);
 
 mounted.clear();
 }
+  
+function unmountDtiFromViewer(mv, dtiId) {
+  const mounted = getMountedDtiMap(mv);
+  const obj = mounted.get(dtiId);
 
+  if (obj?.parent) {
+    try { obj.parent.remove(obj); } catch (_) {}
+  }
+
+  mounted.delete(dtiId);
+
+  const scene = getDtiSceneRoot(mv);
+  scene?.updateMatrixWorld?.(true);
+}
 function getCurrentModelPanDelta(mv) {
 const currentTarget = mv.getCameraTarget?.();
 if (!currentTarget) return lastDtiPanDelta.clone();
@@ -1885,12 +1898,16 @@ function setDtiVisible(dtiId, visible) {
       refreshDtiMeta(dtiId);
     }
   } else {
-    dtiEnabled.delete(dtiId);
+  dtiEnabled.delete(dtiId);
 
-    // Hiding DTI should not change its download status.
-    refreshDtiMeta(dtiId);
-  }
+  // Remove immediately from the active scene so it disappears without needing viewer click.
+  unmountDtiFromViewer(activeMv, dtiId);
 
+  // Hiding DTI should not change its download status.
+  refreshDtiMeta(dtiId);
+
+  forceViewerRedraw(activeMv);
+}
   refreshDtiAllMeta();
   refreshDtiSceneForActiveViewer();
 }
@@ -2012,15 +2029,23 @@ function buildDtiListOnce() {
     const turnOn = allCheckbox.checked;
 
     for (const dti of DTI_MODELS) {
-      if (turnOn) dtiEnabled.add(dti.id);
-      else dtiEnabled.delete(dti.id);
+  if (turnOn) {
+    dtiEnabled.add(dti.id);
+  } else {
+    dtiEnabled.delete(dti.id);
+    unmountDtiFromViewer(activeMv, dti.id);
+  }
 
-      const ui = dtiUi.get(dti.id);
-      if (ui?.checkbox) ui.checkbox.checked = turnOn;
-    }
+  const ui = dtiUi.get(dti.id);
+  if (ui?.checkbox) ui.checkbox.checked = turnOn;
+}
 
-    refreshDtiAllMeta();
-    refreshDtiSceneForActiveViewer();
+refreshDtiAllMeta();
+refreshDtiSceneForActiveViewer();
+
+if (!turnOn) {
+  forceViewerRedraw(activeMv);
+}
   });
 
   allRow.appendChild(allCheckbox);
