@@ -2340,7 +2340,17 @@ resumeRequested = true;
 maybeResumePreload();
 }, 1200);
 }
+  
+function kickPreloadSoon() {
+  resumeRequested = true;
 
+  // Use setTimeout instead of requestAnimationFrame so the preload queue
+  // can continue even when the tab is not currently visible.
+  setTimeout(() => {
+    maybeResumePreload();
+  }, 0);
+}
+  
 async function downloadToBlobUrl(modelId) {
 const model = MODELS.find(x => x.id === modelId);
 const st = state.get(modelId);
@@ -2417,7 +2427,11 @@ prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
 refreshMeta(modelId);
 
 if (modelId === PRIMARY_MODEL_ID) {
-startDtiPreloadOnce();
+  startDtiPreloadOnce();
+
+  // Continue anatomical model preloading after model 1 finishes,
+  // even if the browser tab is in the background.
+  kickPreloadSoon();
 }
 
 paintDownloading(null);
@@ -3406,9 +3420,12 @@ refreshAnnoNavLabel();
 updateSelectedHotspotVisual();
 
 showModel(selectedId).then(() => {
-resumeRequested = true;
-maybeResumePreload();
+  kickPreloadSoon();
 });
+
+// Extra background-tab safety: if showModel waits for hidden viewer frames,
+// this still marks preload as requested while model 1 is downloading.
+kickPreloadSoon();
 </script>
 </body>
 </html>
