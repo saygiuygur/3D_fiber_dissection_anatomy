@@ -170,10 +170,24 @@
 }
 
 .dti-row input{
+  position:absolute;
+  opacity:0;
+  pointer-events:none;
+}
+
+.dti-dot{
   width:16px;
   height:16px;
-  flex:0 0 auto;
-  accent-color:#35c759;
+  flex:0 0 16px;
+  border-radius:50%;
+  border:2px solid var(--dti-color, #777);
+  background:transparent;
+  box-sizing:border-box;
+}
+
+.dti-row input:checked + .dti-dot{
+  background:var(--dti-color, #777);
+  box-shadow:0 0 0 2px rgba(255,255,255,0.9) inset;
 }
 
 .dti-name{
@@ -611,7 +625,15 @@ const DTI_MODELS = [
     url: "models/DTI/UF.glb"
   }
 ];
-    
+    const DTI_COLORS = {
+  CST: "#0000FFFF",
+  IFOF: "#FFFF00FF",
+  SLF_I: "#00D5BBFF",
+  SLF_II: "#00D5BBFF",
+  SLF_III: "#00D5BBFF",
+  UF: "#9C00FFFF",
+  AF: "#FF0000FF"
+};
 function makeAnnotations(modelId, names) {
   return names.map((name, i) => {
     const rule = ANNOTATION_RULES[modelId]?.[name] || {};
@@ -1579,21 +1601,26 @@ function buildDtiListOnce() {
 
   for (const dti of DTI_MODELS) {
     const row = document.createElement('label');
-    row.className = "dti-row";
-    row.title = dti.name;
+row.className = "dti-row";
+row.title = dti.name;
+row.style.setProperty("--dti-color", DTI_COLORS[dti.id] || "#777777");
 
-    const checkbox = document.createElement('input');
-    checkbox.type = "checkbox";
+const checkbox = document.createElement('input');
+checkbox.type = "checkbox";
 
-    const name = document.createElement('div');
-    name.className = "dti-name";
-    name.textContent = dti.name;
+const dot = document.createElement('span');
+dot.className = "dti-dot";
+dot.setAttribute("aria-hidden", "true");
 
-    const status = document.createElement('div');
-    status.className = "dti-status";
-    status.textContent = "";
+const name = document.createElement('div');
+name.className = "dti-name";
+name.textContent = dti.name;
 
-    dtiUi.set(dti.id, { checkbox, status });
+const status = document.createElement('div');
+status.className = "dti-status";
+status.textContent = "";
+
+dtiUi.set(dti.id, { checkbox, status });
 
 refreshDtiMeta(dti.id);
 
@@ -1601,10 +1628,11 @@ checkbox.addEventListener('change', () => {
   setDtiVisible(dti.id, checkbox.checked);
 });
 
-    row.appendChild(checkbox);
-    row.appendChild(name);
-    row.appendChild(status);
-    dtiList.appendChild(row);
+row.appendChild(checkbox);
+row.appendChild(dot);
+row.appendChild(name);
+row.appendChild(status);
+dtiList.appendChild(row);
   }
 }
     const PRIMARY_MODEL_ID = "01_Veselled_Annotated";
