@@ -1029,6 +1029,42 @@ const HOTSPOT_HIT_PAD = 5;
 const HOTSPOT_CLICK_MOVE_THRESHOLD = 4;
 let hotspotClickCandidate = null;
 
+function readHotspotClickCamera(mv) {
+  if (!mv) return null;
+
+  const orbit = mv.getCameraOrbit?.();
+  const target = mv.getCameraTarget?.();
+  const fov = mv.getFieldOfView?.();
+
+  if (!orbit || !target || typeof fov !== "number") return null;
+
+  return {
+    orbit: {
+      theta: orbit.theta,
+      phi: orbit.phi,
+      radius: orbit.radius
+    },
+    target: {
+      x: target.x,
+      y: target.y,
+      z: target.z
+    },
+    fov
+  };
+}
+
+function restoreHotspotClickCamera(mv, cam) {
+  if (!mv || !cam) return;
+
+  try {
+    mv.cameraTarget = `${cam.target.x}m ${cam.target.y}m ${cam.target.z}m`;
+    mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m`;
+    mv.fieldOfView = `${cam.fov}deg`;
+    mv.jumpCameraToGoal?.();
+    mv.requestUpdate?.();
+  } catch (_) {}
+}
+  
 function hideTip(){
   hotspotTip.style.display = 'none';
 }
@@ -1118,14 +1154,15 @@ viewerWrap.addEventListener("pointerdown", (e) => {
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
 
   hotspotClickCandidate = hit
-    ? {
-        el: hit,
-        slotName: hit.dataset.slotName || "",
-        startX: e.clientX,
-        startY: e.clientY,
-        moved: false
-      }
-    : null;
+  ? {
+      el: hit,
+      slotName: hit.dataset.slotName || "",
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      startCam: readHotspotClickCamera(activeMv)
+    }
+  : null;
 
   // Do not preventDefault / stopPropagation.
   // Model-viewer must receive pointerdown for drag / pan / rotate.
@@ -1141,10 +1178,14 @@ viewerWrap.addEventListener("pointerup", (e) => {
   const releasedOnSameHotspot = hit === candidate.el;
 
   if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
-    hideTip();
-    setSelectedAnnoBySlot(candidate.slotName);
-    focusHotspot(candidate.slotName);
-  }
+  hideTip();
+
+  // Remove the tiny accidental camera movement caused by click-down/up.
+  restoreHotspotClickCamera(activeMv, candidate.startCam);
+
+  setSelectedAnnoBySlot(candidate.slotName);
+  focusHotspot(candidate.slotName);
+}
 
   // If mouse moved before release, do nothing here.
   // Model-viewer already handled the drag normally.
@@ -1153,8 +1194,24 @@ viewerWrap.addEventListener("pointerup", (e) => {
 viewerWrap.addEventListener("wheel", (e) => {
   // Do not preventDefault.
   // Model-viewer receives wheel normally because hotspots do not capture pointer events.
-  const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
-  if (hit) showTipForHotspot(hit, e.clientX, e.clientY);
+
+  const x = e.clientX;
+  const y = e.clientY;
+
+  // Hide immediately because zoom may move the annotation away from the mouse.
+  hideTip();
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const hit = getHotspotAtClientPoint(x, y);
+
+      if (hit) {
+        showTipForHotspot(hit, x, y);
+      } else {
+        hideTip();
+      }
+    });
+  });
 }, { passive:true });
 
 // Download/progress icons + download behavior (LOCKED)
