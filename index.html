@@ -967,7 +967,33 @@ function referenceKey(name) {
     .replace(/\d+$/g, "")     // remove final numbers: 001, 002, etc.
     .toLowerCase();
 }
+function isDtiObjectOrInsideDti(obj) {
+  let cur = obj;
 
+  while (cur) {
+    if (cur.userData?.__isDTI) return true;
+    cur = cur.parent;
+  }
+
+  return false;
+}
+
+function findAnatomicalObjectByExactName(scene, wantedName) {
+  if (!scene || !wantedName) return null;
+
+  let found = null;
+
+  scene.traverse?.(obj => {
+    if (found) return;
+    if (isDtiObjectOrInsideDti(obj)) return;
+
+    if (obj.name === wantedName) {
+      found = obj;
+    }
+  });
+
+  return found;
+}
 function getModel1ReferenceKeySet() {
   return new Set(MODEL01_NAMES.map(referenceKey));
 }
@@ -1829,17 +1855,15 @@ function swapViewersNow() {
     const loopState = new WeakMap();
 
     function buildRaycastOccluders(mv, shift) {
-      const scene = getMvScene(mv);
-      if (!scene || typeof scene.traverse !== "function") return null;
+  const scene = getMvScene(mv);
+  if (!scene || typeof scene.traverse !== "function") return null;
 
-      applyDtiPanOffsetToViewer(mv);
+  scene.updateMatrixWorld?.(true);
+  const occluders = [];
 
-scene.updateMatrixWorld?.(true);
-try { mv.requestUpdate?.(); } catch (_) {}
-
-      scene.traverse(obj => {
-  if (!obj || obj.userData?.__isDTI) return;
-  if (!obj.isMesh || !obj.geometry) return;
+  scene.traverse(obj => {
+    if (!obj || obj.userData?.__isDTI) return;
+    if (!obj.isMesh || !obj.geometry) return;
 
         const g = obj.geometry;
         const geo = new THREE.BufferGeometry();
@@ -1904,7 +1928,7 @@ try { mv.requestUpdate?.(); } catch (_) {}
           }
         }
 
-        const obj = scene.getObjectByName(a.anchor);
+        const obj = findAnatomicalObjectByExactName(scene, a.anchor);
         if (!obj) continue;
 
         const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
