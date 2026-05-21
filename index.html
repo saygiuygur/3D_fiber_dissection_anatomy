@@ -176,22 +176,52 @@ border-bottom:none;
 }
 
 .dti-dot{
-width:16px;
-height:16px;
-  flex:0 0 auto;
-  accent-color:#35c759;
-  flex:0 0 16px;
+  width:18px;
+  height:18px;
+  flex:0 0 18px;
   border-radius:50%;
-  border:2px solid var(--dti-color, #777);
-  background:transparent;
   box-sizing:border-box;
+  border:1.3px solid #8a8a8a;
+  background:
+    radial-gradient(circle at 30% 22%,
+      rgba(255,255,255,0.95) 0%,
+      rgba(255,255,255,0.65) 24%,
+      rgba(255,255,255,0.05) 46%,
+      rgba(0,0,0,0.10) 72%,
+      rgba(255,255,255,0.35) 100%
+    ),
+    linear-gradient(160deg,
+      #f7f7f7 0%,
+      #e9e9e9 28%,
+      #b9b9b9 55%,
+      #eeeeee 100%
+    );
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,0.9),
+    inset 0 -1px 2px rgba(0,0,0,0.22);
 }
 
 .dti-row input:checked + .dti-dot{
-  background:var(--dti-color, #777);
-  box-shadow:0 0 0 2px rgba(255,255,255,0.9) inset;
+  border-color:#7a7a7a;
+  background:
+    radial-gradient(circle at 30% 22%,
+      rgba(255,255,255,0.92) 0%,
+      rgba(255,255,255,0.58) 24%,
+      rgba(255,255,255,0.08) 44%,
+      rgba(0,0,0,0.18) 72%,
+      rgba(255,255,255,0.25) 100%
+    ),
+    linear-gradient(160deg,
+      color-mix(in srgb, var(--dti-color, #777) 25%, white) 0%,
+      color-mix(in srgb, var(--dti-color, #777) 75%, white) 30%,
+      color-mix(in srgb, var(--dti-color, #777) 85%, black) 58%,
+      color-mix(in srgb, var(--dti-color, #777) 45%, white) 100%
+    );
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,0.85),
+    inset 0 -1px 2px rgba(0,0,0,0.28);
 }
-  
+
 .dti-row.dti-all-row{
   font-weight:600;
   border-bottom:1px solid rgba(0,0,0,0.14);
