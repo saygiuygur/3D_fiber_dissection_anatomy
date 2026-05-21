@@ -113,6 +113,38 @@ box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 .bg-title{ font-size:14px; font-weight:600; margin:0 0 10px 0; }
 .bg-options{ display:flex; align-items:center; gap:14px; margin-bottom:8px; }
 
+.opacity-section{
+margin-top:18px;
+}
+
+.opacity-title{
+font-size:14px;
+font-weight:600;
+margin:0 0 10px 0;
+}
+
+.opacity-options{
+display:flex;
+align-items:center;
+gap:8px;
+margin-bottom:8px;
+}
+
+.opacity-btn{
+border:1px solid #cfcfcf;
+background:#fff;
+border-radius:999px;
+padding:5px 12px;
+font-size:13px;
+font-weight:600;
+cursor:pointer;
+}
+
+.opacity-btn.selected{
+border-color:#111;
+box-shadow:0 0 0 2px rgba(0,0,0,0.12);
+}
+  
 .swatch{
 width:26px; height:26px;
 border-radius:50%;
@@ -412,6 +444,14 @@ letter-spacing: 0.2px;
 </label>
 </div>
 
+<div class="opacity-section">
+<div class="opacity-title">Model Opacity</div>
+<div class="opacity-options" id="opacityOptions">
+<button class="opacity-btn selected" data-opacity="1">100%</button>
+<button class="opacity-btn" data-opacity="0.5">50%</button>
+</div>
+</div>
+  
 <div class="bg-section">
 <div class="bg-title">Background Color</div>
 <div class="bg-options" id="bgOptions">
@@ -1781,7 +1821,91 @@ function setDtiVisible(dtiId, visible) {
   refreshDtiAllMeta();
   refreshDtiSceneForActiveViewer();
 }
+// ===== Anatomical model opacity =====
+let modelOpacity = 1;
 
+function applyModelOpacityToViewer(mv) {
+  if (!mv || !mv.src) return;
+
+  const scene = getDtiSceneRoot(mv);
+  if (!scene || typeof scene.traverse !== "function") return;
+
+  scene.traverse(obj => {
+    if (!obj || !obj.isMesh || !obj.material) return;
+
+    // Do not change DTI tract opacity.
+    if (isDtiObjectOrInsideDti(obj)) return;
+
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+
+    for (const mat of mats) {
+      if (!mat) continue;
+
+      if (!mat.userData.__modelOpacityOriginal) {
+        mat.userData.__modelOpacityOriginal = {
+          opacity: mat.opacity,
+          transparent: mat.transparent,
+          depthWrite: mat.depthWrite
+        };
+      }
+
+      const original = mat.userData.__modelOpacityOriginal;
+
+      if (modelOpacity >= 0.999) {
+        mat.opacity = original.opacity ?? 1;
+        mat.transparent = original.transparent ?? false;
+        mat.depthWrite = original.depthWrite ?? true;
+      } else {
+        mat.opacity = modelOpacity;
+        mat.transparent = true;
+
+        // This lets DTI and deeper anatomy show through when model opacity is 50%.
+        mat.depthWrite = false;
+      }
+
+      mat.needsUpdate = true;
+    }
+  });
+
+  scene.updateMatrixWorld?.(true);
+  try { mv.requestUpdate?.(); } catch (_) {}
+}
+
+function setModelOpacity(value) {
+  modelOpacity = Number(value) || 1;
+
+  try {
+    localStorage.setItem("modelOpacity", String(modelOpacity));
+  } catch (_) {}
+
+  const opacityOptions = document.getElementById("opacityOptions");
+  opacityOptions?.querySelectorAll(".opacity-btn").forEach(btn => {
+    const v = Number(btn.dataset.opacity);
+    btn.classList.toggle("selected", Math.abs(v - modelOpacity) < 0.001);
+  });
+
+  applyModelOpacityToViewer(activeMv);
+  applyModelOpacityToViewer(idleMv);
+}
+
+function initModelOpacitySelector() {
+  const opacityOptions = document.getElementById("opacityOptions");
+  if (!opacityOptions) return;
+
+  let saved = null;
+  try { saved = localStorage.getItem("modelOpacity"); } catch (_) {}
+
+  const initial = saved === "0.5" ? 0.5 : 1;
+
+  opacityOptions.querySelectorAll(".opacity-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      setModelOpacity(Number(btn.dataset.opacity));
+    });
+  });
+
+  setModelOpacity(initial);
+}
+  
 function buildDtiListOnce() {
   if (!dtiList) return;
 
@@ -2901,14 +3025,16 @@ if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
 };
 
 const applyAfterLoad = () => {
-captureAutoFrameBase(idleMv, modelId);
-applyMaxCameraOrbit(idleMv, modelId);
-applyCamWithDelta(idleMv, modelId, camForThisSwap);
-if (camForThisSwap) {
-latestCarryCam = cloneCarry(camForThisSwap);
-freezeCarryFromCameraChange = true;
-}
-focusCarryCam.delete(idleMv);
+  captureAutoFrameBase(idleMv, modelId);
+  applyMaxCameraOrbit(idleMv, modelId);
+  applyCamWithDelta(idleMv, modelId, camForThisSwap);
+  if (camForThisSwap) {
+    latestCarryCam = cloneCarry(camForThisSwap);
+    freezeCarryFromCameraChange = true;
+  }
+  focusCarryCam.delete(idleMv);
+
+  applyModelOpacityToViewer(idleMv);
 };
 
 const finalizeAfterBarrier = () => {
@@ -2987,6 +3113,7 @@ setMainViewerShown(mvA, true);
 setMainViewerShown(mvB, false);
 
 initBackgroundSelector();
+initModelOpacitySelector();
 initAnnotationsToggle();
 refreshAnnoNavLabel();
 updateSelectedHotspotVisual();
