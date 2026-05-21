@@ -1608,6 +1608,34 @@ checkbox.addEventListener('change', () => {
   }
 }
     const PRIMARY_MODEL_ID = "01_Veselled_Annotated";
+    let dtiPreloadStarted = false;
+let dtiPreloadRunning = false;
+
+async function startDtiPreloadOnce() {
+  if (dtiPreloadStarted || dtiPreloadRunning) return;
+
+  dtiPreloadStarted = true;
+  dtiPreloadRunning = true;
+
+  try {
+    for (const dti of DTI_MODELS) {
+      const st = dtiState.get(dti.id);
+
+      // Skip already downloaded DTI models.
+      if (st?.status === "done") continue;
+
+      try {
+        await loadDtiPrototype(dti);
+      } catch (err) {
+        console.warn("DTI preload failed:", dti.id, err);
+        setDtiStatus(dti.id, "error");
+        // Continue with the next DTI instead of stopping the whole queue.
+      }
+    }
+  } finally {
+    dtiPreloadRunning = false;
+  }
+}
     function maybeResumePreload() {
       if (!preloadEnabled) return;
       if (!resumeRequested) return;
@@ -1628,7 +1656,10 @@ checkbox.addEventListener('change', () => {
     async function downloadToBlobUrl(modelId) {
       const model = MODELS.find(x => x.id === modelId);
       const st = state.get(modelId);
-      if (st.status === "done" && st.blobUrl) return st.blobUrl;
+      if (st.status === "done" && st.blobUrl) {
+  if (modelId === PRIMARY_MODEL_ID) startDtiPreloadOnce();
+  return st.blobUrl;
+}
       if (inFlight.has(modelId)) return inFlight.get(modelId);
 
       const p = (async () => {
@@ -1692,14 +1723,18 @@ checkbox.addEventListener('change', () => {
           const blobUrl = URL.createObjectURL(blob);
 
           st.status = "done";
-          st.progressText = "";
-          st.blobUrl = blobUrl;
-          prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
-          refreshMeta(modelId);
+st.progressText = "";
+st.blobUrl = blobUrl;
+prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
+refreshMeta(modelId);
 
-          paintDownloading(null);
-          maybeResumePreload();
-          return blobUrl;
+if (modelId === PRIMARY_MODEL_ID) {
+  startDtiPreloadOnce();
+}
+
+paintDownloading(null);
+maybeResumePreload();
+return blobUrl;
 
         } catch (err) {
           paintDownloading(null);
