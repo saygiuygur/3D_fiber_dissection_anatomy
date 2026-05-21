@@ -3315,8 +3315,8 @@ currentShownId = modelId;
 cameraReady = true;
 startLoop(activeMv);
 
-// Keep this as cleanup/safety after swap.
-scheduleDtiRefreshAfterModelPrepared();
+// DTI was already mounted into idleMv before swap.
+// Do not refresh it again immediately after swap, because that can cause flicker.
 
 selectedAnnoIndex = -1;
 refreshAnnoNavLabel();
