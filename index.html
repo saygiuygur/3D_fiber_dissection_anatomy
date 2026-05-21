@@ -929,22 +929,21 @@ function refreshAnnoNavWidth() {
       paintActive();
       paintDownloading(null);
     }
-   // ===== DTI tract system: model-1-empty landmark alignment =====
+  // ===== DTI tract system: model-1-empty landmark alignment =====
 // DTI GLBs contain copied reference empties from model 1.
 // Names do NOT need to match exactly at the final number.
-// Example: TrolardV001, TrolardV002, TrolardV.001 all match as "trolardv".
+// The landmark alignment is calculated ONCE per DTI, then reused.
 
 const dtiLoader = new GLTFLoader();
 const dtiPrototypePromises = new Map();
+const dtiAlignedPrototypePromises = new Map(); // dtiId -> Promise<aligned root>
 const dtiEnabled = new Set();
 const dtiMountedByMv = new WeakMap();
 const dtiUi = new Map();
 const dtiTargetReferenceCache = new Map(); // normalized model-1 reference key -> THREE.Vector3
-const dtiAlignedPrototypePromises = new Map(); // dtiId -> Promise<aligned root>
+
 let dtiReferenceCacheLocked = false;
 let dtiRefreshToken = 0;
-
-// Stores the latest DTI pan offset so DTI keeps its carried-over pan across model changes.
 let lastDtiPanDelta = new THREE.Vector3(0, 0, 0);
 
 const DTI_MIN_REFERENCE_PAIRS = 3;
@@ -964,15 +963,16 @@ function getDtiSceneRoot(mv) {
 function cleanObjectName(name) {
   return String(name || "")
     .trim()
-    .replace(/\.\d+$/, ""); // Blender duplicate suffix: .001, .002
+    .replace(/\.\d+$/, "");
 }
 
 function referenceKey(name) {
   return cleanObjectName(name)
-    .replace(/[\s_\-]+/g, "") // remove spaces, underscores, hyphens
-    .replace(/\d+$/g, "")     // remove final numbers: 001, 002, etc.
+    .replace(/[\s_\-]+/g, "")
+    .replace(/\d+$/g, "")
     .toLowerCase();
 }
+
 function isDtiObjectOrInsideDti(obj) {
   let cur = obj;
 
@@ -993,13 +993,12 @@ function findAnatomicalObjectByExactName(scene, wantedName) {
     if (found) return;
     if (isDtiObjectOrInsideDti(obj)) return;
 
-    if (obj.name === wantedName) {
-      found = obj;
-    }
+    if (obj.name === wantedName) found = obj;
   });
 
   return found;
 }
+
 function getModel1ReferenceKeySet() {
   return new Set(MODEL01_NAMES.map(referenceKey));
 }
@@ -1013,7 +1012,7 @@ function findObjectByReferenceKey(scene, wantedNameOrKey) {
   scene.traverse?.(obj => {
     if (found) return;
 
-    // Important: never use copied DTI reference empties as anatomical targets.
+    // Never use copied DTI reference empties as anatomical targets.
     if (isDtiObjectOrInsideDti(obj)) return;
 
     if (referenceKey(obj.name) === wantedKey) found = obj;
@@ -1021,6 +1020,7 @@ function findObjectByReferenceKey(scene, wantedNameOrKey) {
 
   return found;
 }
+
 function getMountedDtiMap(mv) {
   let map = dtiMountedByMv.get(mv);
   if (!map) {
@@ -1051,15 +1051,8 @@ function markAsDtiObject(root, dtiId) {
 
     for (const mat of mats) {
       if (!mat) continue;
-
-      // Real 3D depth relationship with the anatomical model.
       mat.depthTest = true;
-
-      // Solid DTI tracts should write depth.
-      if (!mat.transparent) {
-        mat.depthWrite = true;
-      }
-
+      if (!mat.transparent) mat.depthWrite = true;
       mat.needsUpdate = true;
     }
   });
@@ -1105,9 +1098,7 @@ function collectDtiReferencePoints(dtiRoot) {
       ? obj.getWorldPosition(new THREE.Vector3())
       : null;
 
-    if (p && !refs.has(key)) {
-      refs.set(key, p.clone());
-    }
+    if (p && !refs.has(key)) refs.set(key, p.clone());
   });
 
   return refs;
@@ -1148,11 +1139,6 @@ function cacheModel1ReferencePointsFromViewer(mv) {
   return false;
 }
 
-  if (cachedCount) {
-    console.log(`Cached ${cachedCount} model-1 DTI reference points.`);
-  }
-}
-
 function collectTargetReferencePoints(wantedKeys) {
   const refs = new Map();
 
@@ -1162,30 +1148,6 @@ function collectTargetReferencePoints(wantedKeys) {
     if (dtiTargetReferenceCache.has(key)) {
       refs.set(key, dtiTargetReferenceCache.get(key).clone());
     }
-  }
-
-  return refs;
-}
-
-  for (const keyOrName of wantedKeys) {
-    const key = referenceKey(keyOrName);
-
-    let p = null;
-
-    // First use cached model-1 references.
-    if (dtiTargetReferenceCache.has(key)) {
-      p = dtiTargetReferenceCache.get(key).clone();
-    }
-
-    // Fallback: if active scene has the same reference empty, use it.
-    if (!p && scene) {
-      const obj = findObjectByReferenceKey(scene, key);
-      if (obj?.getWorldPosition) {
-        p = obj.getWorldPosition(new THREE.Vector3());
-      }
-    }
-
-    if (p) refs.set(key, p);
   }
 
   return refs;
@@ -1224,7 +1186,6 @@ function chooseStableReferenceTriangle(pairs) {
   let bestJ = 1;
   let bestDist = -Infinity;
 
-  // Choose the farthest target pair as A-B.
   for (let i = 0; i < pairs.length; i++) {
     for (let j = i + 1; j < pairs.length; j++) {
       const d = pairs[i].target.distanceTo(pairs[j].target);
@@ -1244,7 +1205,6 @@ function chooseStableReferenceTriangle(pairs) {
   const a = pairs[bestI].target;
   const b = pairs[bestJ].target;
 
-  // Choose C as the point farthest from line A-B.
   for (let k = 0; k < pairs.length; k++) {
     if (k === bestI || k === bestJ) continue;
 
@@ -1266,7 +1226,6 @@ function makeFrameFromTriangle(a, b, c) {
   if (xLen < 1e-9) return null;
 
   const u = x.clone().normalize();
-
   const ac = c.clone().sub(a);
   const normal = x.clone().cross(ac);
   const normalLen = normal.length();
@@ -1333,47 +1292,14 @@ function buildAlignmentMatrixFromPairs(pairs) {
   return targetMatrix.multiply(sourceMatrix.clone().invert());
 }
 
-function applyLandmarkAlignmentToDti(dtiObj, mv, dtiId) {
+function applyLandmarkAlignmentToDti(dtiObj, dtiId) {
   const sourceRefs = collectDtiReferencePoints(dtiObj);
 
   if (sourceRefs.size < DTI_MIN_REFERENCE_PAIRS) {
     console.warn(`DTI ${dtiId}: only ${sourceRefs.size} matching model-1 reference empties found.`);
     return false;
   }
-async function getAlignedDtiPrototype(dti, mv) {
-  if (dtiAlignedPrototypePromises.has(dti.id)) {
-    return dtiAlignedPrototypePromises.get(dti.id);
-  }
 
-  const p = (async () => {
-    if (!dtiReferenceCacheLocked) {
-      if (currentShownId === DTI_REFERENCE_MODEL_ID) {
-        cacheModel1ReferencePointsFromViewer(mv);
-      }
-    }
-
-    if (!dtiReferenceCacheLocked) {
-      throw new Error(
-        `Model-1 reference cache is not ready. Open ${DTI_REFERENCE_MODEL_ID} once before loading DTI.`
-      );
-    }
-
-    const rawProto = await loadDtiPrototype(dti);
-    const alignedProto = cloneDtiObject(rawProto, dti.id);
-
-    const aligned = applyLandmarkAlignmentToDti(alignedProto, mv, dti.id);
-
-    if (!aligned) {
-      throw new Error(`Could not align DTI ${dti.id}`);
-    }
-
-    console.log(`Stored aligned DTI prototype for ${dti.id}.`);
-    return alignedProto;
-  })();
-
-  dtiAlignedPrototypePromises.set(dti.id, p);
-  return p;
-}
   const targetRefs = collectTargetReferencePoints(sourceRefs.keys());
   const pairs = makeReferencePairs(sourceRefs, targetRefs);
 
@@ -1396,6 +1322,34 @@ async function getAlignedDtiPrototype(dti, mv) {
   return true;
 }
 
+async function getAlignedDtiPrototype(dti, mv) {
+  if (dtiAlignedPrototypePromises.has(dti.id)) {
+    return dtiAlignedPrototypePromises.get(dti.id);
+  }
+
+  const p = (async () => {
+    if (!dtiReferenceCacheLocked && currentShownId === DTI_REFERENCE_MODEL_ID) {
+      cacheModel1ReferencePointsFromViewer(mv);
+    }
+
+    if (!dtiReferenceCacheLocked) {
+      throw new Error(`Model-1 reference cache is not ready.`);
+    }
+
+    const rawProto = await loadDtiPrototype(dti);
+    const alignedProto = cloneDtiObject(rawProto, dti.id);
+
+    const aligned = applyLandmarkAlignmentToDti(alignedProto, dti.id);
+    if (!aligned) throw new Error(`Could not align DTI ${dti.id}`);
+
+    console.log(`Stored aligned DTI prototype for ${dti.id}.`);
+    return alignedProto;
+  })();
+
+  dtiAlignedPrototypePromises.set(dti.id, p);
+  return p;
+}
+
 function unmountAllDtiFromViewer(mv) {
   const mounted = getMountedDtiMap(mv);
 
@@ -1407,6 +1361,7 @@ function unmountAllDtiFromViewer(mv) {
 
   mounted.clear();
 }
+
 function getCurrentModelPanDelta(mv) {
   const currentTarget = mv.getCameraTarget?.();
   if (!currentTarget) return lastDtiPanDelta.clone();
@@ -1436,7 +1391,6 @@ function applyDtiPanOffsetToViewer(mv) {
   for (const obj of mounted.values()) {
     if (!obj.__dtiBasePosition) continue;
 
-    // Minus direction is correct for your viewer panning behavior.
     obj.position.set(
       obj.__dtiBasePosition.x - panDelta.x,
       obj.__dtiBasePosition.y - panDelta.y,
@@ -1451,6 +1405,7 @@ function applyDtiPanOffsetToViewer(mv) {
 
   try { mv.requestUpdate?.(); } catch (_) {}
 }
+
 async function refreshDtiSceneForActiveViewer() {
   const mv = activeMv;
   if (!mv || !mv.src) return;
@@ -1462,20 +1417,16 @@ async function refreshDtiSceneForActiveViewer() {
     return;
   }
 
-  // Cache model 1 references whenever model 1 is the active scene.
-  // Your viewer starts from model 1, so this should usually happen automatically.
-  if (currentShownId === "01_Veselled_Annotated") {
+  if (currentShownId === DTI_REFERENCE_MODEL_ID) {
     cacheModel1ReferencePointsFromViewer(mv);
   }
 
   const token = ++dtiRefreshToken;
 
-  // Remove DTI from the hidden viewer after swaps.
   unmountAllDtiFromViewer(idleMv);
 
   const mounted = getMountedDtiMap(mv);
 
-  // Remove disabled DTI objects.
   for (const [id, obj] of Array.from(mounted.entries())) {
     if (!dtiEnabled.has(id) || !obj.parent) {
       try {
@@ -1485,7 +1436,6 @@ async function refreshDtiSceneForActiveViewer() {
     }
   }
 
-  // Add enabled DTI objects into the same Three.js scene as the active anatomy.
   for (const id of dtiEnabled) {
     if (mounted.has(id) && mounted.get(id).parent) {
       setDtiStatus(id, "✓");
@@ -1499,16 +1449,16 @@ async function refreshDtiSceneForActiveViewer() {
       setDtiStatus(id, "…");
 
       const alignedProto = await getAlignedDtiPrototype(dti, mv);
-if (token !== dtiRefreshToken || mv !== activeMv) return;
+      if (token !== dtiRefreshToken || mv !== activeMv) return;
 
-const obj = cloneDtiObject(alignedProto, id);
+      const obj = cloneDtiObject(alignedProto, id);
 
-// This is already aligned. Do not run landmark alignment again.
-obj.__dtiBasePosition = obj.position.clone();
+      // Already aligned once. Do not run landmark alignment again.
+      obj.__dtiBasePosition = obj.position.clone();
 
-scene.add(obj);
-mounted.set(id, obj);
-applyDtiPanOffsetToViewer(mv);
+      scene.add(obj);
+      mounted.set(id, obj);
+      applyDtiPanOffsetToViewer(mv);
 
       scene.updateMatrixWorld?.(true);
       setDtiStatus(id, "✓");
