@@ -1338,9 +1338,9 @@ function applyDtiPanOffsetToViewer(mv) {
     const dz = currentTarget.z - obj.__dtiBaseCameraTarget.z;
 
     obj.position.set(
-      obj.__dtiBasePosition.x + dx,
-      obj.__dtiBasePosition.y + dy,
-      obj.__dtiBasePosition.z + dz
+      obj.__dtiBasePosition.x - dx
+      obj.__dtiBasePosition.y - dy
+      obj.__dtiBasePosition.z - dz
     );
 
     obj.updateMatrixWorld?.(true);
