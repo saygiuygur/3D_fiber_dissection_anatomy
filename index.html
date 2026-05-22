@@ -1318,8 +1318,59 @@ function setOfflinePlatformButtonState(platform, state, percent = 0) {
 // ===== Optional offline atlas storage =====
 // Change v1 to v2 later if GLB files are replaced and saved copies must refresh.
 const OFFLINE_DATA_CACHE_NAME = "fiber-dissection-offline-data-v1";
+const OFFLINE_SHELL_CACHE_NAME = "fiber-dissection-offline-shell-v1";
 const OFFLINE_SAVED_KEY = "fiberDissectionOfflineSaved";
 const OFFLINE_PLATFORM_KEY = "fiberDissectionOfflinePlatform";
+
+const OFFLINE_SHELL_ASSETS = [
+  new URL("./", window.location.href).href,
+  new URL("./index.html", window.location.href).href,
+
+  // Current external JavaScript files required by the atlas viewer.
+  "https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js",
+  "https://unpkg.com/three@0.172.0/build/three.module.js",
+  "https://unpkg.com/three@0.172.0/examples/jsm/loaders/GLTFLoader.js"
+];
+
+async function registerOfflineServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Service workers are not available in this browser.");
+  }
+
+  return navigator.serviceWorker.register("./service-worker.js", {
+    scope: "./"
+  });
+}
+
+async function saveOfflineShellAssets() {
+  if (!("caches" in window)) {
+    throw new Error("Offline cache storage is not available in this browser.");
+  }
+
+  await registerOfflineServiceWorker();
+
+  const shellCache = await caches.open(OFFLINE_SHELL_CACHE_NAME);
+
+  for (const url of OFFLINE_SHELL_ASSETS) {
+    const response = await fetch(url, { cache: "no-store" });
+
+    if (!response.ok && response.type !== "opaque") {
+      throw new Error(`Could not save offline application file: ${url}`);
+    }
+
+    await shellCache.put(url, response.clone());
+  }
+}
+
+async function restoreOfflineShellForPreviouslySavedAtlas() {
+  if (!offlineDownloadCompleted) return;
+
+  try {
+    await saveOfflineShellAssets();
+  } catch (err) {
+    console.warn("Could not restore offline application shell:", err);
+  }
+}
 
 const OFFLINE_ASSETS = [
   ...MODELS.map(model => ({
@@ -1609,16 +1660,19 @@ async function startOfflineAtlasDownload(platform) {
   resetOfflinePlatformButtons();
   setOfflinePlatformButtonState(platform, "downloading", 0);
 
+ try {
+  await calculateOfflineTotalSize();
+
+  // Save the webpage and viewer libraries needed to open the atlas offline.
+  await saveOfflineShellAssets();
+
+  // Request more durable browser storage when supported.
+  // The browser may grant or decline this request.
   try {
-    await calculateOfflineTotalSize();
+    await navigator.storage?.persist?.();
+  } catch (_) {}
 
-    // Request more durable browser storage when supported.
-    // The browser may grant or decline this request.
-    try {
-      await navigator.storage?.persist?.();
-    } catch (_) {}
-
-    const cache = await caches.open(OFFLINE_DATA_CACHE_NAME);
+  const cache = await caches.open(OFFLINE_DATA_CACHE_NAME);
 
     let bytesCompleted = 0;
 
@@ -4320,6 +4374,10 @@ initModelOpacitySelector();
 initAnnotationsToggle();
 refreshAnnoNavLabel();
 updateSelectedHotspotVisual();
+
+// If the atlas data was already downloaded in an earlier test,
+// save the webpage/viewer shell now so it can open offline too.
+restoreOfflineShellForPreviouslySavedAtlas();
 
 showModel(selectedId).then(() => {
   kickPreloadSoon();
