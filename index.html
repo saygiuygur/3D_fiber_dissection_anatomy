@@ -2296,22 +2296,17 @@ async function stageOneUpdatedResource(
   const chunks = [];
   let received = 0;
 
- while (true) {
-const { done, value } = await reader.read();
-if (done) break;
+   while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
 
-chunks.push(value);
-received += value.byteLength;
+    chunks.push(value);
+    received += value.byteLength;
 
-const nextProgressText = total
-  ? `${Math.floor((received / total) * 100)}%`
-  : "";
-
-if (nextProgressText !== st.progressText) {
-  st.progressText = nextProgressText;
-  refreshMeta(modelId);
-}
-}
+    if (total > 0) {
+      onFraction(Math.min(1, received / total));
+    }
+  }
 
   const blob = new Blob(chunks, { type: contentType });
 
@@ -6088,6 +6083,7 @@ idleMv.addEventListener('load', onIdleLoad, { once:true });
 // The selected model itself provides its base state through applyAfterLoad().
 idleMv.src = targetSrc;
 return;
+}
 
 const onIdleLoad = () => {
 if (token !== swapToken) return;
