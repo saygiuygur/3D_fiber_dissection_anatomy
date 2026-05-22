@@ -3706,7 +3706,11 @@ let preloadTimer = null;
 let resumeRequested = false;
 let preloadRunning = false;
 const preloadQueue = MODELS.map(m => m.id);
-
+// TEMPORARY DIAGNOSTIC TEST:
+// Prevent competing background loads on mobile while testing whether
+// a later anatomical model can open by itself.
+const MOBILE_DIAGNOSTIC_ISOLATE_MODEL_LOAD =
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const rowEls = new Map();
 let downloadingVisualId = null;
 
@@ -4824,6 +4828,7 @@ let dtiPreloadStarted = false;
 let dtiPreloadRunning = false;
 
 async function startDtiPreloadOnce() {
+  if (MOBILE_DIAGNOSTIC_ISOLATE_MODEL_LOAD) return;
   if (dtiPreloadStarted || dtiPreloadRunning) return;
 
   dtiPreloadStarted = true;
@@ -4952,7 +4957,11 @@ sessionOfflineAssetBlobs.set(absoluteModelUrl, blob);
 st.status = "done";
 st.progressText = "";
 st.blobUrl = blobUrl;
-prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
+
+if (!MOBILE_DIAGNOSTIC_ISOLATE_MODEL_LOAD) {
+  prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
+}
+
 refreshMeta(modelId);
 
 if (modelId === PRIMARY_MODEL_ID) {
@@ -4995,6 +5004,7 @@ return p;
 }
 
 async function resumePreload() {
+if (MOBILE_DIAGNOSTIC_ISOLATE_MODEL_LOAD) return;
 if (!preloadEnabled) return;
 if (preloadRunning) return;
 preloadRunning = true;
@@ -5873,7 +5883,9 @@ requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(as
 if (token !== swapToken) return;
 await finalizeSwap();
 if (token !== swapToken) return;
-if (!prime02Done) startPrimeModel02Once();
+if (!MOBILE_DIAGNOSTIC_ISOLATE_MODEL_LOAD && !prime02Done) {
+  startPrimeModel02Once();
+}
 })));
 };
 
@@ -5895,7 +5907,9 @@ applyAfterLoad();
 finalizeAfterBarrier();
 };
 idleMv.addEventListener('load', onIdleLoad, { once:true });
-await prewarmModelBaseState(modelId, targetSrc);
+
+// Selected models load directly into idleMv.
+// applyAfterLoad() captures the required base state after loading.
 idleMv.src = targetSrc;
 return;
 }
@@ -5909,8 +5923,10 @@ idleMv.addEventListener('load', onIdleLoad, { once:true });
 
 try {
 const blobUrl = await downloadToBlobUrl(modelId);
-await prewarmModelBaseState(modelId, blobUrl);
 if (token !== swapToken) return;
+
+// Selected models load directly into idleMv.
+// applyAfterLoad() captures the required base state after loading.
 idleMv.src = blobUrl;
 } catch (_) {
 savingEnabled = true;
