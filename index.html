@@ -3662,7 +3662,8 @@ MODELS.forEach(m => state.set(m.id, {
   status: "idle",
   progressText: "",
   blobUrl: null,
-  cached: false
+  cached: false,
+  userPaused: false
 }));
 
 let currentController = null;
@@ -3703,7 +3704,7 @@ const n = Number(match[1]);
 return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
 }
 function loadingIconSVG(percent) {
-const r = 7, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
+const r = 7.75, c = 2 * Math.PI * r, offset = c * (1 - percent / 100);
 return `
        <svg class="status-icon" viewBox="0 0 20 20" aria-hidden="true">
          <circle cx="10" cy="10" r="${r}"
@@ -4996,6 +4997,7 @@ async function downloadToBlobUrl(modelId) {
 st.progressText = "";
 st.blobUrl = blobUrl;
 st.cached = true;
+st.userPaused = false;
 refreshMeta(modelId);
 
       if (!loadingFromAlreadyCachedFile) {
@@ -5101,6 +5103,7 @@ if (err.name === "AbortError") {
 st.progressText = "";
 st.blobUrl = null;
 st.cached = true;
+st.userPaused = false;
 refreshMeta(modelId);
 
       paintDownloading(null);
@@ -5167,9 +5170,12 @@ async function resumePreload() {
 
       const st = state.get(id);
 
-      // Already downloaded or currently visible models do not need
-      // another background download.
-      if (st?.status === "done") continue;
+// A manually paused model stays paused until the user clicks it again.
+if (st?.userPaused === true) continue;
+
+// Already downloaded or currently visible models do not need
+// another background download.
+if (st?.status === "done") continue;
 
       backgroundPreparationModelId = id;
       backgroundPreparationPromise = downloadModelToCacheOnly(id);
@@ -5244,8 +5250,8 @@ function releasePreviousIdleViewerAfterSwap() {
     clearHotspots(idleMv);
   } catch (_) {}
 
-  try {
-    occState.set(idleMv, null);
+    try {
+    disposeOcclusionResources(idleMv);
   } catch (_) {}
 
   try {
@@ -5465,7 +5471,33 @@ const FORCE_VISIBLE_K = 5;
 
 const occState = new WeakMap();
 const loopState = new WeakMap();
+function disposeOcclusionResources(mv) {
+  const st = occState.get(mv);
 
+  if (!st?.occluders) {
+    occState.set(mv, null);
+    return;
+  }
+
+  for (const mesh of st.occluders) {
+    try {
+      mesh.geometry?.dispose?.();
+    } catch (_) {}
+
+    try {
+      const materials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+
+      for (const material of materials) {
+        material?.dispose?.();
+      }
+    } catch (_) {}
+  }
+
+  occState.set(mv, null);
+}
+  
 function buildRaycastOccluders(mv, shift) {
 const scene = getMvScene(mv);
 if (!scene || typeof scene.traverse !== "function") return null;
@@ -6061,6 +6093,9 @@ captureAutoFrameBase(mv, modelId);
 
 const shift = computeShiftForModel(mv, modelId);
 
+// This viewer may contain obsolete copied raycast geometry from an older model.
+disposeOcclusionResources(mv);
+
 const occluders = buildRaycastOccluders(mv, shift);
 const pointMap = updateHotspotsAndPointMap(mv, modelId, shift);
 const slots = Array.from(pointMap.keys());
@@ -6169,6 +6204,14 @@ if (modelId === PRIMARY_MODEL_ID) {
   startDtiPreloadOnce();
 }
 
+// If Model 2 was paused during its hidden prime and is later opened by the user,
+// capture the same required alias-coordinate information from the visible viewer.
+if (modelId === PRIME_MODEL_ID && !prime02Done) {
+  primeCacheFromModel02(activeMv);
+  prime02Done = true;
+  prewarmDone.add(PRIME_MODEL_ID);
+}
+
 if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
   backgroundPreparationStarted = true;
 
@@ -6232,14 +6275,13 @@ async function onUserSelect(modelId) {
     !!st?.blobUrl ||
     modelId === currentShownId;
 
-  const clickedCurrentBackgroundDownload =
-    backgroundPreparationModelId === modelId &&
+  const clickedModelIsDownloading =
     currentDownloadingId === modelId &&
     st?.status === "loading";
 
-  // Clicking the currently visible model should do nothing and must not
-  // interrupt a background download.
-  if (modelId === currentShownId) {
+  // Clicking the currently visible model should not interrupt an unrelated
+  // background download.
+  if (modelId === currentShownId && !clickedModelIsDownloading) {
     selectedId = modelId;
     paintActive();
     return;
@@ -6248,32 +6290,54 @@ async function onUserSelect(modelId) {
   selectedId = modelId;
   paintActive();
 
-  // Preserve the existing interaction:
-// clicking the model that is currently downloading pauses that download.
-if (clickedCurrentBackgroundDownload) {
-  backgroundPreparationPausedForSelection = true;
+  // Keep the required initial Model 1 load protected. Without Model 1,
+  // camera/DTI reference initialization cannot complete.
+  if (modelId === PRIMARY_MODEL_ID && clickedModelIsDownloading && !cameraReady) {
+    return;
+  }
 
-  try {
-    currentController?.abort();
-  } catch (_) {}
+  // Toggle: clicking any currently downloading anatomical model pauses it,
+  // whether it is downloading in the background, through Model 2 prime,
+  // or because the user resumed/selected it.
+  if (clickedModelIsDownloading) {
+    st.userPaused = true;
+    backgroundPreparationPausedForSelection = true;
 
-  try {
-    await backgroundPreparationPromise;
-  } catch (_) {}
+    try {
+      currentController?.abort();
+    } catch (_) {}
 
-  backgroundPreparationPausedForSelection = false;
-  return;
-}
+    try {
+      if (inFlight.has(modelId)) {
+        await inFlight.get(modelId);
+      }
+    } catch (_) {}
 
-  // If the model is already downloaded/cached, open it without aborting the
-  // unrelated cache-only background download.
+    backgroundPreparationPausedForSelection = false;
+    return;
+  }
+
+  // A paused model is resumed by clicking it again.
+  // It becomes the selected model and will open after downloading.
+  if (st?.status === "paused" && st?.userPaused === true) {
+    st.userPaused = false;
+    backgroundPreparationPausedForSelection = true;
+
+    // Model 2 may have been paused during its required prime operation.
+    // Opening it normally will capture its alias-coordinate information.
+    showModel(modelId);
+    return;
+  }
+
+  // If the model is already cached or presently available as a Blob URL,
+  // open it without interrupting an unrelated background download.
   if (modelAlreadyAvailable) {
     showModel(modelId);
     return;
   }
 
-  // The clicked model is not available yet. Give it priority over the
-  // unrelated background download.
+  // The clicked model has not been downloaded yet. Give it priority over an
+  // unrelated background model download.
   backgroundPreparationPausedForSelection = true;
 
   if (
@@ -6287,11 +6351,18 @@ if (clickedCurrentBackgroundDownload) {
   }
 
   if (
-    backgroundPreparationModelId &&
-    currentDownloadingId === backgroundPreparationModelId &&
+    currentDownloadingId &&
     currentDownloadingId !== modelId &&
     currentController
   ) {
+    const interruptedState = state.get(currentDownloadingId);
+
+    // Mark an unrelated interrupted anatomical download as paused, but not
+    // manually paused; it may resume automatically after the selection opens.
+    if (interruptedState?.status === "loading") {
+      interruptedState.userPaused = false;
+    }
+
     try {
       currentController.abort();
     } catch (_) {}
@@ -6303,7 +6374,12 @@ if (clickedCurrentBackgroundDownload) {
     } catch (_) {}
   }
 
-  if (prime02Promise && !prime02Done) {
+  // Do not wait for a Model 2 prime that the user has explicitly paused.
+  if (
+    prime02Promise &&
+    !prime02Done &&
+    state.get(PRIME_MODEL_ID)?.userPaused !== true
+  ) {
     try {
       await prime02Promise;
     } catch (_) {}
