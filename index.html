@@ -177,6 +177,13 @@ margin:0 0 11px 0;
 color:#111;
 }
 
+.offline-size-calculating{
+display:inline-block;
+min-width:34px;
+text-align:center;
+letter-spacing:2px;
+}
+  
 .offline-primary-btn{
 margin-top:auto;
 align-self:flex-end;
@@ -781,7 +788,7 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
     </p>
 
     <p class="offline-popup-text">
-      Approximately <strong id="offlineApproxSize">— MB</strong> of data will be
+      Approximately <strong id="offlineApproxSize" class="offline-size-calculating">.</strong> of data will be
       stored in this browser on your device. You will be able to remove the saved
       data later.
     </p>
@@ -1335,7 +1342,38 @@ let offlineDownloadCompleted = false;
 let offlineCurrentPercent = 0;
 let offlineTotalBytes = 0;
 let offlineSizePromise = null;
+let offlineSizeDotsTimer = null;
+let offlineSizeDotsCount = 0;
 
+function startOfflineSizeDots() {
+  if (!offlineApproxSize || offlineTotalBytes > 0) return;
+
+  if (offlineSizeDotsTimer) {
+    clearInterval(offlineSizeDotsTimer);
+    offlineSizeDotsTimer = null;
+  }
+
+  offlineApproxSize.classList.add("offline-size-calculating");
+  offlineSizeDotsCount = 0;
+
+  const updateDots = () => {
+    offlineSizeDotsCount = (offlineSizeDotsCount % 3) + 1;
+    offlineApproxSize.textContent = ".".repeat(offlineSizeDotsCount);
+  };
+
+  updateDots();
+  offlineSizeDotsTimer = setInterval(updateDots, 360);
+}
+
+function stopOfflineSizeDots() {
+  if (offlineSizeDotsTimer) {
+    clearInterval(offlineSizeDotsTimer);
+    offlineSizeDotsTimer = null;
+  }
+
+  offlineApproxSize?.classList.remove("offline-size-calculating");
+}
+  
 try {
   offlineDownloadCompleted =
     localStorage.getItem(OFFLINE_SAVED_KEY) === "1";
@@ -1409,11 +1447,15 @@ async function calculateOfflineTotalSize() {
       }
     }
 
-    if (offlineApproxSize) {
-      offlineApproxSize.textContent = formatOfflineMegabytes(offlineTotalBytes);
-    }
+    stopOfflineSizeDots();
 
-    return offlineTotalBytes;
+if (offlineApproxSize) {
+  offlineApproxSize.textContent = offlineTotalBytes > 0
+    ? formatOfflineMegabytes(offlineTotalBytes)
+    : "Size unavailable";
+}
+
+return offlineTotalBytes;
   })();
 
   return offlineSizePromise;
@@ -1684,11 +1726,23 @@ function openOfflinePopup() {
   positionOfflinePopup();
   offlinePopup.classList.add('open');
 
-  calculateOfflineTotalSize().catch(() => {
+  if (offlineTotalBytes > 0) {
+    stopOfflineSizeDots();
+
     if (offlineApproxSize) {
-      offlineApproxSize.textContent = "— MB";
+      offlineApproxSize.textContent = formatOfflineMegabytes(offlineTotalBytes);
     }
-  });
+  } else {
+    startOfflineSizeDots();
+
+    calculateOfflineTotalSize().catch(() => {
+      stopOfflineSizeDots();
+
+      if (offlineApproxSize) {
+        offlineApproxSize.textContent = "Size unavailable";
+      }
+    });
+  }
 }
 
 function closeOfflinePopup() {
