@@ -1380,7 +1380,7 @@ function setOfflinePlatformButtonState(platform, state, percent = 0) {
  if (state === 'completed') {
   btn.classList.add('completed');
   btn.disabled = false;
-  btn.title = "Available offline. Click to install.";
+  btn.title = "Click to install.";
   btn.innerHTML = `
     <span class="offline-platform-status">
       ${offlineLargeDoneIconSVG()}
@@ -1800,7 +1800,7 @@ async function startOfflineAtlasDownload(platform) {
 
 if (offlinePlatformSubtitle) {
   offlinePlatformSubtitle.textContent =
-    "Available offline. Click the green tick to install the atlas as an app.";
+    "Click the green tick to install the atlas as an app.";
 }
 
 for (const btn of offlinePlatformButtons) {
