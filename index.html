@@ -1224,6 +1224,8 @@ const offlineCloseBtn = document.getElementById('offlineCloseBtn');
 const offlineContinueBtn = document.getElementById('offlineContinueBtn');
 const offlineIntroScreen = document.getElementById('offlineIntroScreen');
 const offlinePlatformScreen = document.getElementById('offlinePlatformScreen');
+const offlineApproxSize = document.getElementById('offlineApproxSize');
+
 const offlinePlatformButtons = Array.from(
   document.querySelectorAll('.offline-platform-btn')
 );
@@ -1306,11 +1308,345 @@ function setOfflinePlatformButtonState(platform, state, percent = 0) {
   btn.innerHTML = offlinePlatformOriginalMarkup.get(platform) || btn.innerHTML;
 }
 
-function resetOfflinePlatformButtons() {
-  for (const btn of offlinePlatformButtons) {
-    setOfflinePlatformButtonState(btn.dataset.platform, 'idle');
+// ===== Optional offline atlas storage =====
+// Change v1 to v2 later if GLB files are replaced and saved copies must refresh.
+const OFFLINE_DATA_CACHE_NAME = "fiber-dissection-offline-data-v1";
+const OFFLINE_SAVED_KEY = "fiberDissectionOfflineSaved";
+const OFFLINE_PLATFORM_KEY = "fiberDissectionOfflinePlatform";
+
+const OFFLINE_ASSETS = [
+  ...MODELS.map(model => ({
+    id: model.id,
+    type: "model",
+    url: new URL(model.url, window.location.href).href
+  })),
+  ...DTI_MODELS.map(dti => ({
+    id: dti.id,
+    type: "dti",
+    url: new URL(dti.url, window.location.href).href
+  }))
+];
+
+const offlineAssetSizes = new Map();
+
+let offlineActivePlatform = null;
+let offlineDownloadRunning = false;
+let offlineDownloadCompleted = false;
+let offlineCurrentPercent = 0;
+let offlineTotalBytes = 0;
+let offlineSizePromise = null;
+
+try {
+  offlineDownloadCompleted =
+    localStorage.getItem(OFFLINE_SAVED_KEY) === "1";
+
+  offlineActivePlatform =
+    localStorage.getItem(OFFLINE_PLATFORM_KEY) || null;
+} catch (_) {}
+
+function formatOfflineMegabytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "— MB";
+
+  const mb = bytes / (1024 * 1024);
+
+  if (mb >= 100) {
+    return `${Math.round(mb)} MB`;
+  }
+
+  return `${mb.toFixed(1)} MB`;
+}
+
+function rememberOfflineAssetSize(url, size) {
+  if (!Number.isFinite(size) || size <= 0) return;
+
+  const previous = offlineAssetSizes.get(url) || 0;
+  offlineAssetSizes.set(url, size);
+
+  if (!previous) {
+    offlineTotalBytes += size;
   }
 }
+
+async function calculateOfflineTotalSize() {
+  if (offlineSizePromise) return offlineSizePromise;
+
+  offlineSizePromise = (async () => {
+    let cache = null;
+
+    try {
+      if ("caches" in window) {
+        cache = await caches.open(OFFLINE_DATA_CACHE_NAME);
+      }
+    } catch (_) {}
+
+    for (const asset of OFFLINE_ASSETS) {
+      if (offlineAssetSizes.has(asset.url)) continue;
+
+      try {
+        const savedResponse = cache
+          ? await cache.match(asset.url)
+          : null;
+
+        if (savedResponse) {
+          const savedBlob = await savedResponse.blob();
+          rememberOfflineAssetSize(asset.url, savedBlob.size);
+          continue;
+        }
+
+        const headResponse = await fetch(asset.url, {
+          method: "HEAD",
+          cache: "no-store"
+        });
+
+        const size = Number(
+          headResponse.headers.get("Content-Length")
+        ) || 0;
+
+        rememberOfflineAssetSize(asset.url, size);
+      } catch (_) {
+        // If a server does not provide HEAD size, the size will be
+        // learned during the real offline download.
+      }
+    }
+
+    if (offlineApproxSize) {
+      offlineApproxSize.textContent = formatOfflineMegabytes(offlineTotalBytes);
+    }
+
+    return offlineTotalBytes;
+  })();
+
+  return offlineSizePromise;
+}
+
+function resetOfflinePlatformButtons() {
+  for (const btn of offlinePlatformButtons) {
+    const platform = btn.dataset.platform;
+
+    if (offlineDownloadRunning && platform === offlineActivePlatform) {
+      setOfflinePlatformButtonState(
+        platform,
+        "downloading",
+        offlineCurrentPercent
+      );
+      continue;
+    }
+
+    if (offlineDownloadCompleted && platform === offlineActivePlatform) {
+      setOfflinePlatformButtonState(platform, "completed");
+      continue;
+    }
+
+    setOfflinePlatformButtonState(platform, "idle");
+
+    if (offlineDownloadRunning) {
+      btn.disabled = true;
+    }
+  }
+}
+
+function updateOfflineDownloadProgress(platform, bytesCompleted, currentBytes) {
+  if (!offlineTotalBytes) {
+    offlineCurrentPercent = 0;
+  } else {
+    offlineCurrentPercent = Math.max(
+      0,
+      Math.min(
+        99,
+        Math.floor(
+          ((bytesCompleted + currentBytes) / offlineTotalBytes) * 100
+        )
+      )
+    );
+  }
+
+  setOfflinePlatformButtonState(
+    platform,
+    "downloading",
+    offlineCurrentPercent
+  );
+}
+
+async function saveOneAssetForOffline(
+  asset,
+  cache,
+  platform,
+  bytesCompleted
+) {
+  const alreadySaved = await cache.match(asset.url);
+
+  if (alreadySaved) {
+    const savedBlob = await alreadySaved.blob();
+    rememberOfflineAssetSize(asset.url, savedBlob.size);
+
+    updateOfflineDownloadProgress(
+      platform,
+      bytesCompleted,
+      savedBlob.size
+    );
+
+    return savedBlob.size;
+  }
+
+  const response = await fetch(asset.url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(`Could not download ${asset.id}: HTTP ${response.status}`);
+  }
+
+  const contentType =
+    response.headers.get("Content-Type") || "model/gltf-binary";
+
+  const announcedSize =
+    Number(response.headers.get("Content-Length")) || 0;
+
+  rememberOfflineAssetSize(asset.url, announcedSize);
+
+  const reader = response.body?.getReader?.();
+  const chunks = [];
+  let received = 0;
+
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) break;
+
+      chunks.push(value);
+      received += value.byteLength;
+
+      updateOfflineDownloadProgress(
+        platform,
+        bytesCompleted,
+        received
+      );
+    }
+  } else {
+    const directBlob = await response.blob();
+    chunks.push(await directBlob.arrayBuffer());
+    received = directBlob.size;
+
+    updateOfflineDownloadProgress(
+      platform,
+      bytesCompleted,
+      received
+    );
+  }
+
+  const blob = new Blob(chunks, { type: contentType });
+
+  rememberOfflineAssetSize(asset.url, blob.size);
+
+  await cache.put(
+    asset.url,
+    new Response(blob, {
+      headers: {
+        "Content-Type": contentType
+      }
+    })
+  );
+
+  return blob.size;
+}
+
+async function startOfflineAtlasDownload(platform) {
+  if (offlineDownloadRunning) return;
+
+  if (!("caches" in window)) {
+    window.alert(
+      "Offline storage is not available in this browser."
+    );
+    return;
+  }
+
+  offlineActivePlatform = platform;
+  offlineDownloadRunning = true;
+  offlineDownloadCompleted = false;
+  offlineCurrentPercent = 0;
+
+  resetOfflinePlatformButtons();
+  setOfflinePlatformButtonState(platform, "downloading", 0);
+
+  try {
+    await calculateOfflineTotalSize();
+
+    // Request more durable browser storage when supported.
+    // The browser may grant or decline this request.
+    try {
+      await navigator.storage?.persist?.();
+    } catch (_) {}
+
+    const cache = await caches.open(OFFLINE_DATA_CACHE_NAME);
+
+    let bytesCompleted = 0;
+
+    for (const asset of OFFLINE_ASSETS) {
+      const storedBytes = await saveOneAssetForOffline(
+        asset,
+        cache,
+        platform,
+        bytesCompleted
+      );
+
+      bytesCompleted += storedBytes;
+
+      if (offlineTotalBytes && bytesCompleted > offlineTotalBytes) {
+        offlineTotalBytes = bytesCompleted;
+      }
+
+      updateOfflineDownloadProgress(
+        platform,
+        bytesCompleted,
+        0
+      );
+    }
+
+    offlineCurrentPercent = 100;
+    offlineDownloadCompleted = true;
+
+    try {
+      localStorage.setItem(OFFLINE_SAVED_KEY, "1");
+      localStorage.setItem(OFFLINE_PLATFORM_KEY, platform);
+    } catch (_) {}
+
+    if (offlineApproxSize) {
+      offlineApproxSize.textContent =
+        formatOfflineMegabytes(offlineTotalBytes);
+    }
+
+    setOfflinePlatformButtonState(platform, "completed");
+
+    for (const btn of offlinePlatformButtons) {
+      if (btn.dataset.platform !== platform) {
+        btn.disabled = false;
+      }
+    }
+  } catch (err) {
+    console.error("Offline atlas download failed:", err);
+
+    offlineDownloadCompleted = false;
+    offlineCurrentPercent = 0;
+
+    try {
+      localStorage.removeItem(OFFLINE_SAVED_KEY);
+      localStorage.removeItem(OFFLINE_PLATFORM_KEY);
+    } catch (_) {}
+
+    resetOfflinePlatformButtons();
+
+    window.alert(
+      "The offline atlas download could not be completed. Please check your internet connection and try again."
+    );
+  } finally {
+    offlineDownloadRunning = false;
+  }
+}
+
+offlinePlatformButtons.forEach(btn => {
+  btn.addEventListener("click", () => {
+    startOfflineAtlasDownload(btn.dataset.platform);
+  });
+});
   
 function positionOfflinePopup() {
   if (!offlineOpenBtn || !offlinePopup) return;
@@ -1347,6 +1683,12 @@ function openOfflinePopup() {
   resetOfflinePopupScreen();
   positionOfflinePopup();
   offlinePopup.classList.add('open');
+
+  calculateOfflineTotalSize().catch(() => {
+    if (offlineApproxSize) {
+      offlineApproxSize.textContent = "— MB";
+    }
+  });
 }
 
 function closeOfflinePopup() {
