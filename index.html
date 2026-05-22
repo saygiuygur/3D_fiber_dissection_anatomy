@@ -704,9 +704,10 @@ box-sizing:border-box;
 .swatch.selected{ outline:2px solid #111; outline-offset:3px; }
 
 .viewer-wrap{
-position: relative;
-width: calc(100vw - 360px);
-height: 100vh;
+position:relative;
+flex:1 1 auto;
+min-width:0;
+height:100vh;
 background:var(--viewer-bg);
 overflow:hidden;
 }
