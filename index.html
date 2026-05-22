@@ -1363,9 +1363,24 @@ interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
 </div>
 </div>
 
-<script type="module">
+<<script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+// Limit model-viewer's internal parsed glTF cache.
+// The atlas stores/downloads model files separately; this controls only
+// retained parsed 3D model resources in browser/GPU memory.
+await customElements.whenDefined("model-viewer");
+
+const ModelViewerElementClass = customElements.get("model-viewer");
+
+if (ModelViewerElementClass) {
+  ModelViewerElementClass.modelCacheSize = 1;
+  console.log(
+    "model-viewer parsed-model cache size:",
+    ModelViewerElementClass.modelCacheSize
+  );
+}
 
 const MODELS = [
 { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
