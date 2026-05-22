@@ -6,7 +6,7 @@
 <title>3D Fiber Dissection Anatomy</title>
 
 <link rel="manifest" href="./manifest.webmanifest">
-
+<div class="wrap">
 <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="./icons/favicon-16.png">
 
@@ -754,6 +754,148 @@ box-sizing:border-box;
 .swatch.black{ background:#000000; }
 .swatch.selected{ outline:2px solid #111; outline-offset:3px; }
 
+/* ===== Mode selection menu ===== */
+
+.mode-select-overlay{
+position:fixed;
+inset:0;
+z-index:1000;
+display:none;
+align-items:center;
+justify-content:center;
+padding:22px;
+box-sizing:border-box;
+background:rgba(245,247,250,0.96);
+backdrop-filter:blur(8px);
+-webkit-backdrop-filter:blur(8px);
+}
+
+.mode-select-overlay.open{
+display:flex;
+}
+
+.mode-select-card{
+width:min(520px, 100%);
+padding:28px;
+box-sizing:border-box;
+border-radius:22px;
+background:#fff;
+box-shadow:0 18px 54px rgba(0,0,0,0.18);
+}
+
+.mode-select-title{
+font-size:25px;
+font-weight:700;
+letter-spacing:-0.3px;
+margin:0 0 20px;
+text-align:center;
+color:#111;
+}
+
+.mode-option-btn{
+display:flex;
+flex-direction:column;
+align-items:flex-start;
+width:100%;
+padding:16px 17px;
+margin:0 0 12px;
+box-sizing:border-box;
+border:1px solid #dddddd;
+border-radius:15px;
+background:#fff;
+cursor:pointer;
+text-align:left;
+transition:border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.mode-option-btn:last-child{
+margin-bottom:0;
+}
+
+.mode-option-btn:hover{
+border-color:#1e88e5;
+background:#f6faff;
+box-shadow:0 3px 12px rgba(30,136,229,0.10);
+}
+
+.mode-option-name{
+font-size:16px;
+font-weight:700;
+line-height:1.25;
+color:#111;
+margin-bottom:5px;
+}
+
+.mode-option-description{
+font-size:13px;
+line-height:1.45;
+color:#555;
+}
+
+.mode-option-performance .mode-option-description{
+color:#6a4d00;
+}
+
+.steps-header{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:8px;
+margin:6px 0 12px;
+}
+
+.steps-header h3{
+font-size:18px;
+line-height:1.2;
+margin:0;
+}
+
+.mode-badge{
+flex:0 0 auto;
+height:27px;
+padding:0 11px;
+border:1px solid #d6d6d6;
+border-radius:999px;
+background:#fff;
+color:#555;
+font-size:11px;
+font-weight:600;
+white-space:nowrap;
+cursor:pointer;
+transition:border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.mode-badge:hover{
+border-color:#1e88e5;
+background:#f4f8fd;
+color:#156fca;
+}
+
+@media (max-width:520px){
+.mode-select-card{
+padding:22px 17px;
+border-radius:18px;
+}
+
+.mode-select-title{
+font-size:22px;
+margin-bottom:17px;
+}
+
+.mode-option-btn{
+padding:14px;
+}
+
+.steps-header h3{
+font-size:17px;
+}
+
+.mode-badge{
+padding:0 9px;
+font-size:10.5px;
+}
+}
+  
 .viewer-wrap{
 position:relative;
 flex:1 1 auto;
@@ -1091,9 +1233,50 @@ letter-spacing: 0.2px;
 </head>
 
 <body>
+
+<div id="modeSelectOverlay" class="mode-select-overlay" aria-label="Select mode">
+  <div class="mode-select-card">
+    <div class="mode-select-title">Select Mode</div>
+
+    <button class="mode-option-btn" type="button" data-atlas-mode="stability">
+      <span class="mode-option-name">Stability mode</span>
+      <span class="mode-option-description">
+        Uses the least device memory. Recommended for phones, tablets,
+        and lower-memory computers. Model switching may take longer.
+      </span>
+    </button>
+
+    <button class="mode-option-btn" type="button" data-atlas-mode="balanced">
+      <span class="mode-option-name">Balanced mode</span>
+      <span class="mode-option-description">
+        Keeps up to four recently opened dissection steps ready for faster
+        switching. Uses more device memory.
+      </span>
+    </button>
+
+    <button class="mode-option-btn mode-option-performance" type="button" data-atlas-mode="performance">
+      <span class="mode-option-name">Performance mode</span>
+      <span class="mode-option-description">
+        Prepares and retains all dissection steps for the fastest switching.
+        Uses substantial memory and may be unstable on mobile devices.
+      </span>
+    </button>
+  </div>
+</div>
+
 <div class="wrap">
 <div class="sidebar">
-<h3 style="margin:6px 0 12px;">Dissection Steps</h3>
+<div class="steps-header">
+  <h3>Dissection Steps</h3>
+
+  <button id="modeBadge"
+    class="mode-badge"
+    type="button"
+    title="Click to change mode">
+    Stability mode
+  </button>
+</div>
+
 <div id="list"></div>
 
 <div class="toggle-row">
@@ -1376,20 +1559,10 @@ interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-// Limit model-viewer's internal parsed glTF cache.
-// The atlas stores/downloads model files separately; this controls only
-// retained parsed 3D model resources in browser/GPU memory.
+// model-viewer's parsed glTF cache size will be selected from the opening mode menu.
 await customElements.whenDefined("model-viewer");
 
 const ModelViewerElementClass = customElements.get("model-viewer");
-
-if (ModelViewerElementClass) {
-  ModelViewerElementClass.modelCacheSize = 1;
-  console.log(
-    "model-viewer parsed-model cache size:",
-    ModelViewerElementClass.modelCacheSize
-  );
-}
 
 const MODELS = [
 { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
@@ -1404,6 +1577,125 @@ const MODELS = [
 { id: "11_Anterior_Comissure_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure_Annotated.glb" },
 ];
 
+// ===== Atlas loading modes =====
+const ATLAS_MODES = Object.freeze({
+  stability: {
+    label: "Stability mode",
+    modelCacheSize: 1
+  },
+  balanced: {
+    label: "Balanced mode",
+    modelCacheSize: 4
+  },
+  performance: {
+    label: "Performance mode",
+    modelCacheSize: MODELS.length
+  }
+});
+
+let atlasLoadingMode = null;
+let atlasHasLaunched = false;
+
+// Balanced mode retains the four most recently opened anatomical models.
+// Performance mode retains all prepared anatomical models.
+// Models prepared and retained during the current session.
+const performancePreparedModelIds = new Set();
+
+// Balanced mode follows actual viewing history:
+// previous two viewed models + current model + next sequential model.
+let balancedViewHistory = [];
+let balancedAheadPromise = null;
+let balancedAheadModelId = null;
+
+function isValidAtlasMode(modeKey) {
+  return Object.prototype.hasOwnProperty.call(ATLAS_MODES, modeKey);
+}
+
+function updateModeBadge() {
+  const badge = document.getElementById("modeBadge");
+  if (!badge || !atlasLoadingMode) return;
+
+  badge.textContent = ATLAS_MODES[atlasLoadingMode].label;
+}
+function getNextAnatomicalModelId(modelId) {
+  const index = MODELS.findIndex(model => model.id === modelId);
+
+  if (index < 0 || index >= MODELS.length - 1) {
+    return null;
+  }
+
+  return MODELS[index + 1].id;
+}
+
+function recordBalancedVisibleModel(modelId) {
+  balancedViewHistory =
+    balancedViewHistory.filter(id => id !== modelId);
+
+  balancedViewHistory.push(modelId);
+}
+
+function getBalancedRetainedModelIds(currentModelId) {
+  const previousTwo = balancedViewHistory
+    .filter(id => id !== currentModelId)
+    .slice(-2);
+
+  const nextModelId = getNextAnatomicalModelId(currentModelId);
+
+  return new Set(
+    [...previousTwo, currentModelId, nextModelId].filter(Boolean)
+  );
+}
+
+function releaseModelsOutsideBalancedWindow(currentModelId) {
+  if (atlasLoadingMode !== "balanced") return;
+
+  const keepIds = getBalancedRetainedModelIds(currentModelId);
+
+  for (const model of MODELS) {
+    if (
+      !keepIds.has(model.id) &&
+      model.id !== currentShownId
+    ) {
+      releaseModelBlobIfUnused(model.id);
+    }
+  }
+}
+function applyAtlasModeMemoryPolicy(modeKey) {
+  if (!isValidAtlasMode(modeKey)) return;
+
+  atlasLoadingMode = modeKey;
+
+  if (ModelViewerElementClass) {
+    ModelViewerElementClass.modelCacheSize =
+      ATLAS_MODES[modeKey].modelCacheSize;
+
+    console.log(
+      "Atlas mode:",
+      ATLAS_MODES[modeKey].label,
+      "| model-viewer cache size:",
+      ModelViewerElementClass.modelCacheSize
+    );
+  }
+
+  updateModeBadge();
+}
+
+function retainAnatomicalModelForCurrentMode(modelId) {
+  if (!atlasLoadingMode || atlasLoadingMode === "stability") {
+    return;
+  }
+
+  if (atlasLoadingMode === "performance") {
+    performancePreparedModelIds.add(modelId);
+    return;
+  }
+
+  if (atlasLoadingMode === "balanced") {
+    recordBalancedVisibleModel(modelId);
+    releaseModelsOutsideBalancedWindow(modelId);
+  }
+}
+  
 const MODEL01_NAMES = [
 "TrolardV001","SylvianV001","SuperiorparietalA001","PrefrontalA001","PrecentralsulcusA001",
 "PosteriortemporalA001","PosteriorparietalA001","PIFA001","PericallosalA001","PCA001",
@@ -5171,6 +5463,148 @@ refreshMeta(modelId);
   inFlight.set(modelId, p);
   return p;
 }
+  async function prepareNextModelForBalancedMode(currentModelId) {
+  if (atlasLoadingMode !== "balanced") return;
+
+  const nextModelId = getNextAnatomicalModelId(currentModelId);
+
+  if (!nextModelId) {
+    releaseModelsOutsideBalancedWindow(currentModelId);
+    return;
+  }
+
+  const nextState = state.get(nextModelId);
+
+  // Model 2 is already prepared through the required initial alias-coordinate
+  // prime process. Do not compete with that same operation.
+  if (
+    nextModelId === PRIME_MODEL_ID &&
+    prime02Promise &&
+    !prime02Done
+  ) {
+    try {
+      await prime02Promise;
+    } catch (_) {}
+
+    releaseModelsOutsideBalancedWindow(currentModelId);
+    return;
+  }
+
+  // The next step is already prepared and retained.
+  if (nextState?.blobUrl) {
+    releaseModelsOutsideBalancedWindow(currentModelId);
+    return;
+  }
+
+  // Avoid launching the same look-ahead preparation more than once.
+  if (
+    balancedAheadPromise &&
+    balancedAheadModelId === nextModelId
+  ) {
+    return balancedAheadPromise;
+  }
+
+  balancedAheadModelId = nextModelId;
+
+  balancedAheadPromise = (async () => {
+    try {
+      const blobUrl = await downloadToBlobUrl(nextModelId);
+
+      // The user may have switched to another model while the next step
+      // was downloading. In that case, do not hidden-prepare an outdated step.
+      if (
+        atlasLoadingMode !== "balanced" ||
+        currentShownId !== currentModelId
+      ) {
+        releaseModelsOutsideBalancedWindow(currentShownId);
+        return;
+      }
+
+      await (mvPrimeLock = mvPrimeLock.then(async () => {
+        if (
+          atlasLoadingMode !== "balanced" ||
+          currentShownId !== currentModelId
+        ) {
+          return;
+        }
+
+        if (mvPrime.src !== blobUrl) {
+          await new Promise(resolve => {
+            const onLoad = () => resolve();
+            mvPrime.addEventListener("load", onLoad, { once: true });
+            mvPrime.src = blobUrl;
+          });
+        }
+
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        await new Promise(resolve => requestAnimationFrame(resolve));
+
+        captureAutoFrameBase(mvPrime, nextModelId);
+        prewarmDone.add(nextModelId);
+
+        try {
+          mvPrime.removeAttribute("src");
+        } catch (_) {}
+
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }));
+
+      releaseModelsOutsideBalancedWindow(currentModelId);
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.warn("Balanced next-model preparation failed:", nextModelId, err);
+      }
+    } finally {
+      balancedAheadPromise = null;
+      balancedAheadModelId = null;
+    }
+  })();
+
+  return balancedAheadPromise;
+}
+  
+async function prepareModelForPerformanceMode(modelId) {
+  if (performancePreparedModelIds.has(modelId)) return;
+
+  if (modelId === currentShownId) {
+    performancePreparedModelIds.add(modelId);
+    retainAnatomicalModelForCurrentMode(modelId);
+    return;
+  }
+
+  const blobUrl = await downloadToBlobUrl(modelId);
+
+  await (mvPrimeLock = mvPrimeLock.then(async () => {
+    if (performancePreparedModelIds.has(modelId)) return;
+
+    if (mvPrime.src !== blobUrl) {
+      await new Promise(resolve => {
+        const onLoad = () => resolve();
+        mvPrime.addEventListener("load", onLoad, { once: true });
+        mvPrime.src = blobUrl;
+      });
+    }
+
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
+    captureAutoFrameBase(mvPrime, modelId);
+    prewarmDone.add(modelId);
+
+    performancePreparedModelIds.add(modelId);
+    retainAnatomicalModelForCurrentMode(modelId);
+
+    // Remove only the hidden visible instance. The stable Blob URL and
+    // model-viewer's parsed cache entry remain available in Performance mode.
+    try {
+      mvPrime.removeAttribute("src");
+    } catch (_) {}
+
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+  }));
+}
   
 async function resumePreload() {
   if (!preloadEnabled) return;
@@ -5200,6 +5634,7 @@ async function resumePreload() {
 
     for (const id of preloadQueue) {
       if (!preloadEnabled) return;
+      if (anatomicalDownloadsUserPaused) return;
 
       if (backgroundPreparationPausedForSelection) {
         resumeRequested = true;
@@ -5208,15 +5643,30 @@ async function resumePreload() {
 
       const st = state.get(id);
 
-// A manually paused model stays paused until the user clicks it again.
-if (st?.userPaused === true) continue;
-
-// Already downloaded or currently visible models do not need
-// another background download.
-if (st?.status === "done") continue;
+      if (st?.userPaused === true) continue;
 
       backgroundPreparationModelId = id;
-      backgroundPreparationPromise = downloadModelToCacheOnly(id);
+
+      if (atlasLoadingMode === "performance") {
+        if (
+          performancePreparedModelIds.has(id) ||
+          id === currentShownId
+        ) {
+          performancePreparedModelIds.add(id);
+          retainAnatomicalModelForCurrentMode(id);
+          continue;
+        }
+
+        backgroundPreparationPromise =
+          prepareModelForPerformanceMode(id);
+      } else {
+        // Stability and Balanced download model files in the background,
+        // but parse/open them only when the user selects them.
+        if (st?.status === "done") continue;
+
+        backgroundPreparationPromise =
+          downloadModelToCacheOnly(id);
+      }
 
       try {
         await backgroundPreparationPromise;
@@ -5226,7 +5676,7 @@ if (st?.status === "done") continue;
           return;
         }
 
-        console.warn("Background model download failed:", id, err);
+        console.warn("Background model processing failed:", id, err);
       } finally {
         backgroundPreparationPromise = null;
         backgroundPreparationModelId = null;
@@ -5296,7 +5746,21 @@ function releasePreviousIdleViewerAfterSwap() {
     idleMv.removeAttribute("src");
   } catch (_) {}
 
-  if (!retiredSrc) return;
+    if (!retiredSrc) return;
+
+    // Performance retains all prepared anatomical models.
+  if (atlasLoadingMode === "performance") {
+    return;
+  }
+
+  // Balanced retains only its moving four-model window:
+  // previous two viewed models + current model + next sequential model.
+  if (atlasLoadingMode === "balanced") {
+    releaseModelsOutsideBalancedWindow(currentShownId);
+    return;
+  }
+
+  // Stability immediately releases the previously visible model.
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -5323,6 +5787,23 @@ async function releasePrimeViewerAfterCapture(modelId, blobUrl) {
       await new Promise(resolve => requestAnimationFrame(resolve));
     }
   } catch (_) {}
+
+  if (atlasLoadingMode === "performance") {
+    performancePreparedModelIds.add(modelId);
+    retainAnatomicalModelForCurrentMode(modelId);
+    return;
+  }
+
+  // At initial launch in Balanced mode, Model 2 is already the next
+  // sequential step after visible Model 1. Keep its prepared Blob URL
+  // instead of immediately releasing it.
+  if (
+    atlasLoadingMode === "balanced" &&
+    modelId === PRIME_MODEL_ID &&
+    currentShownId === PRIMARY_MODEL_ID
+  ) {
+    return;
+  }
 
   if (modelId !== currentShownId) {
     releaseModelBlobIfUnused(modelId);
@@ -6266,6 +6747,19 @@ applyMobileTouchZoomAfterSwap(activeMv);
 // The former visible viewer is now idle. Clear its live anatomical model
 // after the new model is successfully visible.
 releasePreviousIdleViewerAfterSwap();
+// Apply the selected mode's retention policy.
+retainAnatomicalModelForCurrentMode(modelId);
+
+// Balanced mode prepares exactly one model ahead of the current viewed step.
+// Do not separately prepare Model 2 after Model 1, because Model 2 is already
+// prepared through the required initial annotation-coordinate prime.
+if (
+  atlasLoadingMode === "balanced" &&
+  !(modelId === PRIMARY_MODEL_ID && !prime02Done)
+) {
+  prepareNextModelForBalancedMode(modelId);
+}
+// Stability releases previous models immediately.
 
 // DTI was already mounted into idleMv before swap.
 // Do not refresh it again immediately after swap, because that can cause flicker.
@@ -6322,9 +6816,9 @@ if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
   backgroundPreparationStarted = true;
 
   // Prime Model 2 once for existing annotation alias coordinates,
-  // then begin the one-at-a-time anatomical preparation queue.
-  await startPrimeModel02Once();
-  kickPreloadSoon();
+// then begin the selected mode's background loading behavior.
+await startPrimeModel02Once();
+kickPreloadSoon();
 }
 })));
 };
@@ -6428,8 +6922,18 @@ async function onUserSelect(modelId) {
   // Clicking an already downloaded model opens it, while a manually paused
   // anatomical download queue remains paused.
   if (modelAlreadyAvailable) {
-    showModel(modelId);
-    return;
+  if (
+    atlasLoadingMode === "balanced" &&
+    balancedAheadPromise &&
+    balancedAheadModelId !== modelId
+  ) {
+    try {
+      await balancedAheadPromise;
+    } catch (_) {}
+  }
+
+  showModel(modelId);
+  return;
   }
 
   // Clicking the paused model again, or selecting another not-yet-downloaded
@@ -6481,7 +6985,7 @@ async function onUserSelect(modelId) {
 
   // If Model 2 prime is running for a different request, let only that
   // essential one-time coordinate operation settle.
-  if (
+   if (
     prime02Promise &&
     !prime02Done &&
     modelId !== PRIME_MODEL_ID
@@ -6491,9 +6995,89 @@ async function onUserSelect(modelId) {
     } catch (_) {}
   }
 
+  // Avoid opening a selected anatomical model while Balanced mode is
+  // still preparing another look-ahead model.
+  if (
+    atlasLoadingMode === "balanced" &&
+    balancedAheadPromise &&
+    balancedAheadModelId !== modelId
+  ) {
+    try {
+      await balancedAheadPromise;
+    } catch (_) {}
+  }
+
   showModel(modelId);
 }
+// ===== Mode selection startup / switching =====
+function showModeSelectionMenu() {
+  const overlay = document.getElementById("modeSelectOverlay");
+  overlay?.classList.add("open");
+}
 
+function hideModeSelectionMenu() {
+  const overlay = document.getElementById("modeSelectOverlay");
+  overlay?.classList.remove("open");
+}
+
+function launchAtlasWithMode(modeKey) {
+  if (!isValidAtlasMode(modeKey) || atlasHasLaunched) return;
+
+  applyAtlasModeMemoryPolicy(modeKey);
+  atlasHasLaunched = true;
+  hideModeSelectionMenu();
+
+  showModel(selectedId);
+}
+
+function reloadAtlasIntoMode(modeKey) {
+  if (!isValidAtlasMode(modeKey)) return;
+
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set("atlasLaunchMode", modeKey);
+
+  window.location.replace(nextUrl.toString());
+}
+
+function initAtlasModeSelection() {
+  const overlay = document.getElementById("modeSelectOverlay");
+  const badge = document.getElementById("modeBadge");
+
+  overlay?.querySelectorAll("[data-atlas-mode]").forEach(button => {
+    button.addEventListener("click", () => {
+      const selectedMode = button.dataset.atlasMode;
+
+      if (!isValidAtlasMode(selectedMode)) return;
+
+      if (atlasHasLaunched) {
+        // A reload guarantees that parsed models retained by a previous mode
+        // are cleared before the new mode begins.
+        reloadAtlasIntoMode(selectedMode);
+      } else {
+        launchAtlasWithMode(selectedMode);
+      }
+    });
+  });
+
+  badge?.addEventListener("click", () => {
+    showModeSelectionMenu();
+  });
+
+  const url = new URL(window.location.href);
+  const launchMode = url.searchParams.get("atlasLaunchMode");
+
+  if (isValidAtlasMode(launchMode)) {
+    // Remove the one-time mode parameter immediately. If a risky mode crashes,
+    // reopening the atlas returns to the selection menu instead of crash-looping.
+    url.searchParams.delete("atlasLaunchMode");
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+
+    launchAtlasWithMode(launchMode);
+    return;
+  }
+
+  showModeSelectionMenu();
+}
 // init
 buildListOnce();
 buildDtiListOnce();
@@ -6515,9 +7099,9 @@ configureOfflineUiForLaunchMode();
 // save the webpage/viewer shell now so it can open offline too.
 restoreOfflineShellForPreviouslySavedAtlas();
 
-// Background preparation begins only after Model 1 is fully visible and
-// its required reference information has been captured in finalizeAfterBarrier().
-showModel(selectedId);
+// Every fresh opening begins at the mode-selection menu.
+// Model 1 is not loaded until a mode is selected.
+initAtlasModeSelection();
 </script>
 </body>
 </html>
