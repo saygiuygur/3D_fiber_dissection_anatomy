@@ -29,23 +29,44 @@
 
 <style>
 :root{ --viewer-bg: #ffffff; }
-body { margin:0; font-family: system-ui, sans-serif; }
-.wrap {
+html,
+body{
+margin:0;
+width:100%;
+height:100%;
+overflow:hidden;
+font-family:system-ui, sans-serif;
+}
+
+.wrap{
 display:flex;
-height:100vh;
+width:100vw;
+height:100dvh;
+overflow:hidden;
 position:relative;
 }
 
 .sidebar{
 width:360px;
 flex:0 0 360px;
+height:100dvh;
+min-height:0;
 border-right:1px solid #ddd;
 padding:12px;
 overflow-y:auto;
 overflow-x:hidden;
+overscroll-behavior-y:contain;
+-webkit-overflow-scrolling:touch;
+touch-action:pan-y;
 background:#fff;
 box-sizing:border-box;
 transition:width .22s ease, flex-basis .22s ease, padding .22s ease;
+}
+  
+.sidebar #list{
+height:auto !important;
+max-height:none !important;
+overflow:visible !important;
 }
 
 .sidebar.sidebar-collapsed{
@@ -302,8 +323,10 @@ height:93px;
 display:flex;
 flex-direction:column;
 align-items:center;
-justify-content:center;
-gap:9px;
+justify-content:flex-start;
+gap:6px;
+padding:10px 8px 7px;
+box-sizing:border-box;
 border:1px solid #dddddd;
 border-radius:12px;
 background:#fff;
@@ -347,8 +370,14 @@ background:#f3f8fe;
 }
 
 .offline-platform-name{
+height:18px;
+flex:0 0 18px;
+display:flex;
+align-items:center;
+justify-content:center;
 font-size:13px;
 font-weight:600;
+line-height:1;
 }
 
 .offline-platform-icon{
@@ -359,6 +388,8 @@ color:#111;
 fill:#111;
 stroke:#111;
 flex:0 0 auto;
+margin-top:auto;
+margin-bottom:auto;
 }
   
 .offline-icon-mac{
@@ -370,6 +401,7 @@ height:48px;
 width:46px;
 height:46px;
 }
+  
 .offline-platform-logo-text{
 display:block;
 font-size:24px;
@@ -377,6 +409,8 @@ font-weight:700;
 line-height:1;
 color:#111;
 letter-spacing:-0.4px;
+margin-top:auto;
+margin-bottom:auto;
 }
   
   .offline-install-message{
@@ -707,7 +741,7 @@ box-sizing:border-box;
 position:relative;
 flex:1 1 auto;
 min-width:0;
-height:100vh;
+height:100dvh;
 background:var(--viewer-bg);
 overflow:hidden;
 }
@@ -1154,9 +1188,9 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
 
 <button class="offline-platform-btn" type="button" data-platform="mac">
   <span class="offline-platform-name">Mac</span>
-  <svg class="offline-platform-icon offline-icon-mac" viewBox="0 0 32 32" aria-hidden="true">
+  <svg class="offline-platform-icon offline-icon-mac" viewBox="0 0 384 512" aria-hidden="true">
     <path fill="currentColor"
-      d="M21.1 16.7c0-2.5 2.1-3.8 2.2-3.9-1.2-1.8-3-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.3-.8-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.3.9 1.3 1.9 2.7 3.3 2.6 1.3-.1 1.8-.8 3.4-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.2-2.6 1-1.4 1.4-2.8 1.4-2.9 0 0-2.8-1.1-2.8-4.1zm-2.5-7.5c.7-.9 1.1-2.1 1-3.3-1 0-2.3.7-3 1.5-.6.7-1.2 1.9-1 3.1 1.2.1 2.4-.6 3-1.3z"/>
+      d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/>
   </svg>
 </button>
 
@@ -1812,13 +1846,59 @@ const OFFLINE_ASSETS = [
 ];
 
 const offlineAssetSizes = new Map();
-
+// Files already downloaded during this page session.
+// These can be saved for offline access without downloading again.
+const sessionOfflineAssetBlobs = new Map();
 let offlineActivePlatform = null;
 let offlineDownloadRunning = false;
 let offlineDownloadCompleted = false;
 let offlineCurrentPercent = 0;
 let offlineTotalBytes = 0;
 let offlineSizePromise = null;
+// ===== Keep screen awake during long offline downloads =====
+let offlineWakeLock = null;
+let offlineWakeLockWanted = false;
+
+async function requestOfflineWakeLock() {
+  if (!offlineWakeLockWanted) return;
+  if (document.visibilityState !== "visible") return;
+  if (!("wakeLock" in navigator)) return;
+  if (offlineWakeLock) return;
+
+  try {
+    offlineWakeLock = await navigator.wakeLock.request("screen");
+
+    offlineWakeLock.addEventListener("release", () => {
+      offlineWakeLock = null;
+    });
+  } catch (err) {
+    // Download continues normally when the device/browser refuses wake lock.
+    console.warn("Screen wake lock unavailable:", err);
+  }
+}
+
+async function beginOfflineWakeLock() {
+  offlineWakeLockWanted = true;
+  await requestOfflineWakeLock();
+}
+
+async function endOfflineWakeLock() {
+  offlineWakeLockWanted = false;
+
+  if (!offlineWakeLock) return;
+
+  try {
+    await offlineWakeLock.release();
+  } catch (_) {}
+
+  offlineWakeLock = null;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && offlineWakeLockWanted) {
+    requestOfflineWakeLock();
+  }
+});
 let offlineSizeDotsTimer = null;
 let offlineSizeDotsCount = 0;
 
@@ -2268,13 +2348,15 @@ async function cancelInstalledUpdateInPopup() {
 async function runInstalledOfflineUpdate() {
   if (!isInstalledAtlasAppWindow()) return;
 
-  openInstalledUpdatePopup();
+ openInstalledUpdatePopup();
 
 installedUpdatePhase = "checking";
 installedUpdateAbortController = new AbortController();
 installedStagedCacheNames = [];
 
 setInstalledOfflineButtonsBusy(true);
+
+await beginOfflineWakeLock();
 
 if (installedUpdateVisual) {
   installedUpdateVisual.innerHTML = "";
@@ -2429,9 +2511,10 @@ setTimeout(() => {
 
   setInstalledOfflineStatus("Current offline atlas was kept unchanged.");
   } finally {
-    installedUpdateAbortController = null;
-    setInstalledOfflineButtonsBusy(false);
-  }
+  installedUpdateAbortController = null;
+  setInstalledOfflineButtonsBusy(false);
+  await endOfflineWakeLock();
+}
 }
 
 async function confirmDeleteInstalledOfflineFiles() {
@@ -2645,20 +2728,45 @@ async function saveOneAssetForOffline(
 ) {
   const alreadySaved = await cache.match(asset.url);
 
-  if (alreadySaved) {
-    const savedBlob = await alreadySaved.blob();
-    rememberOfflineAssetSize(asset.url, savedBlob.size);
+if (alreadySaved) {
+  const savedBlob = await alreadySaved.blob();
+  rememberOfflineAssetSize(asset.url, savedBlob.size);
 
-    updateOfflineDownloadProgress(
-      platform,
-      bytesCompleted,
-      savedBlob.size
-    );
+  updateOfflineDownloadProgress(
+    platform,
+    bytesCompleted,
+    savedBlob.size
+  );
 
-    return savedBlob.size;
-  }
+  return savedBlob.size;
+}
 
-  const response = await fetch(asset.url, { cache: "no-store" });
+// If the viewer already downloaded this file during the current session,
+// save that existing Blob directly into offline storage without downloading again.
+const sessionBlob = sessionOfflineAssetBlobs.get(asset.url);
+
+if (sessionBlob) {
+  rememberOfflineAssetSize(asset.url, sessionBlob.size);
+
+  updateOfflineDownloadProgress(
+    platform,
+    bytesCompleted,
+    sessionBlob.size
+  );
+
+  await cache.put(
+    asset.url,
+    new Response(sessionBlob, {
+      headers: {
+        "Content-Type": sessionBlob.type || "model/gltf-binary"
+      }
+    })
+  );
+
+  return sessionBlob.size;
+}
+
+const response = await fetch(asset.url, { cache: "no-store" });
 
   if (!response.ok) {
     throw new Error(`Could not download ${asset.id}: HTTP ${response.status}`);
@@ -2730,11 +2838,13 @@ async function startOfflineAtlasDownload(platform) {
   }
 
   offlineActivePlatform = platform;
-  offlineDownloadRunning = true;
-  offlineDownloadCompleted = false;
-  offlineCurrentPercent = 0;
+offlineDownloadRunning = true;
+offlineDownloadCompleted = false;
+offlineCurrentPercent = 0;
 
-  resetOfflinePlatformButtons();
+await beginOfflineWakeLock();
+
+resetOfflinePlatformButtons();
   setOfflinePlatformButtonState(platform, "downloading", 0);
 
  try {
@@ -2802,6 +2912,10 @@ async function startOfflineAtlasDownload(platform) {
 
     setOfflinePlatformButtonState(platform, "completed");
 
+// Offline storage now owns persistent copies; release extra temporary
+// Blob references kept only to avoid duplicate downloading.
+sessionOfflineAssetBlobs.clear();
+
 if (offlinePlatformSubtitle) {
   offlinePlatformSubtitle.textContent =
     "Click the green tick to install the atlas as an app.";
@@ -2829,8 +2943,9 @@ for (const btn of offlinePlatformButtons) {
       "The offline atlas download could not be completed. Please check your internet connection and try again."
     );
   } finally {
-    offlineDownloadRunning = false;
-  }
+  offlineDownloadRunning = false;
+  await endOfflineWakeLock();
+}
 }
 
 let deferredInstallPrompt = null;
@@ -3829,52 +3944,99 @@ async function loadDtiPrototype(dti) {
     return dtiPrototypePromises.get(dti.id);
   }
 
-  const p = new Promise((resolve, reject) => {
+  const p = (async () => {
     setDtiStatus(dti.id, "loading", "0%");
 
-    dtiLoader.load(
-      dti.url,
+    const absoluteDtiUrl = new URL(dti.url, window.location.href).href;
 
-      gltf => {
-        const root = gltf.scene || gltf.scenes?.[0];
+    let blob = sessionOfflineAssetBlobs.get(absoluteDtiUrl) || null;
 
-        if (!root) {
-          setDtiStatus(dti.id, "error");
-          reject(new Error(`No scene found in ${dti.url}`));
-          return;
-        }
+    if (!blob) {
+      const response = await fetch(dti.url);
 
-        markAsDtiObject(root, dti.id);
-        setDtiStatus(dti.id, "done");
-        resolve(root);
-      },
-
-      event => {
-        const loaded = Number(event.loaded) || 0;
-        dtiLoadedBytes.set(dti.id, loaded);
-
-        if (event.lengthComputable && event.total > 0) {
-          dtiTotalBytes.set(dti.id, Number(event.total) || 0);
-          const pct = Math.floor((loaded / event.total) * 100);
-          setDtiStatus(dti.id, "loading", `${pct}%`);
-        } else {
-          setDtiStatus(dti.id, "loading", "");
-        }
-
-        refreshDtiAllMeta();
-      },
-
-      err => {
-        setDtiStatus(dti.id, "error");
-        reject(err);
+      if (!response.ok) {
+        throw new Error(`Could not download ${dti.id}: HTTP ${response.status}`);
       }
-    );
+
+      const contentType =
+        response.headers.get("Content-Type") || "model/gltf-binary";
+
+      const total =
+        Number(response.headers.get("Content-Length")) || 0;
+
+      if (total > 0) {
+        dtiTotalBytes.set(dti.id, total);
+      }
+
+      const reader = response.body?.getReader?.();
+      const chunks = [];
+      let received = 0;
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          chunks.push(value);
+          received += value.byteLength;
+          dtiLoadedBytes.set(dti.id, received);
+
+          if (total > 0) {
+            const pct = Math.floor((received / total) * 100);
+            setDtiStatus(dti.id, "loading", `${pct}%`);
+          } else {
+            setDtiStatus(dti.id, "loading", "");
+          }
+
+          refreshDtiAllMeta();
+        }
+
+        blob = new Blob(chunks, { type: contentType });
+      } else {
+        blob = await response.blob();
+        dtiLoadedBytes.set(dti.id, blob.size);
+      }
+
+      sessionOfflineAssetBlobs.set(absoluteDtiUrl, blob);
+    }
+
+    if (blob?.size) {
+      dtiLoadedBytes.set(dti.id, blob.size);
+
+      if (!(dtiTotalBytes.get(dti.id) > 0)) {
+        dtiTotalBytes.set(dti.id, blob.size);
+      }
+    }
+
+    const dtiBlobUrl = URL.createObjectURL(blob);
+
+    try {
+      const gltf = await dtiLoader.loadAsync(dtiBlobUrl);
+      const root = gltf.scene || gltf.scenes?.[0];
+
+      if (!root) {
+        throw new Error(`No scene found in ${dti.url}`);
+      }
+
+      markAsDtiObject(root, dti.id);
+      setDtiStatus(dti.id, "done");
+      refreshDtiAllMeta();
+
+      return root;
+    } finally {
+      URL.revokeObjectURL(dtiBlobUrl);
+    }
+  })().catch(err => {
+    setDtiStatus(dti.id, "error");
+    refreshDtiAllMeta();
+    throw err;
   });
 
   dtiPrototypePromises.set(dti.id, p);
   return p;
 }
-
+  
 function cloneDtiObject(proto, dtiId) {
 const clone = proto.clone(true);
 return markAsDtiObject(clone, dtiId);
@@ -4647,6 +4809,9 @@ refreshMeta(modelId);
 
 const blob = new Blob(chunks, { type: "model/gltf-binary" });
 const blobUrl = URL.createObjectURL(blob);
+
+const absoluteModelUrl = new URL(model.url, window.location.href).href;
+sessionOfflineAssetBlobs.set(absoluteModelUrl, blob);
 
 st.status = "done";
 st.progressText = "";
