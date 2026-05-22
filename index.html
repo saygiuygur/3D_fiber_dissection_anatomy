@@ -2389,8 +2389,13 @@ startInstalledLookingDots();
     } catch (_) {}
 
     installedUpdatePhase = "done";
-    showInstalledUpdateComplete();
-    setInstalledOfflineStatus("Available offline. Up to date.");
+showInstalledUpdateComplete();
+setInstalledOfflineStatus("Available offline. Up to date.");
+
+// Briefly show the completed green tick, then load the newly updated app shell.
+setTimeout(() => {
+  window.location.reload();
+}, 1000);
   } catch (err) {
   if (err?.name === "AbortError") {
     await cleanupInstalledStagedCaches();
