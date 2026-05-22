@@ -426,6 +426,25 @@ justify-content:center;
 gap:16px;
 }
 
+.installed-update-cancel-btn{
+border:none;
+background:transparent;
+color:#111;
+font-size:13px;
+font-weight:600;
+padding:8px 16px;
+cursor:pointer;
+border-radius:9px;
+}
+
+.installed-update-cancel-btn:hover{
+background:#f3f3f3;
+}
+
+.installed-update-cancel-btn[hidden]{
+display:none;
+}
+  
 .installed-update-visual{
 width:72px;
 height:72px;
@@ -982,24 +1001,29 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
   <button id="installedManageCloseBtn" class="offline-close-btn"
     type="button" aria-label="Close">×</button>
 
-  <div id="installedUpdateScreen" class="offline-screen" hidden>
-    <div class="offline-popup-heading">Update Offline Atlas</div>
+ <div id="installedUpdateScreen" class="offline-screen" hidden>
+  <div class="offline-popup-heading">Update Offline Atlas</div>
 
-    <div class="installed-manage-center">
-      <div id="installedUpdateStatusText" class="installed-manage-text">
-        Looking for update.
-      </div>
-
-      <div id="installedUpdateVisual" class="installed-update-visual"></div>
+  <div class="installed-manage-center">
+    <div id="installedUpdateStatusText" class="installed-manage-text">
+      Looking for update.
     </div>
+
+    <div id="installedUpdateVisual" class="installed-update-visual"></div>
+
+    <button id="installedUpdateCancelBtn"
+      class="installed-update-cancel-btn"
+      type="button">
+      Cancel
+    </button>
   </div>
+</div>
 
   <div id="installedDeleteScreen" class="offline-screen" hidden>
     <div class="offline-popup-heading">Delete Offline Files</div>
 
     <p class="installed-delete-warning">
       All downloaded offline atlas files from this device will be deleted.
-      To remove the app itself, uninstall it from your device or browser app menu.
     </p>
 
     <div class="installed-manage-actions">
@@ -1480,6 +1504,23 @@ const annoLabel = document.getElementById('annoLabel');
 
 const dtiList = document.getElementById('dtiList');
 
+const browserOfflineSection = document.getElementById('browserOfflineSection');
+
+const installedOfflineSection = document.getElementById('installedOfflineSection');
+const installedOfflineUpdateBtn = document.getElementById('installedOfflineUpdateBtn');
+const installedOfflineDeleteBtn = document.getElementById('installedOfflineDeleteBtn');
+const installedOfflineStatus = document.getElementById('installedOfflineStatus');
+
+const installedManagePopup = document.getElementById('installedManagePopup');
+const installedManageCloseBtn = document.getElementById('installedManageCloseBtn');
+const installedUpdateScreen = document.getElementById('installedUpdateScreen');
+const installedDeleteScreen = document.getElementById('installedDeleteScreen');
+const installedUpdateStatusText = document.getElementById('installedUpdateStatusText');
+const installedUpdateVisual = document.getElementById('installedUpdateVisual');
+const installedUpdateCancelBtn = document.getElementById('installedUpdateCancelBtn');
+const installedDeleteCancelBtn = document.getElementById('installedDeleteCancelBtn');
+const installedDeleteConfirmBtn = document.getElementById('installedDeleteConfirmBtn');
+
 const offlineOpenBtn = document.getElementById('offlineOpenBtn');
 const offlinePopup = document.getElementById('offlinePopup');
 const offlineCloseBtn = document.getElementById('offlineCloseBtn');
@@ -1584,8 +1625,22 @@ btn.innerHTML = offlinePlatformOriginalMarkup.get(platform) || btn.innerHTML;
 // Change v1 to v2 later if GLB files are replaced and saved copies must refresh.
 const OFFLINE_DATA_CACHE_NAME = "fiber-dissection-offline-data-v1";
 const OFFLINE_SHELL_CACHE_NAME = "fiber-dissection-offline-shell-v1";
+
+const OFFLINE_CONTROL_CACHE_NAME = "fiber-dissection-offline-control-v1";
+const OFFLINE_CONTROL_KEY = new URL(
+  "./__offline-active-config__.json",
+  window.location.href
+).href;
+
 const OFFLINE_SAVED_KEY = "fiberDissectionOfflineSaved";
 const OFFLINE_PLATFORM_KEY = "fiberDissectionOfflinePlatform";
+const OFFLINE_SHELL_VERSION_KEY = "fiberDissectionOfflineShellVersion";
+const OFFLINE_DATA_VERSION_KEY = "fiberDissectionOfflineDataVersion";
+
+const OFFLINE_VERSION_URL = new URL(
+  "./offline-version.json",
+  window.location.href
+).href;
 
 const OFFLINE_SHELL_ASSETS = [
   new URL("./", window.location.href).href,
@@ -1598,7 +1653,6 @@ const OFFLINE_SHELL_ASSETS = [
   new URL("./icons/favicon-16.png", window.location.href).href,
   new URL("./icons/favicon-32.png", window.location.href).href,
 
-  // Current external JavaScript files required by the atlas viewer.
   "https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js",
   "https://unpkg.com/three@0.172.0/build/three.module.js",
   "https://unpkg.com/three@0.172.0/examples/jsm/loaders/GLTFLoader.js"
@@ -1638,9 +1692,27 @@ async function restoreOfflineShellForPreviouslySavedAtlas() {
   if (!offlineDownloadCompleted) return;
 
   try {
+    const existingConfig = await readOfflineActiveConfig();
+
+    // Once controlled cache selection has been set up, updates should occur
+    // only when the installed app user presses Update.
+    if (existingConfig) return;
+
     await saveOfflineShellAssets();
+
+    const release = await fetchLatestOfflineVersion();
+
+    await writeOfflineActiveConfig({
+      shellCache: OFFLINE_SHELL_CACHE_NAME,
+      dataCache: OFFLINE_DATA_CACHE_NAME,
+      shellVersion: release.shellVersion,
+      atlasDataVersion: release.atlasDataVersion
+    });
+
+    localStorage.setItem(OFFLINE_SHELL_VERSION_KEY, release.shellVersion);
+    localStorage.setItem(OFFLINE_DATA_VERSION_KEY, release.atlasDataVersion);
   } catch (err) {
-    console.warn("Could not restore offline application shell:", err);
+    console.warn("Could not initialize managed offline application files:", err);
   }
 }
 
@@ -1704,7 +1776,654 @@ try {
   offlineActivePlatform =
     localStorage.getItem(OFFLINE_PLATFORM_KEY) || null;
 } catch (_) {}
+let installedUpdateAbortController = null;
+let installedUpdatePhase = "idle";
+let installedUpdateDotsTimer = null;
+let installedUpdateDotsCount = 0;
+let installedStagedCacheNames = [];
 
+function isInstalledAtlasAppWindow() {
+  return (
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    window.navigator.standalone === true
+  );
+}
+
+function setInstalledOfflineStatus(text) {
+  if (installedOfflineStatus) {
+    installedOfflineStatus.textContent = text;
+  }
+}
+
+function setInstalledOfflineButtonsBusy(busy) {
+  if (installedOfflineUpdateBtn) installedOfflineUpdateBtn.disabled = !!busy;
+  if (installedOfflineDeleteBtn) installedOfflineDeleteBtn.disabled = !!busy;
+}
+
+function configureOfflineUiForLaunchMode() {
+  const installedMode = isInstalledAtlasAppWindow();
+
+  if (browserOfflineSection) {
+    browserOfflineSection.hidden = installedMode;
+  }
+
+  if (installedOfflineSection) {
+    installedOfflineSection.hidden = !installedMode;
+  }
+
+  if (!installedMode) return;
+
+  setInstalledOfflineStatus(
+    offlineDownloadCompleted
+      ? "Available offline."
+      : "Offline files are not stored. Select Update to download them again."
+  );
+}
+
+function positionInstalledManagePopup(anchorButton) {
+  if (!anchorButton || !installedManagePopup) return;
+
+  const buttonRect = anchorButton.getBoundingClientRect();
+  const popupWidth = 320;
+  const popupHeight = 300;
+  const gap = 12;
+
+  let left = buttonRect.right + gap;
+  let top = buttonRect.top - 18;
+
+  if (left + popupWidth + 12 > window.innerWidth) {
+    left = Math.max(12, buttonRect.left - popupWidth - gap);
+  }
+
+  top = Math.max(12, Math.min(top, window.innerHeight - popupHeight - 12));
+
+  installedManagePopup.style.left = `${left}px`;
+  installedManagePopup.style.top = `${top}px`;
+}
+
+function openInstalledUpdatePopup() {
+  if (!installedManagePopup) return;
+
+  installedDeleteScreen.hidden = true;
+  installedUpdateScreen.hidden = false;
+
+  positionInstalledManagePopup(installedOfflineUpdateBtn);
+  installedManagePopup.classList.add("open");
+}
+
+function openInstalledDeletePopup() {
+  if (!installedManagePopup) return;
+
+  installedUpdateScreen.hidden = true;
+  installedDeleteScreen.hidden = false;
+
+  positionInstalledManagePopup(installedOfflineDeleteBtn);
+  installedManagePopup.classList.add("open");
+}
+
+function closeInstalledManagePopup() {
+  installedManagePopup?.classList.remove("open");
+  installedUpdateScreen.hidden = true;
+  installedDeleteScreen.hidden = true;
+}
+
+function startInstalledLookingDots() {
+  stopInstalledLookingDots();
+
+  installedUpdateDotsCount = 0;
+
+  const updateDots = () => {
+    installedUpdateDotsCount = (installedUpdateDotsCount % 3) + 1;
+
+    if (installedUpdateStatusText) {
+      installedUpdateStatusText.textContent =
+        `Looking for update${".".repeat(installedUpdateDotsCount)}`;
+    }
+  };
+
+  updateDots();
+  installedUpdateDotsTimer = setInterval(updateDots, 360);
+}
+
+function stopInstalledLookingDots() {
+  if (installedUpdateDotsTimer) {
+    clearInterval(installedUpdateDotsTimer);
+    installedUpdateDotsTimer = null;
+  }
+}
+
+function showInstalledUpdateProgress(percent) {
+  stopInstalledLookingDots();
+
+  if (installedUpdateStatusText) {
+    installedUpdateStatusText.textContent = "Update found";
+  }
+
+  if (installedUpdateVisual) {
+    installedUpdateVisual.innerHTML = offlineLargeLoadingIconSVG(percent);
+  }
+}
+function offlineLargeErrorIconSVG() {
+  return `
+    <svg class="offline-large-status-icon" viewBox="0 0 60 60" aria-hidden="true">
+      <circle cx="30" cy="30" r="23" fill="#c62828"></circle>
+      <rect x="27.5" y="16" width="5" height="20" rx="2.5" fill="#ffffff"></rect>
+      <circle cx="30" cy="43" r="3" fill="#ffffff"></circle>
+    </svg>
+  `;
+}
+
+function showInstalledUpdateCanceled() {
+  stopInstalledLookingDots();
+
+  if (installedUpdateStatusText) {
+    installedUpdateStatusText.textContent = "Canceled";
+  }
+
+  if (installedUpdateVisual) {
+    installedUpdateVisual.innerHTML = offlineLargeErrorIconSVG();
+  }
+
+  if (installedUpdateCancelBtn) {
+    installedUpdateCancelBtn.hidden = true;
+  }
+}
+  
+function showInstalledUpdateComplete() {
+  stopInstalledLookingDots();
+
+  if (installedUpdateStatusText) {
+    installedUpdateStatusText.textContent = "Up to date";
+  }
+
+  if (installedUpdateVisual) {
+    installedUpdateVisual.innerHTML = offlineLargeDoneIconSVG();
+  }
+
+  if (installedUpdateCancelBtn) {
+    installedUpdateCancelBtn.hidden = true;
+  }
+}
+
+function sanitizeOfflineVersion(value) {
+  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+async function readOfflineActiveConfig() {
+  if (!("caches" in window)) return null;
+
+  try {
+    const controlCache = await caches.open(OFFLINE_CONTROL_CACHE_NAME);
+    const response = await controlCache.match(OFFLINE_CONTROL_KEY);
+
+    return response ? await response.json() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function writeOfflineActiveConfig(config) {
+  const controlCache = await caches.open(OFFLINE_CONTROL_CACHE_NAME);
+
+  await controlCache.put(
+    OFFLINE_CONTROL_KEY,
+    new Response(JSON.stringify(config), {
+      headers: { "Content-Type": "application/json" }
+    })
+  );
+}
+
+async function fetchLatestOfflineVersion(signal = null) {
+  const checkUrl = new URL(OFFLINE_VERSION_URL);
+  checkUrl.searchParams.set("_check", String(Date.now()));
+
+  const response = await fetch(checkUrl.href, {
+    cache: "no-store",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Update check failed: HTTP ${response.status}`);
+  }
+
+  const release = await response.json();
+
+  if (!release.shellVersion || !release.atlasDataVersion) {
+    throw new Error("Invalid offline-version.json.");
+  }
+
+  return release;
+}
+
+async function cleanupInstalledStagedCaches() {
+  const names = [...installedStagedCacheNames];
+  installedStagedCacheNames = [];
+
+  await Promise.all(names.map(name => caches.delete(name)));
+}
+
+async function stageOneUpdatedResource(
+  originalUrl,
+  targetCache,
+  signal,
+  versionTag,
+  onFraction
+) {
+  const fetchUrl = new URL(originalUrl);
+  fetchUrl.searchParams.set("_offlineUpdate", versionTag);
+
+  const response = await fetch(fetchUrl.href, {
+    cache: "no-store",
+    signal
+  });
+
+  if (!response.ok && response.type !== "opaque") {
+    throw new Error(`Could not update file: ${originalUrl}`);
+  }
+
+  const contentType =
+    response.headers.get("Content-Type") || "application/octet-stream";
+
+  const total = Number(response.headers.get("Content-Length")) || 0;
+  const reader = response.body?.getReader?.();
+
+  if (!reader) {
+    const blob = await response.blob();
+
+    await targetCache.put(
+      originalUrl,
+      new Response(blob, {
+        headers: { "Content-Type": contentType }
+      })
+    );
+
+    onFraction(1);
+    return;
+  }
+
+  const chunks = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) break;
+
+    chunks.push(value);
+    received += value.byteLength;
+
+    if (total > 0) {
+      onFraction(Math.min(1, received / total));
+    }
+  }
+
+  const blob = new Blob(chunks, { type: contentType });
+
+  await targetCache.put(
+    originalUrl,
+    new Response(blob, {
+      headers: { "Content-Type": contentType }
+    })
+  );
+
+  onFraction(1);
+}
+
+async function stageUpdatedResources(
+  resources,
+  shellCacheName,
+  dataCacheName,
+  signal,
+  versionTag
+) {
+  const shellCache = shellCacheName
+    ? await caches.open(shellCacheName)
+    : null;
+
+  const dataCache = dataCacheName
+    ? await caches.open(dataCacheName)
+    : null;
+
+  let completedItems = 0;
+  const totalItems = resources.length;
+
+  for (const resource of resources) {
+    if (signal.aborted) {
+      throw new DOMException("Update cancelled", "AbortError");
+    }
+
+    const targetCache =
+      resource.kind === "shell" ? shellCache : dataCache;
+
+    await stageOneUpdatedResource(
+      resource.url,
+      targetCache,
+      signal,
+      versionTag,
+      fraction => {
+        const percent = Math.min(
+          99,
+          Math.floor(((completedItems + fraction) / totalItems) * 100)
+        );
+
+        showInstalledUpdateProgress(percent);
+      }
+    );
+
+    completedItems += 1;
+  }
+}
+
+async function removeInactiveOfflineCaches(activeConfig) {
+  const names = await caches.keys();
+
+  await Promise.all(
+    names
+      .filter(name =>
+        (
+          name.startsWith("fiber-dissection-offline-data-") &&
+          name !== activeConfig.dataCache
+        ) ||
+        (
+          name.startsWith("fiber-dissection-offline-shell-") &&
+          name !== activeConfig.shellCache
+        )
+      )
+      .map(name => caches.delete(name))
+  );
+}
+
+async function cancelInstalledUpdateAndClose() {
+  if (
+    installedUpdatePhase === "checking" ||
+    installedUpdatePhase === "downloading"
+  ) {
+    installedUpdateAbortController?.abort();
+
+    try {
+      await cleanupInstalledStagedCaches();
+    } catch (_) {}
+  }
+
+  stopInstalledLookingDots();
+
+  installedUpdateAbortController = null;
+  installedUpdatePhase = "idle";
+  setInstalledOfflineButtonsBusy(false);
+  closeInstalledManagePopup();
+}
+async function cancelInstalledUpdateInPopup() {
+  if (
+    installedUpdatePhase !== "checking" &&
+    installedUpdatePhase !== "downloading"
+  ) {
+    return;
+  }
+
+  installedUpdatePhase = "canceling";
+
+  if (installedUpdateCancelBtn) {
+    installedUpdateCancelBtn.disabled = true;
+  }
+
+  installedUpdateAbortController?.abort();
+
+  try {
+    await cleanupInstalledStagedCaches();
+  } catch (_) {}
+
+  installedUpdateAbortController = null;
+  installedUpdatePhase = "canceled";
+
+  setInstalledOfflineButtonsBusy(false);
+
+  showInstalledUpdateCanceled();
+
+  setInstalledOfflineStatus(
+    "Update canceled. Current offline atlas remains unchanged."
+  );
+}
+async function runInstalledOfflineUpdate() {
+  if (!isInstalledAtlasAppWindow()) return;
+
+  openInstalledUpdatePopup();
+
+installedUpdatePhase = "checking";
+installedUpdateAbortController = new AbortController();
+installedStagedCacheNames = [];
+
+setInstalledOfflineButtonsBusy(true);
+
+if (installedUpdateVisual) {
+  installedUpdateVisual.innerHTML = "";
+}
+
+if (installedUpdateCancelBtn) {
+  installedUpdateCancelBtn.hidden = false;
+  installedUpdateCancelBtn.disabled = false;
+}
+
+startInstalledLookingDots();
+
+  try {
+    const signal = installedUpdateAbortController.signal;
+    const latestRelease = await fetchLatestOfflineVersion(signal);
+
+    const currentConfig = await readOfflineActiveConfig() || {
+      shellCache: OFFLINE_SHELL_CACHE_NAME,
+      dataCache: OFFLINE_DATA_CACHE_NAME,
+      shellVersion: localStorage.getItem(OFFLINE_SHELL_VERSION_KEY),
+      atlasDataVersion: localStorage.getItem(OFFLINE_DATA_VERSION_KEY)
+    };
+
+    const shellNeedsUpdate =
+      !offlineDownloadCompleted ||
+      currentConfig.shellVersion !== latestRelease.shellVersion;
+
+    const dataNeedsUpdate =
+      !offlineDownloadCompleted ||
+      currentConfig.atlasDataVersion !== latestRelease.atlasDataVersion;
+
+    if (!shellNeedsUpdate && !dataNeedsUpdate) {
+      installedUpdatePhase = "done";
+      showInstalledUpdateComplete();
+      setInstalledOfflineStatus("Available offline. Up to date.");
+      return;
+    }
+
+    installedUpdatePhase = "downloading";
+
+    const releaseStamp = Date.now();
+
+    const newShellCacheName = shellNeedsUpdate
+      ? `fiber-dissection-offline-shell-release-${sanitizeOfflineVersion(latestRelease.shellVersion)}-${releaseStamp}`
+      : currentConfig.shellCache;
+
+    const newDataCacheName = dataNeedsUpdate
+      ? `fiber-dissection-offline-data-release-${sanitizeOfflineVersion(latestRelease.atlasDataVersion)}-${releaseStamp}`
+      : currentConfig.dataCache;
+
+    if (shellNeedsUpdate) {
+      installedStagedCacheNames.push(newShellCacheName);
+    }
+
+    if (dataNeedsUpdate) {
+      installedStagedCacheNames.push(newDataCacheName);
+    }
+
+    const resourcesToDownload = [];
+
+    if (shellNeedsUpdate) {
+      for (const url of OFFLINE_SHELL_ASSETS) {
+        resourcesToDownload.push({ kind: "shell", url });
+      }
+    }
+
+    if (dataNeedsUpdate) {
+      for (const asset of OFFLINE_ASSETS) {
+        resourcesToDownload.push({ kind: "data", url: asset.url });
+      }
+    }
+
+    showInstalledUpdateProgress(0);
+
+    await stageUpdatedResources(
+      resourcesToDownload,
+      shellNeedsUpdate ? newShellCacheName : null,
+      dataNeedsUpdate ? newDataCacheName : null,
+      signal,
+      `${latestRelease.shellVersion}-${latestRelease.atlasDataVersion}-${releaseStamp}`
+    );
+
+    if (signal.aborted) {
+      throw new DOMException("Update cancelled", "AbortError");
+    }
+
+    const activatedConfig = {
+      shellCache: newShellCacheName,
+      dataCache: newDataCacheName,
+      shellVersion: latestRelease.shellVersion,
+      atlasDataVersion: latestRelease.atlasDataVersion
+    };
+
+    // This is the activation point. Until here, the current offline atlas
+    // has remained untouched and all new files were only staged.
+    await writeOfflineActiveConfig(activatedConfig);
+
+    localStorage.setItem(OFFLINE_SAVED_KEY, "1");
+    localStorage.setItem(OFFLINE_SHELL_VERSION_KEY, latestRelease.shellVersion);
+    localStorage.setItem(OFFLINE_DATA_VERSION_KEY, latestRelease.atlasDataVersion);
+
+    offlineDownloadCompleted = true;
+
+    installedStagedCacheNames = [];
+
+    // Clean previous copies only after the complete new atlas has been activated.
+    await removeInactiveOfflineCaches(activatedConfig);
+
+    try {
+      const registration = await navigator.serviceWorker.getRegistration("./");
+      await registration?.update?.();
+    } catch (_) {}
+
+    installedUpdatePhase = "done";
+    showInstalledUpdateComplete();
+    setInstalledOfflineStatus("Available offline. Up to date.");
+  } catch (err) {
+  if (err?.name === "AbortError") {
+    await cleanupInstalledStagedCaches();
+
+    // When the Cancel button was used, the popup already shows
+    // the explicit canceled state and should not be overwritten.
+    if (installedUpdatePhase === "canceled" || installedUpdatePhase === "canceling") {
+      return;
+    }
+
+    return;
+  }
+
+  console.error("Installed atlas update failed:", err);
+
+  await cleanupInstalledStagedCaches();
+
+  installedUpdatePhase = "done";
+
+  if (installedUpdateStatusText) {
+    installedUpdateStatusText.textContent = "Update could not be completed.";
+  }
+
+  if (installedUpdateVisual) {
+    installedUpdateVisual.innerHTML = offlineLargeErrorIconSVG();
+  }
+
+  if (installedUpdateCancelBtn) {
+    installedUpdateCancelBtn.hidden = true;
+  }
+
+  setInstalledOfflineStatus("Current offline atlas was kept unchanged.");
+}
+  } finally {
+    installedUpdateAbortController = null;
+    setInstalledOfflineButtonsBusy(false);
+  }
+}
+
+async function confirmDeleteInstalledOfflineFiles() {
+  setInstalledOfflineButtonsBusy(true);
+
+  try {
+    const cacheNames = await caches.keys();
+
+    await Promise.all(
+      cacheNames
+        .filter(name =>
+          name.startsWith("fiber-dissection-offline-data-") ||
+          name.startsWith("fiber-dissection-offline-shell-") ||
+          name === OFFLINE_CONTROL_CACHE_NAME
+        )
+        .map(name => caches.delete(name))
+    );
+
+    localStorage.removeItem(OFFLINE_SAVED_KEY);
+    localStorage.removeItem(OFFLINE_PLATFORM_KEY);
+    localStorage.removeItem(OFFLINE_SHELL_VERSION_KEY);
+    localStorage.removeItem(OFFLINE_DATA_VERSION_KEY);
+
+    offlineDownloadCompleted = false;
+    offlineActivePlatform = null;
+
+    closeInstalledManagePopup();
+
+    setInstalledOfflineStatus(
+      "Offline files deleted. Select Update to download them again. To remove the app itself, uninstall it from your device or browser app menu."
+    );
+  } catch (err) {
+    console.error("Deleting offline atlas files failed:", err);
+
+    closeInstalledManagePopup();
+
+    setInstalledOfflineStatus(
+      "Files could not be deleted. Please try again."
+    );
+  } finally {
+    setInstalledOfflineButtonsBusy(false);
+  }
+}
+
+installedOfflineUpdateBtn?.addEventListener("click", () => {
+  runInstalledOfflineUpdate();
+});
+
+installedOfflineDeleteBtn?.addEventListener("click", () => {
+  openInstalledDeletePopup();
+});
+
+installedManageCloseBtn?.addEventListener("click", () => {
+  cancelInstalledUpdateAndClose();
+});
+
+installedUpdateCancelBtn?.addEventListener("click", () => {
+  cancelInstalledUpdateInPopup();
+});
+
+installedDeleteCancelBtn?.addEventListener("click", () => {
+  closeInstalledManagePopup();
+});
+
+installedDeleteConfirmBtn?.addEventListener("click", () => {
+  confirmDeleteInstalledOfflineFiles();
+});
+
+window.addEventListener("resize", () => {
+  if (!installedManagePopup?.classList.contains("open")) return;
+
+  const anchor = installedDeleteScreen.hidden
+    ? installedOfflineUpdateBtn
+    : installedOfflineDeleteBtn;
+
+  positionInstalledManagePopup(anchor);
+});
+  
 function formatOfflineMegabytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "— MB";
 
@@ -1972,10 +2691,23 @@ async function startOfflineAtlasDownload(platform) {
     offlineCurrentPercent = 100;
     offlineDownloadCompleted = true;
 
-    try {
-      localStorage.setItem(OFFLINE_SAVED_KEY, "1");
-      localStorage.setItem(OFFLINE_PLATFORM_KEY, platform);
-    } catch (_) {}
+   try {
+  const initialRelease = await fetchLatestOfflineVersion();
+
+  await writeOfflineActiveConfig({
+    shellCache: OFFLINE_SHELL_CACHE_NAME,
+    dataCache: OFFLINE_DATA_CACHE_NAME,
+    shellVersion: initialRelease.shellVersion,
+    atlasDataVersion: initialRelease.atlasDataVersion
+  });
+
+  localStorage.setItem(OFFLINE_SAVED_KEY, "1");
+  localStorage.setItem(OFFLINE_PLATFORM_KEY, platform);
+  localStorage.setItem(OFFLINE_SHELL_VERSION_KEY, initialRelease.shellVersion);
+  localStorage.setItem(OFFLINE_DATA_VERSION_KEY, initialRelease.atlasDataVersion);
+} catch (err) {
+  console.warn("Could not record offline atlas version:", err);
+}
 
     if (offlineApproxSize) {
       offlineApproxSize.textContent =
@@ -4788,6 +5520,8 @@ initModelOpacitySelector();
 initAnnotationsToggle();
 refreshAnnoNavLabel();
 updateSelectedHotspotVisual();
+
+configureOfflineUiForLaunchMode();
 
 // If the atlas data was already downloaded in an earlier test,
 // save the webpage/viewer shell now so it can open offline too.
