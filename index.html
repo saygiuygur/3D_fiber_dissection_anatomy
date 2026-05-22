@@ -353,7 +353,131 @@ cursor:pointer;
 border-color:#75b678;
 background:#eff8ef;
 }
-  
+
+/* ===== Installed app offline management ===== */
+
+.installed-offline-section{
+margin-top:16px;
+padding-top:12px;
+border-top:1px solid #ededed;
+}
+
+.installed-offline-actions{
+display:flex;
+align-items:center;
+gap:8px;
+margin-top:10px;
+}
+
+.installed-offline-btn{
+flex:1 1 0;
+height:36px;
+border:none;
+border-radius:9px;
+font-size:13px;
+font-weight:600;
+color:#fff;
+cursor:pointer;
+transition:background 120ms ease, opacity 120ms ease;
+}
+
+.installed-offline-btn:disabled{
+opacity:0.55;
+cursor:default;
+}
+
+.installed-offline-update{
+background:#1e88e5;
+}
+
+.installed-offline-update:hover:not(:disabled){
+background:#156fca;
+}
+
+.installed-offline-delete{
+background:#d93025;
+}
+
+.installed-offline-delete:hover:not(:disabled){
+background:#b3261e;
+}
+
+.installed-offline-status{
+font-size:11px;
+line-height:1.35;
+color:#666;
+margin-top:9px;
+}
+
+.installed-manage-text{
+font-size:14px;
+line-height:1.45;
+color:#444;
+margin:8px 0 0 0;
+text-align:center;
+}
+
+.installed-manage-center{
+flex:1 1 auto;
+display:flex;
+flex-direction:column;
+align-items:center;
+justify-content:center;
+gap:16px;
+}
+
+.installed-update-visual{
+width:72px;
+height:72px;
+display:flex;
+align-items:center;
+justify-content:center;
+}
+
+.installed-manage-actions{
+margin-top:auto;
+display:flex;
+align-items:center;
+justify-content:flex-end;
+gap:10px;
+}
+
+.installed-delete-confirm-btn{
+border:none;
+border-radius:9px;
+background:#d93025;
+color:#fff;
+font-size:13px;
+font-weight:600;
+padding:8px 18px;
+cursor:pointer;
+}
+
+.installed-delete-confirm-btn:hover{
+background:#b3261e;
+}
+
+.installed-delete-cancel-btn{
+border:none;
+background:transparent;
+color:#111;
+font-size:13px;
+font-weight:600;
+padding:8px 14px;
+cursor:pointer;
+}
+
+.installed-delete-cancel-btn:hover{
+background:#f3f3f3;
+border-radius:9px;
+}
+
+.installed-delete-warning{
+font-size:13px;
+line-height:1.5;
+color:#444;
+margin:20px 0 0 0;
+}
 .toggle-row{
 display:flex;
 align-items:center;
@@ -813,7 +937,7 @@ letter-spacing: 0.2px;
 Select a model, use the mouse to rotate, zoom, and pan, and click annotations to focus anatomical structures.
 </div>
 
-<div class="offline-section">
+<div id="browserOfflineSection" class="offline-section">
   <div class="offline-row">
     <div class="offline-title">Download for Offline Access</div>
 
@@ -828,7 +952,69 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
         <path d="M4 17v3h16v-3" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
+        </button>
+  </div>
+</div>
+
+<div id="installedOfflineSection" class="installed-offline-section" hidden>
+  <div class="offline-title">Offline Atlas</div>
+
+  <div class="installed-offline-actions">
+    <button id="installedOfflineUpdateBtn"
+      class="installed-offline-btn installed-offline-update"
+      type="button">
+      Update
     </button>
+
+    <button id="installedOfflineDeleteBtn"
+      class="installed-offline-btn installed-offline-delete"
+      type="button">
+      Delete Files
+    </button>
+  </div>
+
+  <div id="installedOfflineStatus" class="installed-offline-status">
+    Available offline.
+  </div>
+</div>
+
+<div id="installedManagePopup" class="offline-popup" aria-label="Offline atlas management">
+  <button id="installedManageCloseBtn" class="offline-close-btn"
+    type="button" aria-label="Close">×</button>
+
+  <div id="installedUpdateScreen" class="offline-screen" hidden>
+    <div class="offline-popup-heading">Update Offline Atlas</div>
+
+    <div class="installed-manage-center">
+      <div id="installedUpdateStatusText" class="installed-manage-text">
+        Looking for update.
+      </div>
+
+      <div id="installedUpdateVisual" class="installed-update-visual"></div>
+    </div>
+  </div>
+
+  <div id="installedDeleteScreen" class="offline-screen" hidden>
+    <div class="offline-popup-heading">Delete Offline Files</div>
+
+    <p class="installed-delete-warning">
+      All downloaded offline atlas files from this device will be deleted.
+      To remove the app itself, uninstall it from your device or browser app menu.
+    </p>
+
+    <div class="installed-manage-actions">
+      <button id="installedDeleteCancelBtn"
+        class="installed-delete-cancel-btn"
+        type="button">
+        Cancel
+      </button>
+
+      <button id="installedDeleteConfirmBtn"
+        class="installed-delete-confirm-btn"
+        type="button">
+        Delete
+      </button>
+    </div>
   </div>
 </div>
 
