@@ -1929,9 +1929,6 @@ const OFFLINE_ASSETS = [
 ];
 
 const offlineAssetSizes = new Map();
-// Files already downloaded during this page session.
-// These can be saved for offline access without downloading again.
-const sessionOfflineAssetBlobs = new Map();
 let offlineActivePlatform = null;
 let offlineDownloadRunning = false;
 let offlineDownloadCompleted = false;
@@ -2843,32 +2840,7 @@ if (alreadySaved) {
   return savedBlob.size;
 }
 
-// If the viewer already downloaded this file during the current session,
-// save that existing Blob directly into offline storage without downloading again.
-const sessionBlob = sessionOfflineAssetBlobs.get(asset.url);
-
-if (sessionBlob) {
-  rememberOfflineAssetSize(asset.url, sessionBlob.size);
-
-  updateOfflineDownloadProgress(
-    platform,
-    bytesCompleted,
-    sessionBlob.size
-  );
-
-  await cache.put(
-    asset.url,
-    new Response(sessionBlob, {
-      headers: {
-        "Content-Type": sessionBlob.type || "model/gltf-binary"
-      }
-    })
-  );
-
-  return sessionBlob.size;
-}
-
-const response = await fetch(asset.url, { cache: "no-store" });
+const response = await fetch(asset.url, { cache: "force-cache" });
 
   if (!response.ok) {
     throw new Error(`Could not download ${asset.id}: HTTP ${response.status}`);
@@ -3013,10 +2985,6 @@ resetOfflinePlatformButtons();
     }
 
     setOfflinePlatformButtonState(platform, "completed");
-
-// Offline storage now owns persistent copies; release extra temporary
-// Blob references kept only to avoid duplicate downloading.
-sessionOfflineAssetBlobs.clear();
 
 if (offlinePlatformSubtitle) {
   offlinePlatformSubtitle.textContent =
@@ -3707,6 +3675,14 @@ let resumeRequested = false;
 let preloadRunning = false;
 const preloadQueue = MODELS.map(m => m.id);
 
+// ===== Low-memory automatic preparation pipeline =====
+// Background preparation loads only one anatomical model at a time into mvPrime,
+// captures the required spatial/base information, then releases its live model data.
+let backgroundPreparationPausedForSelection = false;
+let backgroundPreparationPromise = null;
+let backgroundPreparationModelId = null;
+let backgroundPreparationStarted = false;
+
 const rowEls = new Map();
 let downloadingVisualId = null;
 
@@ -4083,66 +4059,59 @@ async function loadDtiPrototype(dti) {
   const p = (async () => {
     setDtiStatus(dti.id, "loading", "0%");
 
-    const absoluteDtiUrl = new URL(dti.url, window.location.href).href;
+    const response = await fetch(dti.url, { cache: "force-cache" });
 
-    let blob = sessionOfflineAssetBlobs.get(absoluteDtiUrl) || null;
-
-    if (!blob) {
-      const response = await fetch(dti.url);
-
-      if (!response.ok) {
-        throw new Error(`Could not download ${dti.id}: HTTP ${response.status}`);
-      }
-
-      const contentType =
-        response.headers.get("Content-Type") || "model/gltf-binary";
-
-      const total =
-        Number(response.headers.get("Content-Length")) || 0;
-
-      if (total > 0) {
-        dtiTotalBytes.set(dti.id, total);
-      }
-
-      const reader = response.body?.getReader?.();
-      const chunks = [];
-      let received = 0;
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) break;
-
-          chunks.push(value);
-          received += value.byteLength;
-          dtiLoadedBytes.set(dti.id, received);
-
-          if (total > 0) {
-  const nextProgressText = `${Math.floor((received / total) * 100)}%`;
-  const currentProgressText = dtiState.get(dti.id)?.progressText || "";
-
-  if (nextProgressText !== currentProgressText) {
-    setDtiStatus(dti.id, "loading", nextProgressText);
-  }
-}
-        }
-
-        blob = new Blob(chunks, { type: contentType });
-      } else {
-        blob = await response.blob();
-        dtiLoadedBytes.set(dti.id, blob.size);
-      }
-
-      sessionOfflineAssetBlobs.set(absoluteDtiUrl, blob);
+    if (!response.ok) {
+      throw new Error(`Could not download ${dti.id}: HTTP ${response.status}`);
     }
 
-    if (blob?.size) {
-      dtiLoadedBytes.set(dti.id, blob.size);
+    const contentType =
+      response.headers.get("Content-Type") || "model/gltf-binary";
 
-      if (!(dtiTotalBytes.get(dti.id) > 0)) {
-        dtiTotalBytes.set(dti.id, blob.size);
+    const total =
+      Number(response.headers.get("Content-Length")) || 0;
+
+    if (total > 0) {
+      dtiTotalBytes.set(dti.id, total);
+    }
+
+    const reader = response.body?.getReader?.();
+    const chunks = [];
+    let received = 0;
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        chunks.push(value);
+        received += value.byteLength;
+        dtiLoadedBytes.set(dti.id, received);
+
+        if (total > 0) {
+          const nextProgressText =
+            `${Math.floor((received / total) * 100)}%`;
+
+          const currentProgressText =
+            dtiState.get(dti.id)?.progressText || "";
+
+          if (nextProgressText !== currentProgressText) {
+            setDtiStatus(dti.id, "loading", nextProgressText);
+          }
+        }
       }
+    } else {
+      const directBlob = await response.blob();
+      chunks.push(await directBlob.arrayBuffer());
+      received = directBlob.size;
+      dtiLoadedBytes.set(dti.id, received);
+    }
+
+    const blob = new Blob(chunks, { type: contentType });
+
+    if (!(dtiTotalBytes.get(dti.id) > 0)) {
+      dtiTotalBytes.set(dti.id, blob.size);
     }
 
     const dtiBlobUrl = URL.createObjectURL(blob);
@@ -4833,13 +4802,66 @@ async function startDtiPreloadOnce() {
     await initDtiTotalBytesOnce();
 
     for (const dti of DTI_MODELS) {
-      const st = dtiState.get(dti.id);
-      if (st?.status === "done") continue;
+      if (dtiPrototypePromises.has(dti.id)) {
+        setDtiStatus(dti.id, "done");
+        continue;
+      }
 
       try {
-        await loadDtiPrototype(dti);
+        setDtiStatus(dti.id, "loading", "0%");
+
+        const response = await fetch(dti.url, { cache: "force-cache" });
+
+        if (!response.ok) {
+          throw new Error(`Could not download ${dti.id}: HTTP ${response.status}`);
+        }
+
+        const total =
+          Number(response.headers.get("Content-Length")) ||
+          dtiTotalBytes.get(dti.id) ||
+          0;
+
+        if (total > 0) {
+          dtiTotalBytes.set(dti.id, total);
+        }
+
+        const reader = response.body?.getReader?.();
+        let received = 0;
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) break;
+
+            received += value.byteLength;
+            dtiLoadedBytes.set(dti.id, received);
+
+            if (total > 0) {
+              const nextProgressText =
+                `${Math.floor((received / total) * 100)}%`;
+
+              const currentProgressText =
+                dtiState.get(dti.id)?.progressText || "";
+
+              if (nextProgressText !== currentProgressText) {
+                setDtiStatus(dti.id, "loading", nextProgressText);
+              }
+            }
+          }
+        } else {
+          const directBlob = await response.blob();
+          received = directBlob.size;
+          dtiLoadedBytes.set(dti.id, received);
+        }
+
+        if (!(dtiTotalBytes.get(dti.id) > 0) && received > 0) {
+          dtiTotalBytes.set(dti.id, received);
+        }
+
+        setDtiStatus(dti.id, "done");
       } catch (err) {
-        console.warn("DTI preload failed:", dti.id, err);
+        console.warn("DTI background download failed:", dti.id, err);
         setDtiStatus(dti.id, "error");
       }
 
@@ -4878,141 +4900,197 @@ function kickPreloadSoon() {
 }
   
 async function downloadToBlobUrl(modelId) {
-const model = MODELS.find(x => x.id === modelId);
-const st = state.get(modelId);
-if (st.status === "done" && st.blobUrl) {
-if (modelId === PRIMARY_MODEL_ID) startDtiPreloadOnce();
-return st.blobUrl;
+  const model = MODELS.find(x => x.id === modelId);
+  const st = state.get(modelId);
+
+  if (st.status === "done" && st.blobUrl) {
+    return st.blobUrl;
+  }
+
+  if (inFlight.has(modelId)) return inFlight.get(modelId);
+
+  const p = (async () => {
+    paintDownloading(modelId);
+    st.status = "loading";
+    st.progressText = "";
+    refreshMeta(modelId);
+
+    if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
+      // Do not interrupt Model 1 once it has started downloading.
+      if (currentDownloadingId === PRIMARY_MODEL_ID) {
+        const primaryState = state.get(PRIMARY_MODEL_ID);
+
+        if (primaryState?.status === "loading") {
+          resumeRequested = true;
+
+          try {
+            await inFlight.get(PRIMARY_MODEL_ID);
+          } catch (_) {}
+        }
+
+        if (state.get(PRIMARY_MODEL_ID)?.status !== "loading") {
+          currentDownloadingId = null;
+          currentController = null;
+        }
+      } else {
+        currentController.abort();
+
+        const prev = state.get(currentDownloadingId);
+
+        if (prev && prev.status === "loading") {
+          prev.status = "paused";
+          refreshMeta(currentDownloadingId);
+        }
+      }
+    }
+
+    currentController = new AbortController();
+    currentDownloadingId = modelId;
+
+    try {
+      const res = await fetch(model.url, {
+        signal: currentController.signal,
+        cache: "force-cache"
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const total = Number(res.headers.get("Content-Length")) || null;
+      const reader = res.body.getReader();
+      let received = 0;
+      const chunks = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        chunks.push(value);
+        received += value.byteLength;
+
+        const nextProgressText = total
+          ? `${Math.floor((received / total) * 100)}%`
+          : "";
+
+        if (nextProgressText !== st.progressText) {
+          st.progressText = nextProgressText;
+          refreshMeta(modelId);
+        }
+      }
+
+      const blob = new Blob(chunks, { type: "model/gltf-binary" });
+      const blobUrl = URL.createObjectURL(blob);
+
+      st.status = "done";
+      st.progressText = "";
+      st.blobUrl = blobUrl;
+      refreshMeta(modelId);
+
+      paintDownloading(null);
+      maybeResumePreload();
+
+      return blobUrl;
+    } catch (err) {
+      paintDownloading(null);
+
+      if (err.name === "AbortError") {
+        st.status = "paused";
+        refreshMeta(modelId);
+        maybeResumePreload();
+        throw err;
+      }
+
+      st.status = "error";
+      st.progressText = "";
+      refreshMeta(modelId);
+      maybeResumePreload();
+      throw err;
+    } finally {
+      inFlight.delete(modelId);
+
+      if (currentDownloadingId === modelId) {
+        currentDownloadingId = null;
+        currentController = null;
+      }
+    }
+  })();
+
+  inFlight.set(modelId, p);
+  return p;
 }
-if (inFlight.has(modelId)) return inFlight.get(modelId);
-
-const p = (async () => {
-paintDownloading(modelId);
-st.status = "loading";
-st.progressText = "";
-refreshMeta(modelId);
-
-if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
-// Do not interrupt model 1 once it has started downloading.
-// Wait for model 1 to finish, then continue downloading the requested model.
-if (currentDownloadingId === PRIMARY_MODEL_ID) {
-const primaryState = state.get(PRIMARY_MODEL_ID);
-
-if (primaryState?.status === "loading") {
-resumeRequested = true;
-try {
-await inFlight.get(PRIMARY_MODEL_ID);
-} catch (_) {}
-}
-
-// Clear stale primary download handles after model 1 is done.
-if (state.get(PRIMARY_MODEL_ID)?.status !== "loading") {
-currentDownloadingId = null;
-currentController = null;
-}
-} else {
-currentController.abort();
-
-const prev = state.get(currentDownloadingId);
-if (prev && prev.status === "loading") {
-prev.status = "paused";
-refreshMeta(currentDownloadingId);
-}
-}
-}
-
-currentController = new AbortController();
-currentDownloadingId = modelId;
-
-try {
-const res = await fetch(model.url, { signal: currentController.signal });
-if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-const total = Number(res.headers.get("Content-Length")) || null;
-const reader = res.body.getReader();
-let received = 0;
-const chunks = [];
-
-while (true) {
-const { done, value } = await reader.read();
-if (done) break;
-chunks.push(value);
-received += value.byteLength;
-
-st.progressText = total ? `${Math.floor((received / total) * 100)}%` : "";
-refreshMeta(modelId);
-}
-
-const blob = new Blob(chunks, { type: "model/gltf-binary" });
-const blobUrl = URL.createObjectURL(blob);
-
-const absoluteModelUrl = new URL(model.url, window.location.href).href;
-sessionOfflineAssetBlobs.set(absoluteModelUrl, blob);
-
-st.status = "done";
-st.progressText = "";
-st.blobUrl = blobUrl;
-prewarmModelBaseState(modelId, blobUrl).catch(()=>{});
-refreshMeta(modelId);
-
-if (modelId === PRIMARY_MODEL_ID) {
-  startDtiPreloadOnce();
-
-  // Continue anatomical model preloading after model 1 finishes,
-  // even if the browser tab is in the background.
-  kickPreloadSoon();
-}
-
-paintDownloading(null);
-maybeResumePreload();
-return blobUrl;
-
-} catch (err) {
-paintDownloading(null);
-if (err.name === "AbortError") {
-st.status = "paused";
-refreshMeta(modelId);
-maybeResumePreload();
-throw err;
-}
-st.status = "error";
-st.progressText = "";
-refreshMeta(modelId);
-maybeResumePreload();
-throw err;
-} finally {
-inFlight.delete(modelId);
-
-if (currentDownloadingId === modelId) {
-currentDownloadingId = null;
-currentController = null;
-}
-}
-})();
-
-inFlight.set(modelId, p);
-return p;
-}
-
+  
 async function resumePreload() {
-if (!preloadEnabled) return;
-if (preloadRunning) return;
-preloadRunning = true;
-try {
-if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
-resumeRequested = true;
-return;
-}
-for (const id of preloadQueue) {
-if (!preloadEnabled) return;
-const st = state.get(id);
-if (st.status === "done") continue;
-try { await downloadToBlobUrl(id); }
-catch (e) { if (e.name === "AbortError") return; }
-}
-} finally {
-preloadRunning = false;
-}
+  if (!preloadEnabled) return;
+  if (preloadRunning) return;
+
+  if (backgroundPreparationPausedForSelection) {
+    resumeRequested = true;
+    return;
+  }
+
+  if (!cameraReady) {
+    resumeRequested = true;
+    return;
+  }
+
+  preloadRunning = true;
+
+  try {
+    if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
+      resumeRequested = true;
+      return;
+    }
+
+    for (const id of preloadQueue) {
+      if (!preloadEnabled) return;
+
+      if (backgroundPreparationPausedForSelection) {
+        resumeRequested = true;
+        return;
+      }
+
+      if (prewarmDone.has(id)) continue;
+
+      backgroundPreparationModelId = id;
+
+      backgroundPreparationPromise = (async () => {
+        const blobUrl = await downloadToBlobUrl(id);
+
+        if (backgroundPreparationPausedForSelection) {
+          releaseModelBlobIfUnused(id);
+          return;
+        }
+
+        await prewarmModelBaseState(id, blobUrl);
+
+        if (id !== currentShownId) {
+          releaseModelBlobIfUnused(id);
+        }
+      })();
+
+      try {
+        await backgroundPreparationPromise;
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          resumeRequested = true;
+          return;
+        }
+
+        console.warn("Background model preparation failed:", id, err);
+      } finally {
+        backgroundPreparationPromise = null;
+        backgroundPreparationModelId = null;
+      }
+    }
+
+    // Anatomical model spatial preparation is complete.
+    // Now download DTI bytes in the background without automatically parsing/mounting them.
+    if (!backgroundPreparationPausedForSelection) {
+      startDtiPreloadOnce();
+    }
+  } finally {
+    preloadRunning = false;
+  }
 }
 
 function setMainViewerShown(mv, shown) {
@@ -5036,6 +5114,76 @@ activeMv = idleMv;
 idleMv = tmp;
 }
 
+function releaseModelBlobIfUnused(modelId) {
+  const st = state.get(modelId);
+  if (!st?.blobUrl) return;
+
+  const liveSrcs = new Set([
+    activeMv?.src || "",
+    idleMv?.src || "",
+    mvPrime?.src || ""
+  ]);
+
+  if (liveSrcs.has(st.blobUrl)) return;
+
+  try {
+    URL.revokeObjectURL(st.blobUrl);
+  } catch (_) {}
+
+  st.blobUrl = null;
+}
+
+function releasePreviousIdleViewerAfterSwap() {
+  const retiredSrc = idleMv?.src || "";
+
+  try {
+    unmountAllDtiFromViewer(idleMv);
+  } catch (_) {}
+
+  try {
+    clearHotspots(idleMv);
+  } catch (_) {}
+
+  try {
+    occState.set(idleMv, null);
+  } catch (_) {}
+
+  try {
+    idleMv.removeAttribute("src");
+  } catch (_) {}
+
+  if (!retiredSrc) return;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      for (const model of MODELS) {
+        const st = state.get(model.id);
+
+        if (
+          st?.blobUrl === retiredSrc &&
+          model.id !== currentShownId
+        ) {
+          releaseModelBlobIfUnused(model.id);
+        }
+      }
+    });
+  });
+}
+
+async function releasePrimeViewerAfterCapture(modelId, blobUrl) {
+  try {
+    if ((mvPrime?.src || "") === blobUrl) {
+      mvPrime.removeAttribute("src");
+
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  } catch (_) {}
+
+  if (modelId !== currentShownId) {
+    releaseModelBlobIfUnused(modelId);
+  }
+}
 // --- Camera carryover + settled snapshot freeze (prevents zoom drift) ---
 let cameraReady = false;
 
@@ -5673,49 +5821,58 @@ animateCamera(activeMv,
 const PRIME_MODEL_ID = "02_Veselless_Annotated";
 let prime02Started = false;
 let prime02Done = false;
+let prime02Promise = null;
 // ===== Prewarm base state for every model (hidden load) =====
 const prewarmDone = new Set();      // modelId
 const prewarmInFlight = new Map();  // modelId -> Promise
 let mvPrimeLock = Promise.resolve(); // serialize mvPrime usage
 
-async function prewarmModelBaseState(modelId, blobUrlMaybe=null) {
-if (prewarmDone.has(modelId)) return;
-if (prewarmInFlight.has(modelId)) return prewarmInFlight.get(modelId);
+async function prewarmModelBaseState(modelId, blobUrlMaybe = null) {
+  if (prewarmDone.has(modelId)) return;
+  if (prewarmInFlight.has(modelId)) return prewarmInFlight.get(modelId);
 
-const p = (mvPrimeLock = mvPrimeLock.then(async () => {
-if (prewarmDone.has(modelId)) return;
+  const p = (mvPrimeLock = mvPrimeLock.then(async () => {
+    if (prewarmDone.has(modelId)) return;
+    if (backgroundPreparationPausedForSelection) return;
 
-// Ensure we have a blob URL
-let blobUrl = blobUrlMaybe;
-if (!blobUrl) {
-const st = state.get(modelId);
-if (st?.status === "done" && st.blobUrl) blobUrl = st.blobUrl;
-else blobUrl = await downloadToBlobUrl(modelId);
-}
+    let blobUrl = blobUrlMaybe;
 
-// Load into hidden mvPrime
-if (mvPrime.src !== blobUrl) {
-await new Promise(resolve => {
-const onLoad = () => resolve();
-mvPrime.addEventListener('load', onLoad, { once:true });
-mvPrime.src = blobUrl;
-});
-}
+    if (!blobUrl) {
+      const st = state.get(modelId);
 
-// Let model-viewer settle 1–2 frames (important for default orbit)
-await new Promise(r => requestAnimationFrame(r));
-await new Promise(r => requestAnimationFrame(r));
+      if (st?.status === "done" && st.blobUrl) {
+        blobUrl = st.blobUrl;
+      } else {
+        blobUrl = await downloadToBlobUrl(modelId);
+      }
+    }
 
-// Capture base stats for this model (especially baseRadiusByModel)
-captureAutoFrameBase(mvPrime, modelId);
+    if (backgroundPreparationPausedForSelection) {
+      releaseModelBlobIfUnused(modelId);
+      return;
+    }
 
-prewarmDone.add(modelId);
-})).finally(() => {
-prewarmInFlight.delete(modelId);
-});
+    if (mvPrime.src !== blobUrl) {
+      await new Promise(resolve => {
+        const onLoad = () => resolve();
+        mvPrime.addEventListener("load", onLoad, { once: true });
+        mvPrime.src = blobUrl;
+      });
+    }
 
-prewarmInFlight.set(modelId, p);
-return p;
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
+    captureAutoFrameBase(mvPrime, modelId);
+    prewarmDone.add(modelId);
+
+    await releasePrimeViewerAfterCapture(modelId, blobUrl);
+  })).finally(() => {
+    prewarmInFlight.delete(modelId);
+  });
+
+  prewarmInFlight.set(modelId, p);
+  return p;
 }
 function computeShiftForModel(mv, modelId) {
 const bt = baseTarget.get(modelId);
@@ -5752,35 +5909,46 @@ anchorPosCache.set(cacheKey(PRIME_MODEL_ID, anchor), new THREE.Vector3(x, y, z))
 }
 
 async function startPrimeModel02Once() {
-if (prime02Started) return;
-prime02Started = true;
+  if (prime02Done) return;
+  if (prime02Promise) return prime02Promise;
 
-try {
-await (mvPrimeLock = mvPrimeLock.then(async () => {
-if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
-requestAnimationFrame(() => startPrimeModel02Once());
-return;
-}
+  prime02Started = true;
 
-const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+  prime02Promise = (async () => {
+    await (mvPrimeLock = mvPrimeLock.then(async () => {
+      if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
+        prime02Started = false;
+        return;
+      }
 
-if (mvPrime.src !== blobUrl) {
-await new Promise(resolve => {
-const onLoad = () => resolve();
-mvPrime.addEventListener('load', onLoad, { once:true });
-mvPrime.src = blobUrl;
-});
-}
+      const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
 
-await new Promise(r => requestAnimationFrame(r));
-await new Promise(r => requestAnimationFrame(r));
+      if (mvPrime.src !== blobUrl) {
+        await new Promise(resolve => {
+          const onLoad = () => resolve();
+          mvPrime.addEventListener("load", onLoad, { once: true });
+          mvPrime.src = blobUrl;
+        });
+      }
 
-primeCacheFromModel02(mvPrime);
-prime02Done = true;
-}));
-} catch (_) {
-prime02Started = false;
-}
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+
+      primeCacheFromModel02(mvPrime);
+
+      prime02Done = true;
+      prewarmDone.add(PRIME_MODEL_ID);
+
+      await releasePrimeViewerAfterCapture(PRIME_MODEL_ID, blobUrl);
+    }));
+  })().catch(err => {
+    console.warn("Model 2 coordinate prime failed:", err);
+    prime02Started = false;
+  }).finally(() => {
+    prime02Promise = null;
+  });
+
+  return prime02Promise;
 }
 // ===== Swap / show model =====
 let swapToken = 0;
@@ -5844,6 +6012,10 @@ currentShownId = modelId;
 cameraReady = true;
 startLoop(activeMv);
 
+// The former visible viewer is now idle. Clear its live anatomical model
+// after the new model is successfully visible.
+releasePreviousIdleViewerAfterSwap();
+
 // DTI was already mounted into idleMv before swap.
 // Do not refresh it again immediately after swap, because that can cause flicker.
 
@@ -5853,10 +6025,15 @@ updateSelectedHotspotVisual();
 
 savingEnabled = true;
 if (!freezeCarryFromCameraChange) scheduleSettledCarrySnapshot();
+
+backgroundPreparationPausedForSelection = false;
+kickPreloadSoon();
 };
 
 const applyAfterLoad = () => {
   captureAutoFrameBase(idleMv, modelId);
+  prewarmDone.add(modelId);
+
   applyMaxCameraOrbit(idleMv, modelId);
   applyCamWithDelta(idleMv, modelId, camForThisSwap);
   if (camForThisSwap) {
@@ -5873,7 +6050,19 @@ requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(as
 if (token !== swapToken) return;
 await finalizeSwap();
 if (token !== swapToken) return;
-if (!prime02Done) startPrimeModel02Once();
+
+if (modelId === PRIMARY_MODEL_ID) {
+  cacheModel1ReferencePointsFromViewer(activeMv);
+}
+
+if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
+  backgroundPreparationStarted = true;
+
+  // Prime Model 2 once for existing annotation alias coordinates,
+  // then begin the one-at-a-time anatomical preparation queue.
+  await startPrimeModel02Once();
+  kickPreloadSoon();
+}
 })));
 };
 
@@ -5895,10 +6084,10 @@ applyAfterLoad();
 finalizeAfterBarrier();
 };
 idleMv.addEventListener('load', onIdleLoad, { once:true });
-await prewarmModelBaseState(modelId, targetSrc);
+
+// The selected model itself provides its base state through applyAfterLoad().
 idleMv.src = targetSrc;
 return;
-}
 
 const onIdleLoad = () => {
 if (token !== swapToken) return;
@@ -5909,32 +6098,68 @@ idleMv.addEventListener('load', onIdleLoad, { once:true });
 
 try {
 const blobUrl = await downloadToBlobUrl(modelId);
-await prewarmModelBaseState(modelId, blobUrl);
 if (token !== swapToken) return;
+
+// The selected model itself provides its base state through applyAfterLoad().
 idleMv.src = blobUrl;
 } catch (_) {
 savingEnabled = true;
+backgroundPreparationPausedForSelection = false;
+kickPreloadSoon();
 }
 }
 
 async function onUserSelect(modelId) {
-const st = state.get(modelId);
+  const st = state.get(modelId);
 
-// If model 1 is currently downloading, do not abort it.
-// Wait until it finishes, then show the clicked model.
-if (
-currentDownloadingId === PRIMARY_MODEL_ID &&
-state.get(PRIMARY_MODEL_ID)?.status === "loading" &&
-modelId !== PRIMARY_MODEL_ID
-) {
-try {
-await inFlight.get(PRIMARY_MODEL_ID);
-} catch (_) {}
-} else if (!(st.status === "done" && st.blobUrl)) {
-pausePreloadForAWhile();
-}
+  // Stop starting any new background hidden preparation until the selected
+  // model has finished swapping into the visible viewer.
+  backgroundPreparationPausedForSelection = true;
 
-showModel(modelId);
+  selectedId = modelId;
+  paintActive();
+
+  // Model 1 remains protected while it is first loading.
+  if (
+    currentDownloadingId === PRIMARY_MODEL_ID &&
+    state.get(PRIMARY_MODEL_ID)?.status === "loading" &&
+    modelId !== PRIMARY_MODEL_ID
+  ) {
+    try {
+      await inFlight.get(PRIMARY_MODEL_ID);
+    } catch (_) {}
+  }
+
+  // If a different background model is only downloading, abort that download
+  // so the user's selected model receives priority.
+  if (
+    backgroundPreparationModelId &&
+    currentDownloadingId === backgroundPreparationModelId &&
+    currentDownloadingId !== modelId &&
+    currentController
+  ) {
+    try {
+      currentController.abort();
+    } catch (_) {}
+  }
+
+  // If one hidden preparation has already begun, allow only that single job
+  // to settle and release; never wait behind the whole background queue.
+  if (backgroundPreparationPromise) {
+    try {
+      await backgroundPreparationPromise;
+    } catch (_) {}
+  }
+
+  // Do not overlap the one-time essential Model 2 coordinate prime with a
+  // user-selected heavy model load.
+  if (prime02Promise && !prime02Done) {
+    try {
+      await prime02Promise;
+    } catch (_) {}
+  }
+
+  showModel(modelId);
 }
 
 // init
@@ -5958,13 +6183,9 @@ configureOfflineUiForLaunchMode();
 // save the webpage/viewer shell now so it can open offline too.
 restoreOfflineShellForPreviouslySavedAtlas();
 
-showModel(selectedId).then(() => {
-  kickPreloadSoon();
-});
-
-// Extra background-tab safety: if showModel waits for hidden viewer frames,
-// this still marks preload as requested while model 1 is downloading.
-kickPreloadSoon();
+// Background preparation begins only after Model 1 is fully visible and
+// its required reference information has been captured in finalizeAfterBarrier().
+showModel(selectedId);
 </script>
 </body>
 </html>
