@@ -309,6 +309,51 @@ line-height:1;
 color:#111;
 letter-spacing:-0.4px;
 }
+  
+  .offline-install-message{
+font-size:13px;
+line-height:1.48;
+color:#444;
+margin:2px 0 14px 0;
+}
+
+.offline-install-message strong{
+color:#111;
+}
+
+.offline-install-note{
+font-size:12px;
+line-height:1.4;
+color:#666;
+margin-top:8px;
+}
+
+.offline-secondary-btn{
+margin-top:auto;
+align-self:flex-start;
+border:1px solid #d0d0d0;
+border-radius:9px;
+background:#fff;
+color:#333;
+font-size:13px;
+font-weight:600;
+padding:8px 16px;
+cursor:pointer;
+}
+
+.offline-secondary-btn:hover{
+background:#f4f4f4;
+}
+
+.offline-platform-btn.completed{
+cursor:pointer;
+}
+
+.offline-platform-btn.completed:hover{
+border-color:#75b678;
+background:#eff8ef;
+}
+  
 .toggle-row{
 display:flex;
 align-items:center;
@@ -813,9 +858,9 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
   <div id="offlinePlatformScreen" class="offline-screen" hidden>
     <div class="offline-popup-heading">Select your device</div>
 
-    <p class="offline-platform-subtitle">
-      Choose your operating system to continue with offline setup.
-    </p>
+   <p id="offlinePlatformSubtitle" class="offline-platform-subtitle">
+  Choose your operating system to continue with offline setup.
+</p>
 
     <div class="offline-platform-grid">
 
@@ -871,7 +916,19 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
   <span class="offline-platform-logo-text">iOS</span>
 </button>
 
-    </div>
+        </div>
+  </div>
+
+  <div id="offlineInstallScreen" class="offline-screen" hidden>
+    <div id="offlineInstallTitle" class="offline-popup-heading">Install Atlas</div>
+
+    <div id="offlineInstallMessage" class="offline-install-message"></div>
+
+    <div id="offlineInstallNote" class="offline-install-note"></div>
+
+    <button id="offlineBackToPlatformsBtn" class="offline-secondary-btn" type="button">
+      Back
+    </button>
   </div>
 </div>
 </div> <!-- closes sidebar -->
@@ -1243,6 +1300,14 @@ const offlineCloseBtn = document.getElementById('offlineCloseBtn');
 const offlineContinueBtn = document.getElementById('offlineContinueBtn');
 const offlineIntroScreen = document.getElementById('offlineIntroScreen');
 const offlinePlatformScreen = document.getElementById('offlinePlatformScreen');
+const offlinePlatformSubtitle = document.getElementById('offlinePlatformSubtitle');
+
+const offlineInstallScreen = document.getElementById('offlineInstallScreen');
+const offlineInstallTitle = document.getElementById('offlineInstallTitle');
+const offlineInstallMessage = document.getElementById('offlineInstallMessage');
+const offlineInstallNote = document.getElementById('offlineInstallNote');
+const offlineBackToPlatformsBtn = document.getElementById('offlineBackToPlatformsBtn');
+
 const offlineApproxSize = document.getElementById('offlineApproxSize');
 
 const offlinePlatformButtons = Array.from(
@@ -1312,19 +1377,21 @@ function setOfflinePlatformButtonState(platform, state, percent = 0) {
     return;
   }
 
-  if (state === 'completed') {
-    btn.classList.add('completed');
-    btn.disabled = true;
-    btn.innerHTML = `
-      <span class="offline-platform-status">
-        ${offlineLargeDoneIconSVG()}
-      </span>
-    `;
-    return;
-  }
+ if (state === 'completed') {
+  btn.classList.add('completed');
+  btn.disabled = false;
+  btn.title = "Available offline. Click to install.";
+  btn.innerHTML = `
+    <span class="offline-platform-status">
+      ${offlineLargeDoneIconSVG()}
+    </span>
+  `;
+  return;
+}
 
   btn.disabled = false;
-  btn.innerHTML = offlinePlatformOriginalMarkup.get(platform) || btn.innerHTML;
+btn.title = "Save for offline access";
+btn.innerHTML = offlinePlatformOriginalMarkup.get(platform) || btn.innerHTML;
 }
 
 // ===== Optional offline atlas storage =====
@@ -1731,7 +1798,12 @@ async function startOfflineAtlasDownload(platform) {
 
     setOfflinePlatformButtonState(platform, "completed");
 
-    for (const btn of offlinePlatformButtons) {
+if (offlinePlatformSubtitle) {
+  offlinePlatformSubtitle.textContent =
+    "Available offline. Click the green tick to install the atlas as an app.";
+}
+
+for (const btn of offlinePlatformButtons) {
       if (btn.dataset.platform !== platform) {
         btn.disabled = false;
       }
@@ -1757,9 +1829,139 @@ async function startOfflineAtlasDownload(platform) {
   }
 }
 
+let deferredInstallPrompt = null;
+let atlasInstalled = false;
+
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  atlasInstalled = true;
+
+  showOfflineInstallMessage(
+    "Installation Complete",
+    "The atlas has been installed as an app on your device.",
+    "Your saved offline atlas data remains available in this browser."
+  );
+});
+
+function isSafariBrowser() {
+  const ua = navigator.userAgent;
+  return /Safari/i.test(ua) && !/Chrome|CriOS|Edg|OPR|Firefox|FxiOS|Android/i.test(ua);
+}
+
+function showOfflineInstallMessage(title, message, note = "") {
+  if (!offlineInstallScreen) return;
+
+  offlineIntroScreen.hidden = true;
+  offlinePlatformScreen.hidden = true;
+  offlineInstallScreen.hidden = false;
+
+  offlineInstallTitle.textContent = title;
+  offlineInstallMessage.innerHTML = message;
+  offlineInstallNote.textContent = note;
+}
+
+function showPlatformSelectionScreen() {
+  offlineIntroScreen.hidden = true;
+  offlineInstallScreen.hidden = true;
+  offlinePlatformScreen.hidden = false;
+
+  if (offlinePlatformSubtitle) {
+    offlinePlatformSubtitle.textContent = offlineDownloadCompleted
+      ? "Available offline. Choose your device to install the atlas as an app."
+      : "Choose your operating system to continue with offline setup.";
+  }
+
+  resetOfflinePlatformButtons();
+}
+
+async function continueOfflineInstallation(platform) {
+  if (!offlineDownloadCompleted) return;
+
+  if (platform === "ios") {
+    showOfflineInstallMessage(
+      "Install on iPhone or iPad",
+      "Your atlas is available offline. To add it as an app, tap the <strong>Share</strong> button in your browser, then choose <strong>Add to Home Screen</strong>.",
+      "Open the saved icon from your Home Screen to use the atlas as an app."
+    );
+    return;
+  }
+
+  if (platform === "mac" && isSafariBrowser()) {
+    showOfflineInstallMessage(
+      "Install on Mac",
+      "Your atlas is available offline. In Safari, choose <strong>File → Add to Dock</strong>, then click <strong>Add</strong>.",
+      "The atlas will open as a web app from your Dock or Applications folder."
+    );
+    return;
+  }
+
+  if (deferredInstallPrompt) {
+    const promptEvent = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+
+    const result = await promptEvent.prompt();
+
+    if (result.outcome === "accepted") {
+      showOfflineInstallMessage(
+        "Installing Atlas",
+        "The installation request has been accepted.",
+        "The atlas can be launched from your applications after installation completes."
+      );
+    } else {
+      showOfflineInstallMessage(
+        "Installation Cancelled",
+        "The atlas remains available offline, but it was not installed as an app.",
+        "Return and click the green tick whenever you want to install it."
+      );
+    }
+
+    return;
+  }
+
+  if (platform === "mac") {
+    showOfflineInstallMessage(
+      "Install on Mac",
+      "Your atlas is available offline. In Chrome or Edge, use the <strong>Install</strong> icon in the address bar or choose <strong>Install 3D Fiber Dissection Anatomy</strong> from the browser menu.",
+      "In Safari, use File → Add to Dock."
+    );
+    return;
+  }
+
+  if (platform === "android") {
+    showOfflineInstallMessage(
+      "Install on Android",
+      "Your atlas is available offline. Open your browser menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.",
+      "The wording may vary depending on your browser."
+    );
+    return;
+  }
+
+  showOfflineInstallMessage(
+    "Install on Windows",
+    "Your atlas is available offline. In Chrome or Edge, click the <strong>Install</strong> icon in the address bar or choose <strong>Install 3D Fiber Dissection Anatomy</strong> from the browser menu.",
+    "The atlas will open in its own app window after installation."
+  );
+}
+
+offlineBackToPlatformsBtn?.addEventListener("click", () => {
+  showPlatformSelectionScreen();
+});
+
 offlinePlatformButtons.forEach(btn => {
   btn.addEventListener("click", () => {
-    startOfflineAtlasDownload(btn.dataset.platform);
+    const platform = btn.dataset.platform;
+
+    if (offlineDownloadCompleted) {
+      continueOfflineInstallation(platform);
+      return;
+    }
+
+    startOfflineAtlasDownload(platform);
   });
 });
   
@@ -1785,10 +1987,18 @@ function positionOfflinePopup() {
 }
 
 function resetOfflinePopupScreen() {
-  if (!offlineIntroScreen || !offlinePlatformScreen) return;
+  if (!offlineIntroScreen || !offlinePlatformScreen || !offlineInstallScreen) return;
 
   offlineIntroScreen.hidden = false;
   offlinePlatformScreen.hidden = true;
+  offlineInstallScreen.hidden = true;
+
+  if (offlinePlatformSubtitle) {
+    offlinePlatformSubtitle.textContent = offlineDownloadCompleted
+      ? "Available offline. Choose your device to install the atlas as an app."
+      : "Choose your operating system to continue with offline setup.";
+  }
+
   resetOfflinePlatformButtons();
 }
 
@@ -1836,8 +2046,7 @@ offlineCloseBtn?.addEventListener('click', () => {
 });
 
 offlineContinueBtn?.addEventListener('click', () => {
-  offlineIntroScreen.hidden = true;
-  offlinePlatformScreen.hidden = false;
+  showPlatformSelectionScreen();
 });
 
 window.addEventListener('resize', () => {
