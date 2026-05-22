@@ -63,6 +63,183 @@ min-width:0;
 .status-icon{ width:20px; height:20px; display:block; }
 .small{ font-size:12px; color:#666; margin-top:10px; line-height:1.4; }
 
+  /* ===== Offline access UI ===== */
+
+.offline-section{
+margin-top:16px;
+padding-top:12px;
+border-top:1px solid #ededed;
+}
+
+.offline-row{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:12px;
+}
+
+.offline-title{
+font-size:14px;
+font-weight:600;
+line-height:1.25;
+}
+
+.offline-open-btn{
+width:38px;
+height:38px;
+flex:0 0 38px;
+display:flex;
+align-items:center;
+justify-content:center;
+border:1px solid #d0d0d0;
+border-radius:10px;
+background:#fff;
+cursor:pointer;
+color:#1e88e5;
+transition:background 120ms ease, border-color 120ms ease;
+}
+
+.offline-open-btn:hover{
+background:#f4f8fd;
+border-color:#a9c9ed;
+}
+
+.offline-open-btn svg{
+width:22px;
+height:22px;
+display:block;
+}
+
+.offline-popup{
+position:fixed;
+z-index:100;
+width:320px;
+height:300px;
+padding:20px;
+box-sizing:border-box;
+border-radius:16px;
+background:rgba(255,255,255,0.97);
+box-shadow:0 12px 36px rgba(0,0,0,0.22);
+border:1px solid rgba(0,0,0,0.08);
+display:none;
+}
+
+.offline-popup.open{
+display:block;
+}
+
+.offline-close-btn{
+position:absolute;
+right:10px;
+top:9px;
+width:28px;
+height:28px;
+border:none;
+border-radius:50%;
+background:transparent;
+color:#555;
+font-size:21px;
+line-height:1;
+cursor:pointer;
+display:flex;
+align-items:center;
+justify-content:center;
+}
+
+.offline-close-btn:hover{
+background:#eeeeee;
+}
+
+.offline-screen{
+height:100%;
+display:flex;
+flex-direction:column;
+}
+
+.offline-screen[hidden]{
+display:none;
+}
+
+.offline-popup-heading{
+font-size:17px;
+font-weight:700;
+margin:0 28px 14px 0;
+}
+
+.offline-popup-text{
+font-size:13px;
+line-height:1.45;
+color:#444;
+margin:0 0 11px 0;
+}
+
+.offline-popup-text strong{
+color:#111;
+}
+
+.offline-primary-btn{
+margin-top:auto;
+align-self:flex-end;
+border:none;
+border-radius:9px;
+background:#1e88e5;
+color:#fff;
+font-size:13px;
+font-weight:600;
+padding:8px 19px;
+cursor:pointer;
+}
+
+.offline-primary-btn:hover{
+background:#156fca;
+}
+
+.offline-platform-subtitle{
+font-size:12px;
+line-height:1.35;
+color:#666;
+margin:0 0 12px 0;
+}
+
+.offline-platform-grid{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:10px;
+margin-top:auto;
+margin-bottom:auto;
+}
+
+.offline-platform-btn{
+height:93px;
+display:flex;
+flex-direction:column;
+align-items:center;
+justify-content:center;
+gap:9px;
+border:1px solid #dddddd;
+border-radius:12px;
+background:#fff;
+cursor:pointer;
+color:#222;
+transition:border-color 120ms ease, background 120ms ease;
+}
+
+.offline-platform-btn:hover{
+border-color:#1e88e5;
+background:#f3f8fe;
+}
+
+.offline-platform-name{
+font-size:13px;
+font-weight:600;
+}
+
+.offline-platform-icon{
+width:31px;
+height:31px;
+display:block;
+color:#222;
+}
 .toggle-row{
 display:flex;
 align-items:center;
@@ -523,6 +700,104 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
 </div>
 </div>
 
+<div class="offline-section">
+  <div class="offline-row">
+    <div class="offline-title">Download for Offline Access</div>
+
+    <button id="offlineOpenBtn" class="offline-open-btn"
+      type="button" aria-label="Download for offline access"
+      title="Download for offline access">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3v10" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round"/>
+        <path d="M8 10l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 17v3h16v-3" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div id="offlinePopup" class="offline-popup" aria-label="Offline access information">
+  <button id="offlineCloseBtn" class="offline-close-btn"
+    type="button" aria-label="Close">×</button>
+
+  <div id="offlineIntroScreen" class="offline-screen">
+    <div class="offline-popup-heading">Offline Access</div>
+
+    <p class="offline-popup-text">
+      Downloading the atlas will allow you to install it as an app on your device
+      and access it without an internet connection.
+    </p>
+
+    <p class="offline-popup-text">
+      Approximately <strong id="offlineApproxSize">— MB</strong> of data will be
+      stored in this browser on your device. You will be able to remove the saved
+      data later.
+    </p>
+
+    <button id="offlineContinueBtn" class="offline-primary-btn" type="button">
+      Okay
+    </button>
+  </div>
+
+  <div id="offlinePlatformScreen" class="offline-screen" hidden>
+    <div class="offline-popup-heading">Select your device</div>
+
+    <p class="offline-platform-subtitle">
+      Choose your operating system to continue with offline setup.
+    </p>
+
+    <div class="offline-platform-grid">
+
+      <button class="offline-platform-btn" type="button" data-platform="windows">
+        <span class="offline-platform-name">Windows</span>
+        <svg class="offline-platform-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <path fill="currentColor" d="M3 5l11-1.5v11H3V5zm13-1.8L29 1.5v13H16V3.2zM3 17h11v11L3 26.5V17zm13 0h13v13.5l-13-1.8V17z"/>
+        </svg>
+      </button>
+
+      <button class="offline-platform-btn" type="button" data-platform="mac">
+        <span class="offline-platform-name">Mac</span>
+        <svg class="offline-platform-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="5" y="5" width="22" height="16" rx="2.5" fill="none"
+            stroke="currentColor" stroke-width="2"/>
+          <path d="M3.5 25h25" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round"/>
+          <circle cx="16" cy="13" r="2.4" fill="currentColor"/>
+        </svg>
+      </button>
+
+      <button class="offline-platform-btn" type="button" data-platform="android">
+        <span class="offline-platform-name">Android</span>
+        <svg class="offline-platform-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M9 13h14v11a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V13z"
+            fill="currentColor"/>
+          <path d="M10 12a6 6 0 0 1 12 0" fill="none"
+            stroke="currentColor" stroke-width="2"/>
+          <path d="M11 7L9 4M21 7l2-3" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="13.5" cy="10.5" r="1" fill="#fff"/>
+          <circle cx="18.5" cy="10.5" r="1" fill="#fff"/>
+        </svg>
+      </button>
+
+      <button class="offline-platform-btn" type="button" data-platform="ios">
+        <span class="offline-platform-name">iOS</span>
+        <svg class="offline-platform-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="9" y="3" width="14" height="26" rx="3.3" fill="none"
+            stroke="currentColor" stroke-width="2"/>
+          <path d="M14 6h4" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round"/>
+          <circle cx="16" cy="25.5" r="1.25" fill="currentColor"/>
+        </svg>
+      </button>
+
+    </div>
+  </div>
+</div>
+  
 <div class="viewer-wrap" id="viewerWrap">
 <div id="hotspotTip"></div>
 
@@ -883,6 +1158,88 @@ const annoNext = document.getElementById('annoNext');
 const annoLabel = document.getElementById('annoLabel');
 
 const dtiList = document.getElementById('dtiList');
+
+const offlineOpenBtn = document.getElementById('offlineOpenBtn');
+const offlinePopup = document.getElementById('offlinePopup');
+const offlineCloseBtn = document.getElementById('offlineCloseBtn');
+const offlineContinueBtn = document.getElementById('offlineContinueBtn');
+const offlineIntroScreen = document.getElementById('offlineIntroScreen');
+const offlinePlatformScreen = document.getElementById('offlinePlatformScreen');
+
+function positionOfflinePopup() {
+  if (!offlineOpenBtn || !offlinePopup) return;
+
+  const buttonRect = offlineOpenBtn.getBoundingClientRect();
+  const popupWidth = 320;
+  const popupHeight = 300;
+  const gap = 12;
+
+  let left = buttonRect.right + gap;
+  let top = buttonRect.top - 18;
+
+  if (left + popupWidth + 12 > window.innerWidth) {
+    left = Math.max(12, buttonRect.left - popupWidth - gap);
+  }
+
+  top = Math.max(12, Math.min(top, window.innerHeight - popupHeight - 12));
+
+  offlinePopup.style.left = `${left}px`;
+  offlinePopup.style.top = `${top}px`;
+}
+
+function resetOfflinePopupScreen() {
+  if (!offlineIntroScreen || !offlinePlatformScreen) return;
+
+  offlineIntroScreen.hidden = false;
+  offlinePlatformScreen.hidden = true;
+}
+
+function openOfflinePopup() {
+  if (!offlinePopup) return;
+
+  resetOfflinePopupScreen();
+  positionOfflinePopup();
+  offlinePopup.classList.add('open');
+}
+
+function closeOfflinePopup() {
+  if (!offlinePopup) return;
+
+  offlinePopup.classList.remove('open');
+  resetOfflinePopupScreen();
+}
+
+offlineOpenBtn?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  openOfflinePopup();
+});
+
+offlineCloseBtn?.addEventListener('click', () => {
+  closeOfflinePopup();
+});
+
+offlineContinueBtn?.addEventListener('click', () => {
+  offlineIntroScreen.hidden = true;
+  offlinePlatformScreen.hidden = false;
+});
+
+window.addEventListener('resize', () => {
+  if (offlinePopup?.classList.contains('open')) {
+    positionOfflinePopup();
+  }
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if (!offlinePopup?.classList.contains('open')) return;
+
+  const clickedInsidePopup = offlinePopup.contains(e.target);
+  const clickedOpenButton = offlineOpenBtn?.contains(e.target);
+
+  if (!clickedInsidePopup && !clickedOpenButton) {
+    closeOfflinePopup();
+  }
+});
 
 let activeMv = mvA;
 let idleMv = mvB;
