@@ -3658,7 +3658,12 @@ viewerWrap.addEventListener("wheel", (e) => {
 
 // Download/progress icons + download behavior (LOCKED)
 const state = new Map();
-MODELS.forEach(m => state.set(m.id, { status: "idle", progressText: "", blobUrl: null }));
+MODELS.forEach(m => state.set(m.id, {
+  status: "idle",
+  progressText: "",
+  blobUrl: null,
+  cached: false
+}));
 
 let currentController = null;
 let currentDownloadingId = null;
@@ -4905,11 +4910,15 @@ async function downloadToBlobUrl(modelId) {
 
   if (inFlight.has(modelId)) return inFlight.get(modelId);
 
-  const p = (async () => {
-    paintDownloading(modelId);
-    st.status = "loading";
-    st.progressText = "";
-    refreshMeta(modelId);
+ const p = (async () => {
+    const loadingFromAlreadyCachedFile = st.cached === true;
+
+    if (!loadingFromAlreadyCachedFile) {
+      paintDownloading(modelId);
+      st.status = "loading";
+      st.progressText = "";
+      refreshMeta(modelId);
+    }
 
     if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
       // Do not interrupt Model 1 once it has started downloading.
@@ -4968,33 +4977,42 @@ async function downloadToBlobUrl(modelId) {
           ? `${Math.floor((received / total) * 100)}%`
           : "";
 
-        if (nextProgressText !== st.progressText) {
-          st.progressText = nextProgressText;
-          refreshMeta(modelId);
-        }
+        if (!loadingFromAlreadyCachedFile && nextProgressText !== st.progressText) {
+  st.progressText = nextProgressText;
+  refreshMeta(modelId);
+}
       }
 
       const blob = new Blob(chunks, { type: "model/gltf-binary" });
       const blobUrl = URL.createObjectURL(blob);
 
       st.status = "done";
-      st.progressText = "";
-      st.blobUrl = blobUrl;
-      refreshMeta(modelId);
+st.progressText = "";
+st.blobUrl = blobUrl;
+st.cached = true;
+refreshMeta(modelId);
 
-      paintDownloading(null);
-      maybeResumePreload();
+      if (!loadingFromAlreadyCachedFile) {
+  paintDownloading(null);
+}
+
+maybeResumePreload();
 
       return blobUrl;
     } catch (err) {
-      paintDownloading(null);
+      if (!loadingFromAlreadyCachedFile) {
+  paintDownloading(null);
+}
 
-      if (err.name === "AbortError") {
-        st.status = "paused";
-        refreshMeta(modelId);
-        maybeResumePreload();
-        throw err;
-      }
+if (err.name === "AbortError") {
+  if (!loadingFromAlreadyCachedFile) {
+    st.status = "paused";
+    refreshMeta(modelId);
+  }
+
+  maybeResumePreload();
+  throw err;
+}
 
       st.status = "error";
       st.progressText = "";
@@ -5074,9 +5092,10 @@ async function downloadToBlobUrl(modelId) {
       }
 
       st.status = "done";
-      st.progressText = "";
-      st.blobUrl = null;
-      refreshMeta(modelId);
+st.progressText = "";
+st.blobUrl = null;
+st.cached = true;
+refreshMeta(modelId);
 
       paintDownloading(null);
     } catch (err) {
@@ -6202,14 +6221,51 @@ kickPreloadSoon();
 async function onUserSelect(modelId) {
   const st = state.get(modelId);
 
-  // Pause new background file downloads until the selected model has
-// finished swapping into the visible viewer.
-backgroundPreparationPausedForSelection = true;
+  const modelAlreadyAvailable =
+    st?.cached === true ||
+    !!st?.blobUrl ||
+    modelId === currentShownId;
+
+  const clickedCurrentBackgroundDownload =
+    backgroundPreparationModelId === modelId &&
+    currentDownloadingId === modelId &&
+    st?.status === "loading";
+
+  // Clicking the currently visible model should do nothing and must not
+  // interrupt a background download.
+  if (modelId === currentShownId) {
+    selectedId = modelId;
+    paintActive();
+    return;
+  }
 
   selectedId = modelId;
   paintActive();
 
-  // Model 1 remains protected while it is first loading.
+  // If the user clicks the model currently being downloaded in the background,
+  // let that single download complete, then open it locally.
+  if (clickedCurrentBackgroundDownload) {
+    backgroundPreparationPausedForSelection = true;
+
+    try {
+      await backgroundPreparationPromise;
+    } catch (_) {}
+
+    showModel(modelId);
+    return;
+  }
+
+  // If the model is already downloaded/cached, open it without aborting the
+  // unrelated cache-only background download.
+  if (modelAlreadyAvailable) {
+    showModel(modelId);
+    return;
+  }
+
+  // The clicked model is not available yet. Give it priority over the
+  // unrelated background download.
+  backgroundPreparationPausedForSelection = true;
+
   if (
     currentDownloadingId === PRIMARY_MODEL_ID &&
     state.get(PRIMARY_MODEL_ID)?.status === "loading" &&
@@ -6220,8 +6276,6 @@ backgroundPreparationPausedForSelection = true;
     } catch (_) {}
   }
 
-  // If a different background model is only downloading, abort that download
-  // so the user's selected model receives priority.
   if (
     backgroundPreparationModelId &&
     currentDownloadingId === backgroundPreparationModelId &&
@@ -6233,16 +6287,12 @@ backgroundPreparationPausedForSelection = true;
     } catch (_) {}
   }
 
-  // If one background file download is already finishing or being aborted,
-// allow that single operation to settle before opening the selected model.
-if (backgroundPreparationPromise) {
+  if (backgroundPreparationPromise) {
     try {
       await backgroundPreparationPromise;
     } catch (_) {}
   }
 
-  // Do not overlap the one-time essential Model 2 coordinate prime with a
-  // user-selected heavy model load.
   if (prime02Promise && !prime02Done) {
     try {
       await prime02Promise;
