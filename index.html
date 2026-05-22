@@ -5078,11 +5078,6 @@ async function resumePreload() {
       }
     }
 
-    // Anatomical model spatial preparation is complete.
-    // Now download DTI bytes in the background without automatically parsing/mounting them.
-    if (!backgroundPreparationPausedForSelection) {
-      startDtiPreloadOnce();
-    }
   } finally {
     preloadRunning = false;
   }
@@ -5999,8 +5994,18 @@ const finalizeSwap = async () => {
 prepareAnnotationsAndOcclusion(idleMv, modelId);
 
 // Mount enabled DTI tracts into the hidden/idle viewer before the viewer swap.
-// This prevents the visible split-second DTI disappearance during model changes.
 await refreshDtiSceneForViewer(idleMv, modelId);
+
+if (token !== swapToken) return;
+
+// Allow the hidden incoming viewer to render the newly mounted DTI tract
+// before it becomes visible. The previous viewer remains visible during this wait.
+if (dtiEnabled.size > 0) {
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  await new Promise(resolve => requestAnimationFrame(resolve));
+}
+
+if (token !== swapToken) return;
 
 swapViewersNow();
 currentShownId = modelId;
@@ -6048,6 +6053,10 @@ if (token !== swapToken) return;
 
 if (modelId === PRIMARY_MODEL_ID) {
   cacheModel1ReferencePointsFromViewer(activeMv);
+
+  // Download DTI tract files immediately after Model 1 is ready.
+  // This downloads bytes only; tracts are parsed and mounted only when selected.
+  startDtiPreloadOnce();
 }
 
 if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
