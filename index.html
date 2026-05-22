@@ -3685,6 +3685,10 @@ let backgroundPreparationPromise = null;
 let backgroundPreparationModelId = null;
 let backgroundPreparationStarted = false;
 
+// Manual pause state for the anatomical-model download queue only.
+// This does not pause or alter DTI tract downloads.
+let anatomicalDownloadsUserPaused = false;
+let manuallyPausedModelId = null;
 const rowEls = new Map();
 let downloadingVisualId = null;
 
@@ -4882,6 +4886,7 @@ async function startDtiPreloadOnce() {
 }
 function maybeResumePreload() {
 if (!preloadEnabled) return;
+if (anatomicalDownloadsUserPaused) return;
 if (!resumeRequested) return;
 if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
 resumeRequested = false;
@@ -4917,53 +4922,61 @@ async function downloadToBlobUrl(modelId) {
 
   if (inFlight.has(modelId)) return inFlight.get(modelId);
 
- const p = (async () => {
+  const p = (async () => {
     const loadingFromAlreadyCachedFile = st.cached === true;
+    let ownController = null;
 
     if (!loadingFromAlreadyCachedFile) {
       paintDownloading(modelId);
       st.status = "loading";
       st.progressText = "";
       refreshMeta(modelId);
-    }
 
-    if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
-      // Do not interrupt Model 1 once it has started downloading.
-      if (currentDownloadingId === PRIMARY_MODEL_ID) {
-        const primaryState = state.get(PRIMARY_MODEL_ID);
+      if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
+        // Do not interrupt Model 1 once it has started downloading.
+        if (currentDownloadingId === PRIMARY_MODEL_ID) {
+          const primaryState = state.get(PRIMARY_MODEL_ID);
 
-        if (primaryState?.status === "loading") {
-          resumeRequested = true;
+          if (primaryState?.status === "loading") {
+            resumeRequested = true;
 
-          try {
-            await inFlight.get(PRIMARY_MODEL_ID);
-          } catch (_) {}
-        }
+            try {
+              await inFlight.get(PRIMARY_MODEL_ID);
+            } catch (_) {}
+          }
 
-        if (state.get(PRIMARY_MODEL_ID)?.status !== "loading") {
-          currentDownloadingId = null;
-          currentController = null;
-        }
-      } else {
-        currentController.abort();
+          if (state.get(PRIMARY_MODEL_ID)?.status !== "loading") {
+            currentDownloadingId = null;
+            currentController = null;
+          }
+        } else {
+          currentController.abort();
 
-        const prev = state.get(currentDownloadingId);
+          const prev = state.get(currentDownloadingId);
 
-        if (prev && prev.status === "loading") {
-          prev.status = "paused";
-          refreshMeta(currentDownloadingId);
+          if (prev && prev.status === "loading") {
+            prev.status = "paused";
+            prev.progressText = "";
+            refreshMeta(currentDownloadingId);
+          }
         }
       }
+
+      ownController = new AbortController();
+      currentController = ownController;
+      currentDownloadingId = modelId;
     }
 
-    currentController = new AbortController();
-    currentDownloadingId = modelId;
-
     try {
-      const res = await fetch(model.url, {
-        signal: currentController.signal,
+      const fetchOptions = {
         cache: "force-cache"
-      });
+      };
+
+      if (ownController) {
+        fetchOptions.signal = ownController.signal;
+      }
+
+      const res = await fetch(model.url, fetchOptions);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -5027,10 +5040,10 @@ if (err.name === "AbortError") {
       refreshMeta(modelId);
       maybeResumePreload();
       throw err;
-    } finally {
+        } finally {
       inFlight.delete(modelId);
 
-      if (currentDownloadingId === modelId) {
+      if (!loadingFromAlreadyCachedFile && currentDownloadingId === modelId) {
         currentDownloadingId = null;
         currentController = null;
       }
@@ -5137,6 +5150,7 @@ refreshMeta(modelId);
   
 async function resumePreload() {
   if (!preloadEnabled) return;
+  if (anatomicalDownloadsUserPaused) return;
   if (preloadRunning) return;
 
   if (backgroundPreparationPausedForSelection) {
@@ -6270,36 +6284,32 @@ kickPreloadSoon();
 async function onUserSelect(modelId) {
   const st = state.get(modelId);
 
+  const clickedModelIsDownloading =
+    currentDownloadingId === modelId &&
+    st?.status === "loading";
+
   const modelAlreadyAvailable =
     st?.cached === true ||
     !!st?.blobUrl ||
     modelId === currentShownId;
 
-  const clickedModelIsDownloading =
-    currentDownloadingId === modelId &&
-    st?.status === "loading";
-
-  // Clicking the currently visible model should not interrupt an unrelated
-  // background download.
-  if (modelId === currentShownId && !clickedModelIsDownloading) {
-    selectedId = modelId;
-    paintActive();
-    return;
-  }
-
   selectedId = modelId;
   paintActive();
 
-  // Keep the required initial Model 1 load protected. Without Model 1,
-  // camera/DTI reference initialization cannot complete.
-  if (modelId === PRIMARY_MODEL_ID && clickedModelIsDownloading && !cameraReady) {
+  // Model 1 must complete its first essential initialization load.
+  if (
+    modelId === PRIMARY_MODEL_ID &&
+    clickedModelIsDownloading &&
+    !cameraReady
+  ) {
     return;
   }
 
-  // Toggle: clicking any currently downloading anatomical model pauses it,
-  // whether it is downloading in the background, through Model 2 prime,
-  // or because the user resumed/selected it.
+  // Clicking the currently downloading anatomical model pauses the entire
+  // anatomical-model download queue. DTI downloads are not affected.
   if (clickedModelIsDownloading) {
+    anatomicalDownloadsUserPaused = true;
+    manuallyPausedModelId = modelId;
     st.userPaused = true;
     backgroundPreparationPausedForSelection = true;
 
@@ -6317,52 +6327,55 @@ async function onUserSelect(modelId) {
     return;
   }
 
-  // A paused model is resumed by clicking it again.
-  // It becomes the selected model and will open after downloading.
-  if (st?.status === "paused" && st?.userPaused === true) {
-    st.userPaused = false;
-    backgroundPreparationPausedForSelection = true;
-
-    // Model 2 may have been paused during its required prime operation.
-    // Opening it normally will capture its alias-coordinate information.
-    showModel(modelId);
+  // Clicking the currently visible model does not resume a paused background
+  // model queue and does not interrupt any ongoing download.
+  if (modelId === currentShownId) {
     return;
   }
 
-  // If the model is already cached or presently available as a Blob URL,
-  // open it without interrupting an unrelated background download.
+  // Clicking an already downloaded model opens it, while a manually paused
+  // anatomical download queue remains paused.
   if (modelAlreadyAvailable) {
     showModel(modelId);
     return;
   }
 
-  // The clicked model has not been downloaded yet. Give it priority over an
-  // unrelated background model download.
+  // Clicking the paused model again, or selecting another not-yet-downloaded
+  // model, resumes anatomical downloading with that clicked model as priority.
+  anatomicalDownloadsUserPaused = false;
+
+  if (manuallyPausedModelId) {
+    const previouslyPausedState = state.get(manuallyPausedModelId);
+
+    if (previouslyPausedState) {
+      previouslyPausedState.userPaused = false;
+    }
+
+    manuallyPausedModelId = null;
+  }
+
+  st.userPaused = false;
   backgroundPreparationPausedForSelection = true;
 
+  // Do not cancel Model 1 while initial viewer/reference setup is incomplete.
   if (
     currentDownloadingId === PRIMARY_MODEL_ID &&
     state.get(PRIMARY_MODEL_ID)?.status === "loading" &&
-    modelId !== PRIMARY_MODEL_ID
+    modelId !== PRIMARY_MODEL_ID &&
+    !cameraReady
   ) {
     try {
       await inFlight.get(PRIMARY_MODEL_ID);
     } catch (_) {}
   }
 
+  // The clicked not-yet-downloaded model receives priority over another
+  // anatomical background download.
   if (
     currentDownloadingId &&
     currentDownloadingId !== modelId &&
     currentController
   ) {
-    const interruptedState = state.get(currentDownloadingId);
-
-    // Mark an unrelated interrupted anatomical download as paused, but not
-    // manually paused; it may resume automatically after the selection opens.
-    if (interruptedState?.status === "loading") {
-      interruptedState.userPaused = false;
-    }
-
     try {
       currentController.abort();
     } catch (_) {}
@@ -6374,11 +6387,12 @@ async function onUserSelect(modelId) {
     } catch (_) {}
   }
 
-  // Do not wait for a Model 2 prime that the user has explicitly paused.
+  // If Model 2 prime is running for a different request, let only that
+  // essential one-time coordinate operation settle.
   if (
     prime02Promise &&
     !prime02Done &&
-    state.get(PRIME_MODEL_ID)?.userPaused !== true
+    modelId !== PRIME_MODEL_ID
   ) {
     try {
       await prime02Promise;
