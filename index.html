@@ -4,7 +4,19 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>3D Fiber Dissection Anatomy</title>
-<link rel="icon" href="data:," />
+
+<link rel="manifest" href="./manifest.webmanifest">
+
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./icons/favicon-16.png">
+
+<link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fiber Atlas">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+<meta name="theme-color" content="#ffffff">
+
 <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 <script type="importmap">
 {
@@ -1325,6 +1337,13 @@ const OFFLINE_PLATFORM_KEY = "fiberDissectionOfflinePlatform";
 const OFFLINE_SHELL_ASSETS = [
   new URL("./", window.location.href).href,
   new URL("./index.html", window.location.href).href,
+  new URL("./manifest.webmanifest", window.location.href).href,
+
+  new URL("./icons/app-192.png", window.location.href).href,
+  new URL("./icons/app-512.png", window.location.href).href,
+  new URL("./icons/apple-touch-icon.png", window.location.href).href,
+  new URL("./icons/favicon-16.png", window.location.href).href,
+  new URL("./icons/favicon-32.png", window.location.href).href,
 
   // Current external JavaScript files required by the atlas viewer.
   "https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js",
