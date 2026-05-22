@@ -3670,9 +3670,10 @@ let resumeRequested = false;
 let preloadRunning = false;
 const preloadQueue = MODELS.map(m => m.id);
 
-// ===== Low-memory automatic preparation pipeline =====
-// Background preparation loads only one anatomical model at a time into mvPrime,
-// captures the required spatial/base information, then releases its live model data.
+// ===== Low-memory automatic background download pipeline =====
+// Anatomical files download in the background for quick later access,
+// but are loaded into the viewer only when selected by the user.
+// Model 2 remains the only one-time hidden prime required for alias coordinates.
 let backgroundPreparationPausedForSelection = false;
 let backgroundPreparationPromise = null;
 let backgroundPreparationModelId = null;
@@ -5013,6 +5014,98 @@ async function downloadToBlobUrl(modelId) {
   inFlight.set(modelId, p);
   return p;
 }
+
+  async function downloadModelToCacheOnly(modelId) {
+  const model = MODELS.find(x => x.id === modelId);
+  const st = state.get(modelId);
+
+  if (!model || st.status === "done") return;
+
+  if (inFlight.has(modelId)) {
+    await inFlight.get(modelId);
+    return;
+  }
+
+  const p = (async () => {
+    paintDownloading(modelId);
+    st.status = "loading";
+    st.progressText = "";
+    refreshMeta(modelId);
+
+    currentController = new AbortController();
+    currentDownloadingId = modelId;
+
+    try {
+      const response = await fetch(model.url, {
+        signal: currentController.signal,
+        cache: "force-cache"
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const total =
+        Number(response.headers.get("Content-Length")) || 0;
+
+      const reader = response.body?.getReader?.();
+      let received = 0;
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) break;
+
+          received += value.byteLength;
+
+          const nextProgressText = total > 0
+            ? `${Math.floor((received / total) * 100)}%`
+            : "";
+
+          if (nextProgressText !== st.progressText) {
+            st.progressText = nextProgressText;
+            refreshMeta(modelId);
+          }
+        }
+      } else {
+        const blob = await response.blob();
+        received = blob.size;
+      }
+
+      st.status = "done";
+      st.progressText = "";
+      st.blobUrl = null;
+      refreshMeta(modelId);
+
+      paintDownloading(null);
+    } catch (err) {
+      paintDownloading(null);
+
+      if (err?.name === "AbortError") {
+        st.status = "paused";
+        st.progressText = "";
+        refreshMeta(modelId);
+        throw err;
+      }
+
+      st.status = "error";
+      st.progressText = "";
+      refreshMeta(modelId);
+      throw err;
+    } finally {
+      inFlight.delete(modelId);
+
+      if (currentDownloadingId === modelId) {
+        currentDownloadingId = null;
+        currentController = null;
+      }
+    }
+  })();
+
+  inFlight.set(modelId, p);
+  return p;
+}
   
 async function resumePreload() {
   if (!preloadEnabled) return;
@@ -5031,7 +5124,10 @@ async function resumePreload() {
   preloadRunning = true;
 
   try {
-    if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") {
+    if (
+      currentDownloadingId &&
+      state.get(currentDownloadingId)?.status === "loading"
+    ) {
       resumeRequested = true;
       return;
     }
@@ -5044,24 +5140,14 @@ async function resumePreload() {
         return;
       }
 
-      if (prewarmDone.has(id)) continue;
+      const st = state.get(id);
+
+      // Already downloaded or currently visible models do not need
+      // another background download.
+      if (st?.status === "done") continue;
 
       backgroundPreparationModelId = id;
-
-      backgroundPreparationPromise = (async () => {
-        const blobUrl = await downloadToBlobUrl(id);
-
-        if (backgroundPreparationPausedForSelection) {
-          releaseModelBlobIfUnused(id);
-          return;
-        }
-
-        await prewarmModelBaseState(id, blobUrl);
-
-        if (id !== currentShownId) {
-          releaseModelBlobIfUnused(id);
-        }
-      })();
+      backgroundPreparationPromise = downloadModelToCacheOnly(id);
 
       try {
         await backgroundPreparationPromise;
@@ -5071,13 +5157,12 @@ async function resumePreload() {
           return;
         }
 
-        console.warn("Background model preparation failed:", id, err);
+        console.warn("Background model download failed:", id, err);
       } finally {
         backgroundPreparationPromise = null;
         backgroundPreparationModelId = null;
       }
     }
-
   } finally {
     preloadRunning = false;
   }
@@ -6117,9 +6202,9 @@ kickPreloadSoon();
 async function onUserSelect(modelId) {
   const st = state.get(modelId);
 
-  // Stop starting any new background hidden preparation until the selected
-  // model has finished swapping into the visible viewer.
-  backgroundPreparationPausedForSelection = true;
+  // Pause new background file downloads until the selected model has
+// finished swapping into the visible viewer.
+backgroundPreparationPausedForSelection = true;
 
   selectedId = modelId;
   paintActive();
@@ -6148,9 +6233,9 @@ async function onUserSelect(modelId) {
     } catch (_) {}
   }
 
-  // If one hidden preparation has already begun, allow only that single job
-  // to settle and release; never wait behind the whole background queue.
-  if (backgroundPreparationPromise) {
+  // If one background file download is already finishing or being aborted,
+// allow that single operation to settle before opening the selected model.
+if (backgroundPreparationPromise) {
     try {
       await backgroundPreparationPromise;
     } catch (_) {}
