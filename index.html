@@ -38,6 +38,15 @@ overflow:hidden;
 font-family:system-ui, sans-serif;
 }
 
+/* Remove mobile browser tap-highlight flash from interactive atlas UI. */
+.sidebar,
+.sidebar *,
+#sidebarCollapseBtn,
+#dtiPanel,
+#dtiPanel * {
+-webkit-tap-highlight-color: transparent;
+}
+  
 .wrap{
 display:flex;
 width:100vw;
@@ -5327,6 +5336,16 @@ let savingEnabled = true;
 let settleRaf = 0;
 let freezeCarryFromCameraChange = false;
 
+// Mobile touch gestures, including pinch zoom, are reported through
+// model-viewer's camera-change event rather than the desktop wheel pathway.
+// Include iPadOS devices that may identify themselves as Macintosh.
+const IS_MOBILE_TOUCH_CARRY_DEVICE =
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (
+    navigator.platform === "MacIntel" &&
+    navigator.maxTouchPoints > 1
+  );
+
 function cloneCarry(cam) {
 if (!cam) return null;
 return {
@@ -5374,9 +5393,21 @@ scheduleSettledCarrySnapshotManual();
 applyDtiPanOffsetToViewer(mv);
 }, { passive: true });
 
-mv.addEventListener('camera-change', () => {
-scheduleSettledCarrySnapshotCameraChange();
-applyDtiPanOffsetToViewer(mv);
+mv.addEventListener('camera-change', (event) => {
+  const isMobileUserGesture =
+    IS_MOBILE_TOUCH_CARRY_DEVICE &&
+    event?.detail?.source === "user-interaction";
+
+  if (isMobileUserGesture) {
+    // Capture mobile drag/pinch camera state, including pinch zoom radius.
+    // This affects only user gestures on mobile devices.
+    freezeCarryFromCameraChange = false;
+    scheduleSettledCarrySnapshot();
+  } else {
+    scheduleSettledCarrySnapshotCameraChange();
+  }
+
+  applyDtiPanOffsetToViewer(mv);
 }, { passive: true });
 }
 
