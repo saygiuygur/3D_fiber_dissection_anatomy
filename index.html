@@ -760,7 +760,7 @@ box-sizing:border-box;
 position:fixed;
 inset:0;
 z-index:1000;
-display:none;
+display:flex;
 align-items:center;
 justify-content:center;
 padding:22px;
@@ -770,8 +770,8 @@ backdrop-filter:blur(8px);
 -webkit-backdrop-filter:blur(8px);
 }
 
-.mode-select-overlay.open{
-display:flex;
+.mode-select-overlay.mode-hidden{
+display:none;
 }
 
 .mode-select-card{
@@ -7012,12 +7012,12 @@ async function onUserSelect(modelId) {
 // ===== Mode selection startup / switching =====
 function showModeSelectionMenu() {
   const overlay = document.getElementById("modeSelectOverlay");
-  overlay?.classList.add("open");
+  overlay?.classList.remove("mode-hidden");
 }
 
 function hideModeSelectionMenu() {
   const overlay = document.getElementById("modeSelectOverlay");
-  overlay?.classList.remove("open");
+  overlay?.classList.add("mode-hidden");
 }
 
 function launchAtlasWithMode(modeKey) {
