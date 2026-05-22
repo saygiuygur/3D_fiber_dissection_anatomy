@@ -2137,15 +2137,25 @@ function stopInstalledLookingDots() {
   }
 }
 
+let installedUpdateRenderedPercent = -1;
+
 function showInstalledUpdateProgress(percent) {
   stopInstalledLookingDots();
+
+  const safePercent = Math.max(0, Math.min(99, Math.floor(percent || 0)));
 
   if (installedUpdateStatusText) {
     installedUpdateStatusText.textContent = "Update found";
   }
 
+  if (safePercent === installedUpdateRenderedPercent) {
+    return;
+  }
+
+  installedUpdateRenderedPercent = safePercent;
+
   if (installedUpdateVisual) {
-    installedUpdateVisual.innerHTML = offlineLargeLoadingIconSVG(percent);
+    installedUpdateVisual.innerHTML = offlineLargeLoadingIconSVG(safePercent);
   }
 }
 function offlineLargeErrorIconSVG() {
@@ -2289,18 +2299,22 @@ async function stageOneUpdatedResource(
   const chunks = [];
   let received = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
+ while (true) {
+const { done, value } = await reader.read();
+if (done) break;
 
-    if (done) break;
+chunks.push(value);
+received += value.byteLength;
 
-    chunks.push(value);
-    received += value.byteLength;
+const nextProgressText = total
+  ? `${Math.floor((received / total) * 100)}%`
+  : "";
 
-    if (total > 0) {
-      onFraction(Math.min(1, received / total));
-    }
-  }
+if (nextProgressText !== st.progressText) {
+  st.progressText = nextProgressText;
+  refreshMeta(modelId);
+}
+}
 
   const blob = new Blob(chunks, { type: contentType });
 
@@ -2444,7 +2458,8 @@ await beginOfflineWakeLock();
 if (installedUpdateVisual) {
   installedUpdateVisual.innerHTML = "";
 }
-
+installedUpdateRenderedPercent = -1;
+  
 if (installedUpdateCancelBtn) {
   installedUpdateCancelBtn.hidden = false;
   installedUpdateCancelBtn.disabled = false;
@@ -2782,19 +2797,23 @@ function resetOfflinePlatformButtons() {
 }
 
 function updateOfflineDownloadProgress(platform, bytesCompleted, currentBytes) {
-  if (!offlineTotalBytes) {
-    offlineCurrentPercent = 0;
-  } else {
-    offlineCurrentPercent = Math.max(
-      0,
-      Math.min(
-        99,
-        Math.floor(
-          ((bytesCompleted + currentBytes) / offlineTotalBytes) * 100
+  const nextPercent = !offlineTotalBytes
+    ? 0
+    : Math.max(
+        0,
+        Math.min(
+          99,
+          Math.floor(
+            ((bytesCompleted + currentBytes) / offlineTotalBytes) * 100
+          )
         )
-      )
-    );
+      );
+
+  if (nextPercent === offlineCurrentPercent) {
+    return;
   }
+
+  offlineCurrentPercent = nextPercent;
 
   setOfflinePlatformButtonState(
     platform,
@@ -4100,13 +4119,13 @@ async function loadDtiPrototype(dti) {
           dtiLoadedBytes.set(dti.id, received);
 
           if (total > 0) {
-            const pct = Math.floor((received / total) * 100);
-            setDtiStatus(dti.id, "loading", `${pct}%`);
-          } else {
-            setDtiStatus(dti.id, "loading", "");
-          }
+  const nextProgressText = `${Math.floor((received / total) * 100)}%`;
+  const currentProgressText = dtiState.get(dti.id)?.progressText || "";
 
-          refreshDtiAllMeta();
+  if (nextProgressText !== currentProgressText) {
+    setDtiStatus(dti.id, "loading", nextProgressText);
+  }
+}
         }
 
         blob = new Blob(chunks, { type: contentType });
