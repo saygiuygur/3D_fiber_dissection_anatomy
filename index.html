@@ -1093,7 +1093,7 @@ letter-spacing: 0.2px;
 <body>
 <div class="wrap">
 <div class="sidebar">
-<h3 style="margin:6px 0 12px;">Models</h3>
+<h3 style="margin:6px 0 12px;">Dissection Steps</h3>
 <div id="list"></div>
 
 <div class="toggle-row">
@@ -1372,7 +1372,7 @@ interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
 </div>
 </div>
 
-<<script type="module">
+<script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
@@ -5345,7 +5345,47 @@ const IS_MOBILE_TOUCH_CARRY_DEVICE =
     navigator.platform === "MacIntel" &&
     navigator.maxTouchPoints > 1
   );
+// model-viewer touch pinch zoom is carried through field of view.
+// Keep a separate mobile-only value so model loading/framing cannot overwrite it.
+let mobileTouchZoomFov = null;
 
+function captureMobileTouchZoomFov(mv) {
+  if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
+  if (mv !== activeMv) return;
+
+  const fov = mv.getFieldOfView?.();
+
+  if (Number.isFinite(fov)) {
+    mobileTouchZoomFov = fov;
+  }
+}
+
+function applyMobileTouchZoomAfterSwap(mv) {
+  if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
+  if (!Number.isFinite(mobileTouchZoomFov)) return;
+  if (!mv || !mv.src) return;
+
+  const applySavedZoom = () => {
+    if (mv !== activeMv || !mv.src) return;
+
+    mv.fieldOfView = `${mobileTouchZoomFov}deg`;
+
+    try {
+      mv.jumpCameraToGoal?.();
+    } catch (_) {}
+  };
+
+  // Apply once immediately and once again after model-viewer's
+  // post-load framing updates have settled.
+  applySavedZoom();
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      applySavedZoom();
+    });
+  });
+}
+  
 function cloneCarry(cam) {
 if (!cam) return null;
 return {
@@ -5399,8 +5439,10 @@ mv.addEventListener('camera-change', (event) => {
     event?.detail?.source === "user-interaction";
 
   if (isMobileUserGesture) {
-    // Capture mobile drag/pinch camera state, including pinch zoom radius.
-    // This affects only user gestures on mobile devices.
+    // Save mobile pinch zoom separately as field of view.
+    captureMobileTouchZoomFov(mv);
+
+    // Continue saving the complete camera carry state for touch rotation/pan.
     freezeCarryFromCameraChange = false;
     scheduleSettledCarrySnapshot();
   } else {
@@ -6216,6 +6258,10 @@ swapViewersNow();
 currentShownId = modelId;
 cameraReady = true;
 startLoop(activeMv);
+
+// Mobile pinch zoom can be overwritten by model-viewer's post-load framing.
+// Reapply only the saved mobile FOV after the new model becomes active.
+applyMobileTouchZoomAfterSwap(activeMv);
 
 // The former visible viewer is now idle. Clear its live anatomical model
 // after the new model is successfully visible.
