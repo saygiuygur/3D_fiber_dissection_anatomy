@@ -1617,6 +1617,10 @@ const IS_DESKTOP_SAFARI =
 const USE_STABLE_ANATOMICAL_SRC =
   IS_IOS_OR_IPADOS || IS_DESKTOP_SAFARI;
 
+  function isAppleNativeStabilityMode() {
+  return USE_STABLE_ANATOMICAL_SRC && atlasLoadingMode === "stability";
+}
+  
 console.log(
   "Anatomical model source pathway:",
   USE_STABLE_ANATOMICAL_SRC ? "stable URL for Apple WebKit" : "Blob URL"
@@ -6884,6 +6888,15 @@ const applyAfterLoad = () => {
   captureAutoFrameBase(idleMv, modelId);
   prewarmDone.add(modelId);
 
+  if (isAppleNativeStabilityMode()) {
+    st.status = "done";
+    st.progressText = "";
+    st.cached = true;
+    st.userPaused = false;
+    refreshMeta(modelId);
+    paintDownloading(null);
+  }
+
   applyMaxCameraOrbit(idleMv, modelId);
   applyCamWithDelta(idleMv, modelId, camForThisSwap);
   if (camForThisSwap) {
@@ -6904,13 +6917,15 @@ if (token !== swapToken) return;
 if (modelId === PRIMARY_MODEL_ID) {
   cacheModel1ReferencePointsFromViewer(activeMv);
 
-  // Download DTI tract files immediately after Model 1 is ready.
-  // This downloads bytes only; tracts are parsed and mounted only when selected.
-  startDtiPreloadOnce();
+  // In Apple Safari Stability mode, do not begin automatic DTI streaming
+  // while testing the native anatomical model-loading pathway.
+  if (!isAppleNativeStabilityMode()) {
+    startDtiPreloadOnce();
+  }
 }
 
-// If Model 2 was paused during its hidden prime and is later opened by the user,
-// capture the same required alias-coordinate information from the visible viewer.
+// If Model 2 is opened manually, capture its required alias-coordinate
+// information from the visible viewer.
 if (modelId === PRIME_MODEL_ID && !prime02Done) {
   primeCacheFromModel02(activeMv);
   prime02Done = true;
@@ -6920,10 +6935,16 @@ if (modelId === PRIME_MODEL_ID && !prime02Done) {
 if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
   backgroundPreparationStarted = true;
 
-  // Prime Model 2 once for existing annotation alias coordinates,
-// then begin the selected mode's background loading behavior.
-await startPrimeModel02Once();
-kickPreloadSoon();
+  // Apple Safari Stability mode must avoid the automatic custom fetch /
+  // hidden-preparation path. Models are loaded only when selected.
+  if (isAppleNativeStabilityMode()) {
+    console.log("Apple Stability mode: native selected-model loading only.");
+    return;
+  }
+
+  // Other platforms and faster modes retain their current behaviour.
+  await startPrimeModel02Once();
+  kickPreloadSoon();
 }
 })));
 };
@@ -6958,6 +6979,19 @@ applyAfterLoad();
 finalizeAfterBarrier();
 };
 idleMv.addEventListener('load', onIdleLoad, { once:true });
+
+// Apple Safari/iPhone/iPad Stability mode:
+// let model-viewer load the stable URL directly.
+// Do not route the selected model through the custom streaming fetch pipeline.
+if (isAppleNativeStabilityMode()) {
+  paintDownloading(modelId);
+  st.status = "loading";
+  st.progressText = "";
+  refreshMeta(modelId);
+
+  idleMv.src = model.url;
+  return;
+}
 
 try {
 const blobUrl = await downloadToBlobUrl(modelId);
