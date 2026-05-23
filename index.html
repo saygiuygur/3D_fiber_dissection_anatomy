@@ -6443,28 +6443,6 @@ function handleFixedStepWheelZoom(mv, ev) {
 
   wheelZoomStep -= 1;
 }
-if (!mv.classList.contains('shownViewer')) return;
-if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
-
-if (ev.deltaY < 0) {
-if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
-ev.preventDefault();
-ev.stopPropagation();
-ev.stopImmediatePropagation();
-return;
-}
-wheelZoomStep += 1;
-return;
-}
-
-if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
-ev.preventDefault();
-ev.stopPropagation();
-ev.stopImmediatePropagation();
-return;
-}
-wheelZoomStep -= 1;
-}
 
 function updateForcedVisible(mv) {
 const st = occState.get(mv);
