@@ -5957,14 +5957,11 @@ let savingEnabled = true;
 let settleRaf = 0;
 let freezeCarryFromCameraChange = false;
 
-// Touchscreen pinch zoom is reported through model-viewer's camera-change
-// event rather than the desktop wheel pathway.
-//
-// Some Android tablets in Chrome "Desktop site" mode identify themselves as
-// Linux and remove "Android" from the user-agent string, while still exposing
-// multiple touch points. Include multi-touch devices so pinch zoom carry-over
-// continues to work on those tablets.
-const IS_MOBILE_TOUCH_CARRY_DEVICE =
+// On touch-capable devices, model-viewer may overwrite the carried camera
+// state after a newly loaded model becomes visible. Some Android tablets in
+// Chrome "Desktop site" mode identify themselves as Linux, while still
+// exposing multiple touch points, so touch capability is used here.
+const IS_TOUCH_CARRY_DEVICE =
   navigator.maxTouchPoints > 1 ||
   /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
   (
@@ -5972,61 +5969,30 @@ const IS_MOBILE_TOUCH_CARRY_DEVICE =
     navigator.maxTouchPoints > 1
   );
 
-let mobileTouchZoomFov = null;
-let mobileTouchZoomRadius = null;
-
-function captureMobileTouchZoomFov(mv) {
-  if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
-  if (mv !== activeMv) return;
-
-  const fov = mv.getFieldOfView?.();
-  const orbit = mv.getCameraOrbit?.();
-
-  if (Number.isFinite(fov)) {
-    mobileTouchZoomFov = fov;
-  }
-
-  if (orbit && Number.isFinite(orbit.radius)) {
-    mobileTouchZoomRadius = orbit.radius;
-  }
-}
-
-function applyMobileTouchZoomAfterSwap(mv) {
-  if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
-  if (
-    !Number.isFinite(mobileTouchZoomFov) &&
-    !Number.isFinite(mobileTouchZoomRadius)
-  ) return;
+function reapplyTouchCameraAfterSwap(mv, modelId, carriedCam) {
+  if (!IS_TOUCH_CARRY_DEVICE) return;
+  if (!carriedCam) return;
   if (!mv || !mv.src) return;
 
-  const applySavedZoom = () => {
+  const reapplySavedCamera = () => {
     if (mv !== activeMv || !mv.src) return;
 
-    const currentOrbit = mv.getCameraOrbit?.();
-
-    // Preserve the orientation already applied by the normal camera
-    // carry-over pathway, but reinforce the touch-zoom distance as well.
-    if (currentOrbit && Number.isFinite(mobileTouchZoomRadius)) {
-      mv.cameraOrbit =
-        `${currentOrbit.theta}rad ${currentOrbit.phi}rad ${mobileTouchZoomRadius}m`;
-    }
-
-    if (Number.isFinite(mobileTouchZoomFov)) {
-      mv.fieldOfView = `${mobileTouchZoomFov}deg`;
-    }
-
-    try {
-      mv.jumpCameraToGoal?.();
-    } catch (_) {}
+    // Reapply the exact same authoritative camera snapshot already captured
+    // from the previous active viewer immediately before model selection.
+    applyCamWithDelta(mv, modelId, carriedCam);
   };
 
-  // Reapply touchscreen zoom after the incoming model becomes active,
-  // then again after model-viewer's post-load framing has settled.
-  applySavedZoom();
+  reapplySavedCamera();
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      applySavedZoom();
+      reapplySavedCamera();
+
+      // Capture the final applied state as the new carry baseline.
+      if (mv === activeMv && savingEnabled) {
+        const settledCam = readCamWithDelta(mv);
+        if (settledCam) latestCarryCam = cloneCarry(settledCam);
+      }
     });
   });
 }
@@ -6083,15 +6049,13 @@ mv.addEventListener('touchend', () => {
 }, { passive: true });
 
 mv.addEventListener('camera-change', (event) => {
-  const isMobileUserGesture =
-    IS_MOBILE_TOUCH_CARRY_DEVICE &&
+  const isTouchUserGesture =
+    IS_TOUCH_CARRY_DEVICE &&
     event?.detail?.source === "user-interaction";
 
-  if (isMobileUserGesture) {
-    // Save touchscreen pinch zoom separately as field of view.
-    captureMobileTouchZoomFov(mv);
-
-    // Continue saving the complete camera carry state for touch rotation/pan.
+  if (isTouchUserGesture) {
+    // A touchscreen interaction changed the actual live camera state.
+    // Save the complete camera state rather than a second zoom-only value.
     freezeCarryFromCameraChange = false;
     scheduleSettledCarrySnapshot();
   } else {
@@ -6904,9 +6868,9 @@ currentShownId = modelId;
 cameraReady = true;
 startLoop(activeMv);
 
-// Touchscreen pinch zoom can be overwritten by model-viewer's post-load framing.
-// Reapply only the saved touchscreen FOV after the new model becomes active.
-applyMobileTouchZoomAfterSwap(activeMv);
+// On touch-capable devices, model-viewer can overwrite the carried camera
+// after the new model becomes active. Reapply the exact captured camera state.
+reapplyTouchCameraAfterSwap(activeMv, modelId, camForThisSwap);
 
 // The former visible viewer is now idle. Clear its live anatomical model
 // after the new model is successfully visible.
