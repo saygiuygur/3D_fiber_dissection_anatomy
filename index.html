@@ -7235,29 +7235,40 @@ function initAtlasModeSelection() {
   }
 }
 // init
-buildListOnce();
-buildDtiListOnce();
 
-setMainViewerShown(mvA, true);
-setMainViewerShown(mvB, false);
-
-initBackgroundSelector();
-initModelOpacitySelector();
-initAnnotationsToggle();
-initSidebarCollapse();
-initDtiPanelCollapse();
-refreshAnnoNavLabel();
-updateSelectedHotspotVisual();
-
-configureOfflineUiForLaunchMode();
-
-// If the atlas data was already downloaded in an earlier test,
-// save the webpage/viewer shell now so it can open offline too.
-restoreOfflineShellForPreviouslySavedAtlas();
-
-// Every fresh opening begins at the mode-selection menu.
-// Model 1 is not loaded until a mode is selected.
+// Connect the lightweight Select Mode menu immediately after the heavy module
+// has successfully loaded. This must happen before the remaining interface
+// setup so a device can proceed past mode selection even if a later initializer
+// is slow or fails.
 initAtlasModeSelection();
+
+try {
+  buildListOnce();
+  buildDtiListOnce();
+
+  setMainViewerShown(mvA, true);
+  setMainViewerShown(mvB, false);
+
+  initBackgroundSelector();
+  initModelOpacitySelector();
+  initAnnotationsToggle();
+  initSidebarCollapse();
+  initDtiPanelCollapse();
+  refreshAnnoNavLabel();
+  updateSelectedHotspotVisual();
+
+  configureOfflineUiForLaunchMode();
+
+  // If the atlas data was already downloaded in an earlier test,
+  // save the webpage/viewer shell now so it can open offline too.
+  restoreOfflineShellForPreviouslySavedAtlas();
+} catch (err) {
+  console.error("Atlas interface initialization failed:", err);
+
+  window.__atlasModeBootstrap?.setStatus?.(
+    "Atlas interface could not initialize. Please reload."
+  );
+}
 </script>
 </body>
 </html>
