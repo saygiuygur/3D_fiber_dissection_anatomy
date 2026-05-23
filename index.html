@@ -5963,12 +5963,30 @@ let freezeCarryFromCameraChange = false;
 // so touch zoom carry-over also works in Android "Desktop site" mode.
 let touchPinchCarryEnabled = false;
 let touchPinchZoomFov = null;
+const activeTouchPointerIds = new Set();
 
 function markTouchPinchInteraction(mv, event) {
   if (mv !== activeMv) return;
   if ((event?.touches?.length || 0) < 2) return;
 
   touchPinchCarryEnabled = true;
+}
+
+function trackTouchPointerInteraction(mv, event) {
+  if (mv !== activeMv) return;
+  if (event?.pointerType !== "touch") return;
+
+  activeTouchPointerIds.add(event.pointerId);
+
+  if (activeTouchPointerIds.size >= 2) {
+    touchPinchCarryEnabled = true;
+  }
+}
+
+function clearTouchPointerInteraction(event) {
+  if (event?.pointerType !== "touch") return;
+
+  activeTouchPointerIds.delete(event.pointerId);
 }
 
 function captureTouchPinchZoomFov(mv) {
@@ -6041,18 +6059,32 @@ scheduleSettledCarrySnapshot();
 
 for (const mv of [mvA, mvB]) {
 mv.addEventListener('wheel', (e) => {
-  if (!handleTrackpadPinchAsWheelZoom(mv, e)) {
-    handleFixedStepWheelZoom(mv, e);
-  }
+  // This listener now prevents the event before the later focus listener
+  // receives it, so clear any annotation-focus carry state here as well.
+  focusCarryCam.delete(mv);
 
+  handleFixedStepWheelZoom(mv, e);
   scheduleSettledCarrySnapshotManual();
   applyDtiPanOffsetToViewer(mv);
 }, { passive: false, capture: true });
 
-mv.addEventListener('pointerup', () => {
-scheduleSettledCarrySnapshotManual();
-applyDtiPanOffsetToViewer(mv);
-}, { passive: true });
+mv.addEventListener('pointerdown', (event) => {
+  trackTouchPointerInteraction(mv, event);
+}, { passive: true, capture: true });
+
+mv.addEventListener('pointermove', (event) => {
+  trackTouchPointerInteraction(mv, event);
+}, { passive: true, capture: true });
+
+mv.addEventListener('pointerup', (event) => {
+  clearTouchPointerInteraction(event);
+  scheduleSettledCarrySnapshotManual();
+  applyDtiPanOffsetToViewer(mv);
+}, { passive: true, capture: true });
+
+mv.addEventListener('pointercancel', (event) => {
+  clearTouchPointerInteraction(event);
+}, { passive: true, capture: true });
 
 mv.addEventListener('touchstart', (event) => {
   markTouchPinchInteraction(mv, event);
@@ -6355,16 +6387,15 @@ t.z + r * sinPhi * Math.cos(theta)
 
 const WHEEL_ZOOM_MIN_STEP = 0;
 const WHEEL_ZOOM_MAX_STEP = 5;
+const WHEEL_ZOOM_RADIUS_FACTOR = 0.88;
+const FINE_WHEEL_STEP_THRESHOLD = 36;
+
 let wheelZoomStep = 0;
+let fineWheelDeltaBuffer = 0;
+let fineWheelResetTimer = null;
+let wheelZoomGoalRadius = null;
 
-// Chrome commonly reports a laptop touchpad pinch as ctrlKey + wheel.
-// Convert accumulated small touchpad deltas into the same limited-step
-// atlas zoom pathway, without changing ordinary mouse-wheel behaviour.
-const TRACKPAD_PINCH_STEP_THRESHOLD = 36;
-const TRACKPAD_PINCH_RADIUS_FACTOR = 0.88;
-let trackpadPinchDeltaBuffer = 0;
-
-function applyTrackpadPinchZoomStep(mv, zoomIn) {
+function applySmoothWheelZoomStep(mv, zoomIn) {
   if (!mv.classList.contains('shownViewer')) return;
 
   const orbit = mv.getCameraOrbit?.();
@@ -6378,72 +6409,63 @@ function applyTrackpadPinchZoomStep(mv, zoomIn) {
     wheelZoomStep -= 1;
   }
 
-  const nextRadius = zoomIn
-    ? orbit.radius * TRACKPAD_PINCH_RADIUS_FACTOR
-    : orbit.radius / TRACKPAD_PINCH_RADIUS_FACTOR;
+  const startingRadius = Number.isFinite(wheelZoomGoalRadius)
+    ? wheelZoomGoalRadius
+    : orbit.radius;
 
+  wheelZoomGoalRadius = zoomIn
+    ? startingRadius * WHEEL_ZOOM_RADIUS_FACTOR
+    : startingRadius / WHEEL_ZOOM_RADIUS_FACTOR;
+
+  // Setting cameraOrbit defines the new target. Do not call
+  // jumpCameraToGoal(), so model-viewer keeps its smooth transition.
   mv.cameraOrbit =
-    `${orbit.theta}rad ${orbit.phi}rad ${nextRadius}m`;
+    `${orbit.theta}rad ${orbit.phi}rad ${wheelZoomGoalRadius}m`;
 
   try {
-    mv.jumpCameraToGoal?.();
     mv.requestUpdate?.();
   } catch (_) {}
-}
-
-function handleTrackpadPinchAsWheelZoom(mv, ev) {
-  if (!mv.classList.contains('shownViewer')) return false;
-  if (!ev || !ev.ctrlKey || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) {
-    return false;
-  }
-
-  // Prevent the weak native touchpad-pinch response and substitute
-  // controlled mouse-wheel-like zoom steps.
-  ev.preventDefault();
-  ev.stopPropagation();
-  ev.stopImmediatePropagation();
-
-  trackpadPinchDeltaBuffer += ev.deltaY;
-
-  while (Math.abs(trackpadPinchDeltaBuffer) >= TRACKPAD_PINCH_STEP_THRESHOLD) {
-    const zoomIn = trackpadPinchDeltaBuffer < 0;
-
-    applyTrackpadPinchZoomStep(mv, zoomIn);
-
-    trackpadPinchDeltaBuffer += zoomIn
-      ? TRACKPAD_PINCH_STEP_THRESHOLD
-      : -TRACKPAD_PINCH_STEP_THRESHOLD;
-  }
-
-  return true;
 }
 
 function handleFixedStepWheelZoom(mv, ev) {
   if (!mv.classList.contains('shownViewer')) return;
   if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
 
-  if (ev.deltaY < 0) {
-    if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      ev.stopImmediatePropagation();
-      return;
-    }
+  // Handle mouse-wheel, touchpad two-finger scroll and touchpad pinch
+  // through the same controlled five-step zoom system.
+  ev.preventDefault();
+  ev.stopPropagation();
+  ev.stopImmediatePropagation();
 
-    wheelZoomStep += 1;
+  if (fineWheelResetTimer) {
+    clearTimeout(fineWheelResetTimer);
+  }
+
+  fineWheelResetTimer = setTimeout(() => {
+    fineWheelDeltaBuffer = 0;
+    wheelZoomGoalRadius = null;
+  }, 180);
+
+  const absDelta = Math.abs(ev.deltaY);
+
+  // Mouse-wheel clicks and strong gestures count as one clear zoom step.
+  if (absDelta >= FINE_WHEEL_STEP_THRESHOLD) {
+    fineWheelDeltaBuffer = 0;
+    applySmoothWheelZoomStep(mv, ev.deltaY < 0);
     return;
   }
 
-  if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
-    ev.preventDefault();
-    ev.stopPropagation();
-    ev.stopImmediatePropagation();
+  // Small touchpad deltas accumulate until they correspond to one zoom step.
+  fineWheelDeltaBuffer += ev.deltaY;
+
+  if (Math.abs(fineWheelDeltaBuffer) < FINE_WHEEL_STEP_THRESHOLD) {
     return;
   }
 
-  wheelZoomStep -= 1;
+  const zoomIn = fineWheelDeltaBuffer < 0;
+  fineWheelDeltaBuffer = 0;
+  applySmoothWheelZoomStep(mv, zoomIn);
 }
-
 function updateForcedVisible(mv) {
 const st = occState.get(mv);
 if (!st || !st.pointMap) return;
