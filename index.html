@@ -7095,11 +7095,11 @@ async function onUserSelect(modelId) {
 // ===== Mode selection startup / switching =====
 function showModeSelectionMenu() {
   const overlay = document.getElementById("modeSelectOverlay");
-  const modeButtons = document.querySelectorAll(".mode-option-btn");
 
-  modeButtons.forEach(button => {
-    button.disabled = false;
-  });
+  if (window.__atlasModeBootstrap?.reopenMenu) {
+    window.__atlasModeBootstrap.reopenMenu();
+    return;
+  }
 
   overlay?.classList.remove("mode-hidden");
 }
@@ -7113,11 +7113,6 @@ async function launchAtlasWithMode(modeKey) {
   if (!isValidAtlasMode(modeKey) || atlasHasLaunched) return;
 
   atlasHasLaunched = true;
-
-  const modeButtons = document.querySelectorAll(".mode-option-btn");
-  modeButtons.forEach(button => {
-    button.disabled = true;
-  });
 
   await modelViewerReadyPromise;
 
@@ -7136,25 +7131,26 @@ function reloadAtlasIntoMode(modeKey) {
   window.location.replace(nextUrl.toString());
 }
 
+function handleSelectedAtlasMode(selectedMode) {
+  if (!isValidAtlasMode(selectedMode)) return;
+
+  if (atlasHasLaunched) {
+    // A reload guarantees that parsed models retained by the previous mode
+    // are cleared before the new mode begins.
+    reloadAtlasIntoMode(selectedMode);
+  } else {
+    launchAtlasWithMode(selectedMode);
+  }
+}
+
 function initAtlasModeSelection() {
-  const overlay = document.getElementById("modeSelectOverlay");
   const badge = document.getElementById("modeBadge");
 
-  overlay?.querySelectorAll("[data-atlas-mode]").forEach(button => {
-    button.addEventListener("click", () => {
-      const selectedMode = button.dataset.atlasMode;
-
-      if (!isValidAtlasMode(selectedMode)) return;
-
-      if (atlasHasLaunched) {
-        // A reload guarantees that parsed models retained by a previous mode
-        // are cleared before the new mode begins.
-        reloadAtlasIntoMode(selectedMode);
-      } else {
-        launchAtlasWithMode(selectedMode);
-      }
-    });
-  });
+  // Connect the lightweight startup menu to the heavy viewer module.
+  // A mode selected before this module became ready will launch now.
+  if (window.__atlasModeBootstrap?.setModeHandler) {
+    window.__atlasModeBootstrap.setModeHandler(handleSelectedAtlasMode);
+  }
 
   badge?.addEventListener("click", () => {
     showModeSelectionMenu();
@@ -7164,8 +7160,7 @@ function initAtlasModeSelection() {
   const launchMode = url.searchParams.get("atlasLaunchMode");
 
   if (isValidAtlasMode(launchMode)) {
-    // Remove the one-time mode parameter immediately. If a risky mode crashes,
-    // reopening the atlas returns to the selection menu instead of crash-looping.
+    // Remove the one-time parameter. A later fresh opening asks for a mode again.
     url.searchParams.delete("atlasLaunchMode");
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
 
@@ -7173,7 +7168,10 @@ function initAtlasModeSelection() {
     return;
   }
 
-  showModeSelectionMenu();
+  // Do not reset a mode choice already made before the viewer module was ready.
+  if (!window.__atlasModeBootstrap?.pendingMode && !atlasHasLaunched) {
+    showModeSelectionMenu();
+  }
 }
 // init
 buildListOnce();
