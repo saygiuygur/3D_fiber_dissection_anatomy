@@ -834,8 +834,23 @@ line-height:1.45;
 color:#555;
 }
 
-.mode-option-performance .mode-option-description{
-color:#6a4d00;
+.mode-browser-note{
+margin-top:18px;
+padding-top:14px;
+border-top:1px solid #ededed;
+font-size:12px;
+line-height:1.45;
+text-align:center;
+color:#666;
+}
+
+.mode-select-title.mode-error{
+font-size:16px;
+line-height:1.45;
+font-weight:500;
+white-space:pre-line;
+letter-spacing:0;
+color:#333;
 }
 
 .mode-option-btn:disabled{
@@ -1267,13 +1282,17 @@ letter-spacing: 0.2px;
       </span>
     </button>
 
-        <button class="mode-option-btn mode-option-performance" type="button" data-atlas-mode="performance">
+            <button class="mode-option-btn mode-option-performance" type="button" data-atlas-mode="performance">
       <span class="mode-option-name">Performance mode</span>
       <span class="mode-option-description">
         Prepares and retains all dissection steps for the fastest switching.
         Uses substantial memory and may be unstable on mobile devices.
       </span>
     </button>
+
+    <div class="mode-browser-note">
+      This atlas is intended for use in Google Chrome for the best compatibility and performance.
+    </div>
   </div>
 </div>
 
@@ -1291,16 +1310,21 @@ letter-spacing: 0.2px;
 
   const defaultTitle = "Select Mode";
 
- const bootstrap = {
-  pendingMode: null,
-  modeHandler: null,
-  startTimeoutId: null,
+   const startupFailureMessage =
+    "The 3D viewer could not start on this browser session.\n" +
+    "Please reload, try on a newer device, or use a desktop browser.";
 
-  setStatus(message) {
-    title.textContent = message;
-  },
+  const bootstrap = {
+    pendingMode: null,
+    modeHandler: null,
+    startTimeoutId: null,
 
-  setModeHandler(handler) {
+    setStatus(message, isError = false) {
+      title.textContent = message;
+      title.classList.toggle("mode-error", isError);
+    },
+
+    setModeHandler(handler) {
       this.modeHandler = handler;
 
       if (this.pendingMode) {
@@ -1316,7 +1340,7 @@ letter-spacing: 0.2px;
     this.startTimeoutId = null;
   }
 
-  title.textContent = defaultTitle;
+  this.setStatus(defaultTitle);
 
   buttons.forEach(button => {
     button.disabled = false;
@@ -1339,20 +1363,21 @@ letter-spacing: 0.2px;
         otherButton.disabled = true;
       });
 
-      title.textContent = "Starting " + label + "…";
+            bootstrap.setStatus("Starting " + label + "…");
 
-if (bootstrap.startTimeoutId) {
-  clearTimeout(bootstrap.startTimeoutId);
-}
+      if (bootstrap.startTimeoutId) {
+        clearTimeout(bootstrap.startTimeoutId);
+      }
 
-bootstrap.startTimeoutId = setTimeout(function () {
-  if (!bootstrap.modeHandler) {
-    title.textContent = "Viewer code could not start. Please reload.";
-    buttons.forEach(otherButton => {
-      otherButton.disabled = false;
-    });
-  }
-}, 12000);
+      bootstrap.startTimeoutId = setTimeout(function () {
+        if (!bootstrap.modeHandler) {
+          bootstrap.setStatus(startupFailureMessage, true);
+
+          buttons.forEach(otherButton => {
+            otherButton.disabled = false;
+          });
+        }
+      }, 15000);
 
 if (bootstrap.modeHandler) {
   bootstrap.modeHandler(selectedMode);
@@ -7152,7 +7177,7 @@ async function launchAtlasWithMode(modeKey) {
       new Promise((_, reject) => {
         viewerTimeoutId = setTimeout(() => {
           reject(new Error("model-viewer startup timeout"));
-        }, 12000);
+        }, 15000);
       })
     ]);
   } catch (err) {
@@ -7161,7 +7186,9 @@ async function launchAtlasWithMode(modeKey) {
     atlasHasLaunched = false;
 
     window.__atlasModeBootstrap?.setStatus?.(
-      "3D viewer could not initialize. Please reload."
+      "The 3D viewer could not start on this browser session.\n" +
+      "Please reload, try on a newer device, or use a desktop browser.",
+      true
     );
 
     document.querySelectorAll(".mode-option-btn").forEach(button => {
@@ -7266,8 +7293,10 @@ try {
   console.error("Atlas interface initialization failed:", err);
 
   window.__atlasModeBootstrap?.setStatus?.(
-    "Atlas interface could not initialize. Please reload."
-  );
+  "The 3D viewer could not start on this browser session.\n" +
+  "Please reload, try on a newer device, or use a desktop browser.",
+  true
+);
 }
 </script>
 </body>
