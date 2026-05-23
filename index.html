@@ -6077,6 +6077,13 @@ const baseRadiusByModel = new Map();
 const apAxisByModel = new Map();
 const MAX_CAMERA_RADIUS_FACTOR = 1;
 
+// Chrome "Desktop site" mode can mask Android tablets as Linux.
+// Use touch capability plus tablet-sized screen dimensions so the phone
+// keeps its current max-radius behaviour.
+const IS_TABLET_LIKE_TOUCH_DEVICE =
+  navigator.maxTouchPoints > 1 &&
+  Math.min(window.screen.width, window.screen.height) >= 600;
+
 function chooseApAxisForViewer(mv) {
 let dims = null;
 try { dims = mv.getDimensions?.() || null; } catch(_) {}
@@ -6104,10 +6111,18 @@ if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewe
 }
 
 function applyMaxCameraOrbit(mv, modelId) {
-const base = baseRadiusByModel.get(modelId);
-if (!Number.isFinite(base) || base <= 0) return;
-const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
-mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
+  // Tablet pinch zoom may use a camera radius that is later clamped when
+  // switching models. Do not apply the max-radius restriction on tablets.
+  if (IS_TABLET_LIKE_TOUCH_DEVICE) {
+    mv.removeAttribute("max-camera-orbit");
+    return;
+  }
+
+  const base = baseRadiusByModel.get(modelId);
+  if (!Number.isFinite(base) || base <= 0) return;
+
+  const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
+  mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
 }
 
 const EPS = 1e-4;
