@@ -1291,8 +1291,9 @@ letter-spacing: 0.2px;
     </button>
 
     <div class="mode-browser-note">
-      This atlas is intended for use in Google Chrome for the best compatibility and performance.
-    </div>
+  This atlas is intended for use in Google Chrome for the best compatibility and performance.
+  <div id="platformDiagnostic" style="margin-top:10px; font-size:11px;"></div>
+</div>
   </div>
 </div>
 
@@ -1309,7 +1310,16 @@ letter-spacing: 0.2px;
   }
 
   const defaultTitle = "Select Mode";
+const platformDiagnostic = document.getElementById("platformDiagnostic");
 
+if (platformDiagnostic) {
+  const uaPlatform = navigator.userAgentData?.platform || "unavailable";
+  const uaHasAndroid = /Android/i.test(navigator.userAgent) ? "yes" : "no";
+  const touchPoints = navigator.maxTouchPoints ?? "unknown";
+
+  platformDiagnostic.textContent =
+    `Test: UAData platform=${uaPlatform} | UA Android=${uaHasAndroid} | touch points=${touchPoints}`;
+}
    const startupFailureMessage =
     "The 3D viewer could not start on this browser session.\n" +
     "Please reload, try on a newer device, or use a desktop browser.";
@@ -6388,7 +6398,7 @@ t.z + r * sinPhi * Math.cos(theta)
 const WHEEL_ZOOM_MIN_STEP = 0;
 const WHEEL_ZOOM_MAX_STEP = 5;
 const WHEEL_ZOOM_RADIUS_FACTOR = 0.88;
-const FINE_WHEEL_STEP_THRESHOLD = 36;
+const FINE_WHEEL_STEP_THRESHOLD = 18;
 
 let wheelZoomStep = 0;
 let fineWheelDeltaBuffer = 0;
