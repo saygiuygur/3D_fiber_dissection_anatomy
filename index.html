@@ -774,10 +774,6 @@ backdrop-filter:blur(8px);
 display:none;
 }
 
-.mode-select-overlay,
-.mode-select-overlay * {
--webkit-tap-highlight-color: transparent;
-}
 .mode-select-card{
 width:min(520px, 100%);
 padding:28px;
@@ -840,17 +836,6 @@ color:#555;
 color:#6a4d00;
 }
 
-.mode-option-btn:disabled{
-opacity:0.65;
-cursor:default;
-}
-
-.mode-option-btn:disabled:hover{
-border-color:#dddddd;
-background:#fff;
-box-shadow:none;
-}
-  
 .steps-header{
 display:flex;
 align-items:center;
@@ -1574,16 +1559,10 @@ interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-// model-viewer's parsed glTF cache size is applied after mode selection.
-// Do not block the mode-selection menu while model-viewer is loading.
-let ModelViewerElementClass = null;
+// model-viewer's parsed glTF cache size will be selected from the opening mode menu.
+await customElements.whenDefined("model-viewer");
 
-const modelViewerReadyPromise = customElements
-  .whenDefined("model-viewer")
-  .then(() => {
-    ModelViewerElementClass = customElements.get("model-viewer");
-    return ModelViewerElementClass;
-  });
+const ModelViewerElementClass = customElements.get("model-viewer");
 
 const MODELS = [
 { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
@@ -1597,34 +1576,7 @@ const MODELS = [
 { id: "10_Lenticulostriate_Perforators_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/10_Lenticulostriate_Perforators_Annotated.glb" },
 { id: "11_Anterior_Comissure_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/11_Anterior_Comissure_Annotated.glb" },
 ];
-// ===== Safari / Apple WebKit anatomical model source compatibility =====
-// On Safari and iPhone/iPad browsers, anatomical models are supplied to
-// model-viewer using their stable original URLs rather than temporary Blob URLs.
-// All iPhone/iPad browsers use Apple's WebKit engine.
-const UA = navigator.userAgent || "";
 
-const IS_IOS_OR_IPADOS =
-  /iPhone|iPad|iPod/i.test(UA) ||
-  (
-    navigator.platform === "MacIntel" &&
-    navigator.maxTouchPoints > 1
-  );
-
-const IS_DESKTOP_SAFARI =
-  /Safari/i.test(UA) &&
-  !/Chrome|CriOS|FxiOS|EdgiOS|OPiOS|Android/i.test(UA);
-
-const USE_STABLE_ANATOMICAL_SRC =
-  IS_IOS_OR_IPADOS || IS_DESKTOP_SAFARI;
-
-  function isAppleNativeStabilityMode() {
-  return USE_STABLE_ANATOMICAL_SRC && atlasLoadingMode === "stability";
-}
-  
-console.log(
-  "Anatomical model source pathway:",
-  USE_STABLE_ANATOMICAL_SRC ? "stable URL for Apple WebKit" : "Blob URL"
-);
 // ===== Atlas loading modes =====
 const ATLAS_MODES = Object.freeze({
   stability: {
@@ -5280,26 +5232,7 @@ async function downloadToBlobUrl(modelId) {
   const model = MODELS.find(x => x.id === modelId);
   const st = state.get(modelId);
 
-  if (!model || !st) {
-    throw new Error(`Unknown anatomical model: ${modelId}`);
-  }
-
-  // Apple WebKit pathway: once the bytes are locally available, use the same
-  // permanent source URL every time model-viewer opens this model.
-  if (
-    USE_STABLE_ANATOMICAL_SRC &&
-    st.status === "done" &&
-    st.cached === true
-  ) {
-    return model.url;
-  }
-
-  // Existing Blob pathway for non-Safari browsers.
-  if (
-    !USE_STABLE_ANATOMICAL_SRC &&
-    st.status === "done" &&
-    st.blobUrl
-  ) {
+  if (st.status === "done" && st.blobUrl) {
     return st.blobUrl;
   }
 
@@ -5315,11 +5248,7 @@ async function downloadToBlobUrl(modelId) {
       st.progressText = "";
       refreshMeta(modelId);
 
-      if (
-        currentController &&
-        currentDownloadingId &&
-        currentDownloadingId !== modelId
-      ) {
+      if (currentController && currentDownloadingId && currentDownloadingId !== modelId) {
         // Do not interrupt Model 1 once it has started downloading.
         if (currentDownloadingId === PRIMARY_MODEL_ID) {
           const primaryState = state.get(PRIMARY_MODEL_ID);
@@ -5368,88 +5297,66 @@ async function downloadToBlobUrl(modelId) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const total = Number(res.headers.get("Content-Length")) || null;
-      const reader = res.body?.getReader?.();
+      const reader = res.body.getReader();
       let received = 0;
+      const chunks = [];
 
-      // Safari/iPhone/iPad does not need an in-memory Blob copy.
-      // Other browsers keep the current Blob pathway unchanged.
-      const chunks = USE_STABLE_ANATOMICAL_SRC ? null : [];
+      while (true) {
+        const { done, value } = await reader.read();
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
+        if (done) break;
 
-          if (done) break;
+        chunks.push(value);
+        received += value.byteLength;
 
-          if (chunks) {
-            chunks.push(value);
-          }
+        const nextProgressText = total
+          ? `${Math.floor((received / total) * 100)}%`
+          : "";
 
-          received += value.byteLength;
-
-          const nextProgressText = total
-            ? `${Math.floor((received / total) * 100)}%`
-            : "";
-
-          if (
-            !loadingFromAlreadyCachedFile &&
-            nextProgressText !== st.progressText
-          ) {
-            st.progressText = nextProgressText;
-            refreshMeta(modelId);
-          }
-        }
-      } else {
-        const directBlob = await res.blob();
-        received = directBlob.size;
-
-        if (chunks) {
-          chunks.push(await directBlob.arrayBuffer());
-        }
+        if (!loadingFromAlreadyCachedFile && nextProgressText !== st.progressText) {
+  st.progressText = nextProgressText;
+  refreshMeta(modelId);
+}
       }
 
-      let viewerSrc = model.url;
-
-      if (!USE_STABLE_ANATOMICAL_SRC) {
-        const blob = new Blob(chunks, { type: "model/gltf-binary" });
-        viewerSrc = URL.createObjectURL(blob);
-      }
+      const blob = new Blob(chunks, { type: "model/gltf-binary" });
+      const blobUrl = URL.createObjectURL(blob);
 
       st.status = "done";
-      st.progressText = "";
-      st.blobUrl = USE_STABLE_ANATOMICAL_SRC ? null : viewerSrc;
-      st.cached = true;
-      st.userPaused = false;
-      refreshMeta(modelId);
+st.progressText = "";
+st.blobUrl = blobUrl;
+st.cached = true;
+st.userPaused = false;
+refreshMeta(modelId);
 
       if (!loadingFromAlreadyCachedFile) {
-        paintDownloading(null);
-      }
+  paintDownloading(null);
+}
 
-      maybeResumePreload();
+maybeResumePreload();
 
-      return viewerSrc;
+      return blobUrl;
     } catch (err) {
       if (!loadingFromAlreadyCachedFile) {
-        paintDownloading(null);
-      }
+  paintDownloading(null);
+}
 
-      if (err?.name === "AbortError") {
-        if (!loadingFromAlreadyCachedFile) {
-          st.status = "paused";
-          refreshMeta(modelId);
-        }
+if (err.name === "AbortError") {
+  if (!loadingFromAlreadyCachedFile) {
+    st.status = "paused";
+    refreshMeta(modelId);
+  }
 
-        maybeResumePreload();
-        throw err;
-      }
+  maybeResumePreload();
+  throw err;
+}
 
       st.status = "error";
       st.progressText = "";
       refreshMeta(modelId);
       maybeResumePreload();
       throw err;
-    } finally {
+        } finally {
       inFlight.delete(modelId);
 
       if (!loadingFromAlreadyCachedFile && currentDownloadingId === modelId) {
@@ -5462,7 +5369,7 @@ async function downloadToBlobUrl(modelId) {
   inFlight.set(modelId, p);
   return p;
 }
-  
+
   async function downloadModelToCacheOnly(modelId) {
   const model = MODELS.find(x => x.id === modelId);
   const st = state.get(modelId);
@@ -5584,14 +5491,7 @@ refreshMeta(modelId);
   }
 
   // The next step is already prepared and retained.
-  // Safari/iPhone/iPad intentionally use stable model URLs rather than Blob URLs.
-  if (
-    nextState?.blobUrl ||
-    (
-      USE_STABLE_ANATOMICAL_SRC &&
-      prewarmDone.has(nextModelId)
-    )
-  ) {
+  if (nextState?.blobUrl) {
     releaseModelsOutsideBalancedWindow(currentModelId);
     return;
   }
@@ -6816,16 +6716,7 @@ selectedId = modelId;
 paintActive();
 
 const st = state.get(modelId);
-const model = MODELS.find(x => x.id === modelId);
-
-const targetSrc =
-  st.status === "done"
-    ? (
-        USE_STABLE_ANATOMICAL_SRC && st.cached === true
-          ? model?.url || null
-          : st.blobUrl
-      )
-    : null;
+const targetSrc = (st.status === "done" && st.blobUrl) ? st.blobUrl : null;
 
 const finalizeSwap = async () => {
 prepareAnnotationsAndOcclusion(idleMv, modelId);
@@ -6888,15 +6779,6 @@ const applyAfterLoad = () => {
   captureAutoFrameBase(idleMv, modelId);
   prewarmDone.add(modelId);
 
-  if (isAppleNativeStabilityMode()) {
-    st.status = "done";
-    st.progressText = "";
-    st.cached = true;
-    st.userPaused = false;
-    refreshMeta(modelId);
-    paintDownloading(null);
-  }
-
   applyMaxCameraOrbit(idleMv, modelId);
   applyCamWithDelta(idleMv, modelId, camForThisSwap);
   if (camForThisSwap) {
@@ -6917,15 +6799,13 @@ if (token !== swapToken) return;
 if (modelId === PRIMARY_MODEL_ID) {
   cacheModel1ReferencePointsFromViewer(activeMv);
 
-  // In Apple Safari Stability mode, do not begin automatic DTI streaming
-  // while testing the native anatomical model-loading pathway.
-  if (!isAppleNativeStabilityMode()) {
-    startDtiPreloadOnce();
-  }
+  // Download DTI tract files immediately after Model 1 is ready.
+  // This downloads bytes only; tracts are parsed and mounted only when selected.
+  startDtiPreloadOnce();
 }
 
-// If Model 2 is opened manually, capture its required alias-coordinate
-// information from the visible viewer.
+// If Model 2 was paused during its hidden prime and is later opened by the user,
+// capture the same required alias-coordinate information from the visible viewer.
 if (modelId === PRIME_MODEL_ID && !prime02Done) {
   primeCacheFromModel02(activeMv);
   prime02Done = true;
@@ -6935,16 +6815,10 @@ if (modelId === PRIME_MODEL_ID && !prime02Done) {
 if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
   backgroundPreparationStarted = true;
 
-  // Apple Safari Stability mode must avoid the automatic custom fetch /
-  // hidden-preparation path. Models are loaded only when selected.
-  if (isAppleNativeStabilityMode()) {
-    console.log("Apple Stability mode: native selected-model loading only.");
-    return;
-  }
-
-  // Other platforms and faster modes retain their current behaviour.
-  await startPrimeModel02Once();
-  kickPreloadSoon();
+  // Prime Model 2 once for existing annotation alias coordinates,
+// then begin the selected mode's background loading behavior.
+await startPrimeModel02Once();
+kickPreloadSoon();
 }
 })));
 };
@@ -6979,19 +6853,6 @@ applyAfterLoad();
 finalizeAfterBarrier();
 };
 idleMv.addEventListener('load', onIdleLoad, { once:true });
-
-// Apple Safari/iPhone/iPad Stability mode:
-// let model-viewer load the stable URL directly.
-// Do not route the selected model through the custom streaming fetch pipeline.
-if (isAppleNativeStabilityMode()) {
-  paintDownloading(modelId);
-  st.status = "loading";
-  st.progressText = "";
-  refreshMeta(modelId);
-
-  idleMv.src = model.url;
-  return;
-}
 
 try {
 const blobUrl = await downloadToBlobUrl(modelId);
@@ -7159,19 +7020,11 @@ function hideModeSelectionMenu() {
   overlay?.classList.add("mode-hidden");
 }
 
-async function launchAtlasWithMode(modeKey) {
+function launchAtlasWithMode(modeKey) {
   if (!isValidAtlasMode(modeKey) || atlasHasLaunched) return;
 
-  atlasHasLaunched = true;
-
-  const modeButtons = document.querySelectorAll(".mode-option-btn");
-  modeButtons.forEach(button => {
-    button.disabled = true;
-  });
-
-  await modelViewerReadyPromise;
-
   applyAtlasModeMemoryPolicy(modeKey);
+  atlasHasLaunched = true;
   hideModeSelectionMenu();
 
   showModel(selectedId);
@@ -7187,7 +7040,6 @@ function reloadAtlasIntoMode(modeKey) {
 }
 
 function initAtlasModeSelection() {
-  document.querySelector(".mode-select-title").textContent = "Select Mode — JS ready";
   const overlay = document.getElementById("modeSelectOverlay");
   const badge = document.getElementById("modeBadge");
 
