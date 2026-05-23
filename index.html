@@ -836,6 +836,17 @@ color:#555;
 color:#6a4d00;
 }
 
+.mode-option-btn:disabled{
+opacity:0.65;
+cursor:default;
+}
+
+.mode-option-btn:disabled:hover{
+border-color:#dddddd;
+background:#fff;
+box-shadow:none;
+}
+  
 .steps-header{
 display:flex;
 align-items:center;
@@ -1559,10 +1570,16 @@ interaction-prompt="none" exposure="1" shadow-intensity="0"></model-viewer>
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-// model-viewer's parsed glTF cache size will be selected from the opening mode menu.
-await customElements.whenDefined("model-viewer");
+// model-viewer's parsed glTF cache size is applied after mode selection.
+// Do not block the mode-selection menu while model-viewer is loading.
+let ModelViewerElementClass = null;
 
-const ModelViewerElementClass = customElements.get("model-viewer");
+const modelViewerReadyPromise = customElements
+  .whenDefined("model-viewer")
+  .then(() => {
+    ModelViewerElementClass = customElements.get("model-viewer");
+    return ModelViewerElementClass;
+  });
 
 const MODELS = [
 { id: "01_Veselled_Annotated", url: "https://raw.githubusercontent.com/saygiuygur/3D_fiber_dissection_anatomy/main/models/01_Veselled_Annotated.glb" },
@@ -7020,11 +7037,19 @@ function hideModeSelectionMenu() {
   overlay?.classList.add("mode-hidden");
 }
 
-function launchAtlasWithMode(modeKey) {
+async function launchAtlasWithMode(modeKey) {
   if (!isValidAtlasMode(modeKey) || atlasHasLaunched) return;
 
-  applyAtlasModeMemoryPolicy(modeKey);
   atlasHasLaunched = true;
+
+  const modeButtons = document.querySelectorAll(".mode-option-btn");
+  modeButtons.forEach(button => {
+    button.disabled = true;
+  });
+
+  await modelViewerReadyPromise;
+
+  applyAtlasModeMemoryPolicy(modeKey);
   hideModeSelectionMenu();
 
   showModel(selectedId);
