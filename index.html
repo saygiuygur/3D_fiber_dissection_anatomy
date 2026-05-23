@@ -1292,7 +1292,6 @@ letter-spacing: 0.2px;
 
     <div class="mode-browser-note">
   This atlas is intended for use in Google Chrome for the best compatibility and performance.
-  <div id="platformDiagnostic" style="margin-top:10px; font-size:11px;"></div>
 </div>
   </div>
 </div>
@@ -1310,16 +1309,7 @@ letter-spacing: 0.2px;
   }
 
   const defaultTitle = "Select Mode";
-const platformDiagnostic = document.getElementById("platformDiagnostic");
-
-if (platformDiagnostic) {
-  const uaPlatform = navigator.userAgentData?.platform || "unavailable";
-  const uaHasAndroid = /Android/i.test(navigator.userAgent) ? "yes" : "no";
-  const touchPoints = navigator.maxTouchPoints ?? "unknown";
-
-  platformDiagnostic.textContent =
-    `Test: UAData platform=${uaPlatform} | UA Android=${uaHasAndroid} | touch points=${touchPoints}`;
-}
+  
    const startupFailureMessage =
     "The 3D viewer could not start on this browser session.\n" +
     "Please reload, try on a newer device, or use a desktop browser.";
@@ -5967,62 +5957,46 @@ let savingEnabled = true;
 let settleRaf = 0;
 let freezeCarryFromCameraChange = false;
 
-// Real touchscreen pinch gestures are reported through model-viewer's
-// camera-change event rather than the desktop wheel pathway.
-// Detect the gesture itself instead of relying on the browser user agent,
-// so touch zoom carry-over also works in Android "Desktop site" mode.
-let touchPinchCarryEnabled = false;
-let touchPinchZoomFov = null;
-const activeTouchPointerIds = new Set();
+// Touchscreen pinch zoom is reported through model-viewer's camera-change
+// event rather than the desktop wheel pathway.
+//
+// Some Android tablets in Chrome "Desktop site" mode identify themselves as
+// Linux and remove "Android" from the user-agent string, while still exposing
+// multiple touch points. Include multi-touch devices so pinch zoom carry-over
+// continues to work on those tablets.
+const IS_MOBILE_TOUCH_CARRY_DEVICE =
+  navigator.maxTouchPoints > 1 ||
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (
+    navigator.platform === "MacIntel" &&
+    navigator.maxTouchPoints > 1
+  );
 
-function markTouchPinchInteraction(mv, event) {
-  if (mv !== activeMv) return;
-  if ((event?.touches?.length || 0) < 2) return;
+let mobileTouchZoomFov = null;
 
-  touchPinchCarryEnabled = true;
-}
-
-function trackTouchPointerInteraction(mv, event) {
-  if (mv !== activeMv) return;
-  if (event?.pointerType !== "touch") return;
-
-  activeTouchPointerIds.add(event.pointerId);
-
-  if (activeTouchPointerIds.size >= 2) {
-    touchPinchCarryEnabled = true;
-  }
-}
-
-function clearTouchPointerInteraction(event) {
-  if (event?.pointerType !== "touch") return;
-
-  activeTouchPointerIds.delete(event.pointerId);
-}
-
-function captureTouchPinchZoomFov(mv) {
-  if (!touchPinchCarryEnabled) return;
+function captureMobileTouchZoomFov(mv) {
+  if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
   if (mv !== activeMv) return;
 
   const fov = mv.getFieldOfView?.();
 
   if (Number.isFinite(fov)) {
-    touchPinchZoomFov = fov;
+    mobileTouchZoomFov = fov;
   }
 }
 
-function applyTouchPinchZoomAfterSwap(mv) {
-  if (!touchPinchCarryEnabled) return;
-  if (!Number.isFinite(touchPinchZoomFov)) return;
+function applyMobileTouchZoomAfterSwap(mv) {
+  if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
+  if (!Number.isFinite(mobileTouchZoomFov)) return;
   if (!mv || !mv.src) return;
 
   const applySavedZoom = () => {
     if (mv !== activeMv || !mv.src) return;
 
-    mv.fieldOfView = `${touchPinchZoomFov}deg`;
+    mv.fieldOfView = `${mobileTouchZoomFov}deg`;
 
     try {
       mv.jumpCameraToGoal?.();
-      mv.requestUpdate?.();
     } catch (_) {}
   };
 
@@ -6078,51 +6052,24 @@ mv.addEventListener('wheel', (e) => {
   applyDtiPanOffsetToViewer(mv);
 }, { passive: false, capture: true });
 
-mv.addEventListener('pointerdown', (event) => {
-  trackTouchPointerInteraction(mv, event);
-}, { passive: true, capture: true });
-
-mv.addEventListener('pointermove', (event) => {
-  trackTouchPointerInteraction(mv, event);
-}, { passive: true, capture: true });
-
-mv.addEventListener('pointerup', (event) => {
-  clearTouchPointerInteraction(event);
+mv.addEventListener('pointerup', () => {
   scheduleSettledCarrySnapshotManual();
   applyDtiPanOffsetToViewer(mv);
-}, { passive: true, capture: true });
-
-mv.addEventListener('pointercancel', (event) => {
-  clearTouchPointerInteraction(event);
-}, { passive: true, capture: true });
-
-mv.addEventListener('touchstart', (event) => {
-  markTouchPinchInteraction(mv, event);
-}, { passive: true });
-
-mv.addEventListener('touchmove', (event) => {
-  markTouchPinchInteraction(mv, event);
 }, { passive: true });
 
 mv.addEventListener('touchend', () => {
-  if (touchPinchCarryEnabled && mv === activeMv) {
-    requestAnimationFrame(() => {
-      captureTouchPinchZoomFov(mv);
-    });
-  }
-
   scheduleSettledCarrySnapshotManual();
   applyDtiPanOffsetToViewer(mv);
 }, { passive: true });
 
 mv.addEventListener('camera-change', (event) => {
-  const isTouchPinchCarryInteraction =
-    touchPinchCarryEnabled &&
+  const isMobileUserGesture =
+    IS_MOBILE_TOUCH_CARRY_DEVICE &&
     event?.detail?.source === "user-interaction";
 
-  if (isTouchPinchCarryInteraction) {
-    // Save true touchscreen pinch zoom separately as field of view.
-    captureTouchPinchZoomFov(mv);
+  if (isMobileUserGesture) {
+    // Save touchscreen pinch zoom separately as field of view.
+    captureMobileTouchZoomFov(mv);
 
     // Continue saving the complete camera carry state for touch rotation/pan.
     freezeCarryFromCameraChange = false;
@@ -6938,8 +6885,8 @@ cameraReady = true;
 startLoop(activeMv);
 
 // Touchscreen pinch zoom can be overwritten by model-viewer's post-load framing.
-// Reapply only the saved touch-pinch FOV after the new model becomes active.
-applyTouchPinchZoomAfterSwap(activeMv);
+// Reapply only the saved touchscreen FOV after the new model becomes active.
+applyMobileTouchZoomAfterSwap(activeMv);
 
 // The former visible viewer is now idle. Clear its live anatomical model
 // after the new model is successfully visible.
