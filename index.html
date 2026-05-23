@@ -6,7 +6,7 @@
 <title>3D Fiber Dissection Anatomy</title>
 
 <link rel="manifest" href="./manifest.webmanifest">
-<div class="wrap">
+
 <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="./icons/favicon-16.png">
 
@@ -43,7 +43,9 @@ font-family:system-ui, sans-serif;
 .sidebar *,
 #sidebarCollapseBtn,
 #dtiPanel,
-#dtiPanel * {
+#dtiPanel *,
+.mode-select-overlay,
+.mode-select-overlay * {
 -webkit-tap-highlight-color: transparent;
 }
   
@@ -1265,7 +1267,7 @@ letter-spacing: 0.2px;
       </span>
     </button>
 
-    <button class="mode-option-btn mode-option-performance" type="button" data-atlas-mode="performance">
+        <button class="mode-option-btn mode-option-performance" type="button" data-atlas-mode="performance">
       <span class="mode-option-name">Performance mode</span>
       <span class="mode-option-description">
         Prepares and retains all dissection steps for the fastest switching.
@@ -1274,6 +1276,70 @@ letter-spacing: 0.2px;
     </button>
   </div>
 </div>
+
+<script>
+(function () {
+  const overlay = document.getElementById("modeSelectOverlay");
+  const title = overlay?.querySelector(".mode-select-title");
+  const buttons = Array.from(
+    overlay?.querySelectorAll("[data-atlas-mode]") || []
+  );
+
+  if (!overlay || !title || buttons.length === 0) {
+    return;
+  }
+
+  const defaultTitle = "Select Mode";
+
+  const bootstrap = {
+    pendingMode: null,
+    modeHandler: null,
+
+    setModeHandler(handler) {
+      this.modeHandler = handler;
+
+      if (this.pendingMode) {
+        const selectedMode = this.pendingMode;
+        this.pendingMode = null;
+        handler(selectedMode);
+      }
+    },
+
+    reopenMenu() {
+      title.textContent = defaultTitle;
+
+      buttons.forEach(button => {
+        button.disabled = false;
+      });
+
+      overlay.classList.remove("mode-hidden");
+    }
+  };
+
+  window.__atlasModeBootstrap = bootstrap;
+
+  buttons.forEach(button => {
+    button.addEventListener("click", function () {
+      const selectedMode = button.dataset.atlasMode;
+      const label =
+        button.querySelector(".mode-option-name")?.textContent ||
+        "selected mode";
+
+      buttons.forEach(otherButton => {
+        otherButton.disabled = true;
+      });
+
+      title.textContent = "Starting " + label + "…";
+
+      if (bootstrap.modeHandler) {
+        bootstrap.modeHandler(selectedMode);
+      } else {
+        bootstrap.pendingMode = selectedMode;
+      }
+    });
+  });
+})();
+</script>
 
 <div class="wrap">
 <div class="sidebar">
