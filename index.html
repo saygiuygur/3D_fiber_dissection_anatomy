@@ -106,39 +106,100 @@ align-items:center;
 justify-content:center;
 cursor:pointer;
 color:#666;
-font-size:29px;
 font-weight:400;
 line-height:1;
 padding:0;
-transition:left .22s ease, background 120ms ease;
+transition:left .22s ease, width .22s ease, height .22s ease,
+  border-radius .22s ease, background 120ms ease;
 }
 
 .sidebar-collapse-btn:hover{
 background:#f6f6f6;
 }
 
-.sidebar-collapse-btn.collapsed{
-left:4px;
+.sidebar-collapse-label{
+display:none;
 }
 
-.sidebar-collapse-btn span{
+.sidebar-collapse-arrow{
 display:block;
+font-size:29px;
 transform:translateY(-1px);
 }
 
-@media (max-width: 520px){
+.sidebar-collapse-btn.collapsed{
+left:0;
+width:42px;
+height:154px;
+border-radius:0 14px 14px 0;
+}
+
+.sidebar-collapse-btn.collapsed .sidebar-collapse-label{
+display:block;
+position:absolute;
+left:13px;
+top:50%;
+transform:translate(-50%, -50%) rotate(-90deg);
+white-space:nowrap;
+font-size:13px;
+font-weight:600;
+letter-spacing:0.2px;
+color:#555;
+}
+
+.sidebar-collapse-btn.collapsed .sidebar-collapse-arrow{
+position:absolute;
+right:4px;
+top:50%;
+transform:translateY(-50%);
+font-size:23px;
+}
+
+@media (max-width:520px){
 .sidebar{
 width:min(360px, calc(100vw - 22px));
 flex-basis:min(360px, calc(100vw - 22px));
 }
 
-.sidebar-collapse-btn{
+.sidebar-collapse-btn:not(.collapsed){
 left:calc(min(360px, calc(100vw - 22px)) - 16px);
 }
-
-.sidebar-collapse-btn.collapsed{
-left:4px;
 }
+
+/* Portrait touch-device layout:
+   the sidebar becomes an overlay drawer and no longer resizes the viewer. */
+.wrap.touch-portrait-layout .sidebar{
+position:absolute;
+left:0;
+top:0;
+z-index:80;
+width:min(360px, calc(100vw - 48px));
+flex:0 0 auto;
+padding:12px;
+border-right:1px solid #ddd;
+transform:translateX(0);
+box-shadow:10px 0 26px rgba(0,0,0,0.14);
+transition:transform .22s ease;
+}
+
+.wrap.touch-portrait-layout .sidebar.sidebar-collapsed{
+width:min(360px, calc(100vw - 48px));
+flex-basis:auto;
+padding:12px;
+border-right:1px solid #ddd;
+overflow-y:auto;
+transform:translateX(-103%);
+box-shadow:none;
+}
+
+.wrap.touch-portrait-layout .viewer-wrap{
+flex:0 0 100%;
+width:100%;
+min-width:100%;
+}
+
+.wrap.touch-portrait-layout .sidebar-collapse-btn:not(.collapsed){
+left:calc(min(360px, calc(100vw - 48px)) - 16px);
 }
 .row{
 display:flex;
@@ -1630,7 +1691,8 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
   type="button"
   aria-label="Collapse left menu"
   title="Collapse left menu">
-  <span id="sidebarCollapseArrow">‹</span>
+  <span class="sidebar-collapse-label">Dissection Steps</span>
+  <span id="sidebarCollapseArrow" class="sidebar-collapse-arrow">‹</span>
 </button>
   
 <div class="viewer-wrap" id="viewerWrap">
@@ -3694,8 +3756,19 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 const SIDEBAR_COLLAPSED_KEY = "fiberAtlasSidebarCollapsed";
+const appWrap = document.querySelector(".wrap");
+let lastTouchPortraitLayout = null;
 
-function setSidebarCollapsed(collapsed) {
+function isTouchPortraitSidebarLayout() {
+  const isTouchDevice = navigator.maxTouchPoints > 1;
+  const isPortrait = window.matchMedia
+    ? window.matchMedia("(orientation: portrait)").matches
+    : window.innerHeight > window.innerWidth;
+
+  return isTouchDevice && isPortrait;
+}
+
+function setSidebarCollapsed(collapsed, persist = true) {
   if (!sidebar || !sidebarCollapseBtn || !sidebarCollapseArrow) return;
 
   sidebar.classList.toggle("sidebar-collapsed", collapsed);
@@ -3704,34 +3777,83 @@ function setSidebarCollapsed(collapsed) {
   sidebarCollapseArrow.textContent = collapsed ? "›" : "‹";
   sidebarCollapseBtn.setAttribute(
     "aria-label",
-    collapsed ? "Expand left menu" : "Collapse left menu"
+    collapsed ? "Expand dissection steps" : "Collapse dissection steps"
   );
   sidebarCollapseBtn.title =
-    collapsed ? "Expand left menu" : "Collapse left menu";
+    collapsed ? "Expand dissection steps" : "Collapse dissection steps";
 
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
-  } catch (_) {}
+  if (persist) {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch (_) {}
+  }
 
-  // The viewer area changes width when the menu collapses/expands.
-  // Ask model-viewer to redraw without changing camera/model state.
   requestAnimationFrame(() => {
     try { activeMv?.requestUpdate?.(); } catch (_) {}
     try { idleMv?.requestUpdate?.(); } catch (_) {}
   });
 }
 
+function syncSidebarResponsiveLayout() {
+  const touchPortrait = isTouchPortraitSidebarLayout();
+
+  appWrap?.classList.toggle("touch-portrait-layout", touchPortrait);
+
+  if (
+    lastTouchPortraitLayout === null ||
+    lastTouchPortraitLayout !== touchPortrait
+  ) {
+    // Portrait touch layout begins with the overlay drawer closed.
+    // Returning to landscape always restores the open side-by-side layout.
+    if (navigator.maxTouchPoints > 1) {
+      setSidebarCollapsed(touchPortrait, false);
+    }
+  }
+
+  lastTouchPortraitLayout = touchPortrait;
+}
+
+function collapsePortraitSidebarAfterModelSelection() {
+  if (isTouchPortraitSidebarLayout()) {
+    setSidebarCollapsed(true, false);
+  }
+}
+
 function initSidebarCollapse() {
-  let collapsed = false;
+  let savedCollapsed = false;
 
   try {
-    collapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    savedCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
   } catch (_) {}
 
-  setSidebarCollapsed(collapsed);
+  const touchPortrait = isTouchPortraitSidebarLayout();
+  const isTouchDevice = navigator.maxTouchPoints > 1;
+
+  appWrap?.classList.toggle("touch-portrait-layout", touchPortrait);
+  lastTouchPortraitLayout = touchPortrait;
+
+  if (isTouchDevice) {
+    // Closed in portrait; open in landscape.
+    setSidebarCollapsed(touchPortrait, false);
+  } else {
+    // Preserve existing desktop preference.
+    setSidebarCollapsed(savedCollapsed, false);
+  }
 
   sidebarCollapseBtn?.addEventListener("click", () => {
-    setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed"));
+    const nextCollapsed =
+      !sidebar.classList.contains("sidebar-collapsed");
+
+    setSidebarCollapsed(
+      nextCollapsed,
+      !isTouchPortraitSidebarLayout()
+    );
+  });
+
+  window.addEventListener("resize", syncSidebarResponsiveLayout);
+
+  window.addEventListener("orientationchange", () => {
+    setTimeout(syncSidebarResponsiveLayout, 60);
   });
 }
 
@@ -5339,16 +5461,18 @@ function kickPreloadSoon() {
 }
   
   document.addEventListener("visibilitychange", () => {
-  if (
-    document.visibilityState === "visible" &&
-    atlasLoadingMode === "performance" &&
-    backgroundPreparationStarted &&
-    !anatomicalDownloadsUserPaused
-  ) {
-    // Files downloaded while hidden can now be parsed/prepared for
-    // instant switching in Performance mode.
-    kickPreloadSoon();
+  if (document.visibilityState !== "visible") return;
+  if (!backgroundPreparationStarted) return;
+  if (anatomicalDownloadsUserPaused) return;
+
+  // Model 2 may have downloaded while hidden without completing the
+  // one-time hidden coordinate-prime step. Complete that step now.
+  if (!prime02Done) {
+    startPrimeModel02Once();
   }
+
+  // Resume any remaining automatic download/preparation work in all modes.
+  kickPreloadSoon();
 });
   
 async function downloadToBlobUrl(modelId) {
@@ -6789,7 +6913,15 @@ async function startPrimeModel02Once() {
         return;
       }
 
-      const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+           const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+
+      // The file itself may finish downloading while the page is hidden,
+      // but hidden model rendering waits for animation frames and can stall
+      // the complete automatic queue. Defer only the visual prime step.
+      if (document.visibilityState !== "visible") {
+        releaseModelBlobIfUnused(PRIME_MODEL_ID);
+        return;
+      }
 
       if (mvPrime.src !== blobUrl) {
         await new Promise(resolve => {
@@ -7084,9 +7216,9 @@ async function onUserSelect(modelId) {
     } catch (_) {}
   }
 
+  collapsePortraitSidebarAfterModelSelection();
   showModel(modelId);
-  return;
-  }
+}
 
   // Clicking the paused model again, or selecting another not-yet-downloaded
   // model, resumes anatomical downloading with that clicked model as priority.
@@ -7158,7 +7290,8 @@ async function onUserSelect(modelId) {
       await balancedAheadPromise;
     } catch (_) {}
   }
-
+  
+  collapsePortraitSidebarAfterModelSelection();
   showModel(modelId);
 }
 // ===== Mode selection startup / switching =====
