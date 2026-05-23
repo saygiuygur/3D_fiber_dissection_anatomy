@@ -1291,11 +1291,16 @@ letter-spacing: 0.2px;
 
   const defaultTitle = "Select Mode";
 
-  const bootstrap = {
-    pendingMode: null,
-    modeHandler: null,
+ const bootstrap = {
+  pendingMode: null,
+  modeHandler: null,
+  startTimeoutId: null,
 
-    setModeHandler(handler) {
+  setStatus(message) {
+    title.textContent = message;
+  },
+
+  setModeHandler(handler) {
       this.modeHandler = handler;
 
       if (this.pendingMode) {
@@ -1306,14 +1311,19 @@ letter-spacing: 0.2px;
     },
 
     reopenMenu() {
-      title.textContent = defaultTitle;
+  if (this.startTimeoutId) {
+    clearTimeout(this.startTimeoutId);
+    this.startTimeoutId = null;
+  }
 
-      buttons.forEach(button => {
-        button.disabled = false;
-      });
+  title.textContent = defaultTitle;
 
-      overlay.classList.remove("mode-hidden");
-    }
+  buttons.forEach(button => {
+    button.disabled = false;
+  });
+
+  overlay.classList.remove("mode-hidden");
+}
   };
 
   window.__atlasModeBootstrap = bootstrap;
@@ -1331,11 +1341,24 @@ letter-spacing: 0.2px;
 
       title.textContent = "Starting " + label + "…";
 
-      if (bootstrap.modeHandler) {
-        bootstrap.modeHandler(selectedMode);
-      } else {
-        bootstrap.pendingMode = selectedMode;
-      }
+if (bootstrap.startTimeoutId) {
+  clearTimeout(bootstrap.startTimeoutId);
+}
+
+bootstrap.startTimeoutId = setTimeout(function () {
+  if (!bootstrap.modeHandler) {
+    title.textContent = "Viewer code could not start. Please reload.";
+    buttons.forEach(otherButton => {
+      otherButton.disabled = false;
+    });
+  }
+}, 12000);
+
+if (bootstrap.modeHandler) {
+  bootstrap.modeHandler(selectedMode);
+} else {
+  bootstrap.pendingMode = selectedMode;
+}
     });
   });
 })();
@@ -7114,7 +7137,45 @@ async function launchAtlasWithMode(modeKey) {
 
   atlasHasLaunched = true;
 
-  await modelViewerReadyPromise;
+  if (window.__atlasModeBootstrap?.startTimeoutId) {
+    clearTimeout(window.__atlasModeBootstrap.startTimeoutId);
+    window.__atlasModeBootstrap.startTimeoutId = null;
+  }
+
+  window.__atlasModeBootstrap?.setStatus?.("Loading 3D viewer…");
+
+  let viewerTimeoutId = null;
+
+  try {
+    await Promise.race([
+      modelViewerReadyPromise,
+      new Promise((_, reject) => {
+        viewerTimeoutId = setTimeout(() => {
+          reject(new Error("model-viewer startup timeout"));
+        }, 12000);
+      })
+    ]);
+  } catch (err) {
+    console.error("3D viewer could not initialize:", err);
+
+    atlasHasLaunched = false;
+
+    window.__atlasModeBootstrap?.setStatus?.(
+      "3D viewer could not initialize. Please reload."
+    );
+
+    document.querySelectorAll(".mode-option-btn").forEach(button => {
+      button.disabled = false;
+    });
+
+    return;
+  } finally {
+    if (viewerTimeoutId) {
+      clearTimeout(viewerTimeoutId);
+    }
+  }
+
+  window.__atlasModeBootstrap?.setStatus?.("Opening atlas…");
 
   applyAtlasModeMemoryPolicy(modeKey);
   hideModeSelectionMenu();
