@@ -5973,35 +5973,55 @@ const IS_MOBILE_TOUCH_CARRY_DEVICE =
   );
 
 let mobileTouchZoomFov = null;
+let mobileTouchZoomRadius = null;
 
 function captureMobileTouchZoomFov(mv) {
   if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
   if (mv !== activeMv) return;
 
   const fov = mv.getFieldOfView?.();
+  const orbit = mv.getCameraOrbit?.();
 
   if (Number.isFinite(fov)) {
     mobileTouchZoomFov = fov;
+  }
+
+  if (orbit && Number.isFinite(orbit.radius)) {
+    mobileTouchZoomRadius = orbit.radius;
   }
 }
 
 function applyMobileTouchZoomAfterSwap(mv) {
   if (!IS_MOBILE_TOUCH_CARRY_DEVICE) return;
-  if (!Number.isFinite(mobileTouchZoomFov)) return;
+  if (
+    !Number.isFinite(mobileTouchZoomFov) &&
+    !Number.isFinite(mobileTouchZoomRadius)
+  ) return;
   if (!mv || !mv.src) return;
 
   const applySavedZoom = () => {
     if (mv !== activeMv || !mv.src) return;
 
-    mv.fieldOfView = `${mobileTouchZoomFov}deg`;
+    const currentOrbit = mv.getCameraOrbit?.();
+
+    // Preserve the orientation already applied by the normal camera
+    // carry-over pathway, but reinforce the touch-zoom distance as well.
+    if (currentOrbit && Number.isFinite(mobileTouchZoomRadius)) {
+      mv.cameraOrbit =
+        `${currentOrbit.theta}rad ${currentOrbit.phi}rad ${mobileTouchZoomRadius}m`;
+    }
+
+    if (Number.isFinite(mobileTouchZoomFov)) {
+      mv.fieldOfView = `${mobileTouchZoomFov}deg`;
+    }
 
     try {
       mv.jumpCameraToGoal?.();
     } catch (_) {}
   };
 
-  // Apply once immediately and once again after model-viewer's
-  // post-load framing updates have settled.
+  // Reapply touchscreen zoom after the incoming model becomes active,
+  // then again after model-viewer's post-load framing has settled.
   applySavedZoom();
 
   requestAnimationFrame(() => {
