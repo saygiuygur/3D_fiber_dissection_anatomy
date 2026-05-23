@@ -5957,42 +5957,52 @@ let savingEnabled = true;
 let settleRaf = 0;
 let freezeCarryFromCameraChange = false;
 
-// On touch-capable devices, model-viewer may overwrite the carried camera
-// state after a newly loaded model becomes visible. Some Android tablets in
-// Chrome "Desktop site" mode identify themselves as Linux, while still
-// exposing multiple touch points, so touch capability is used here.
-const IS_TOUCH_CARRY_DEVICE =
-  navigator.maxTouchPoints > 1 ||
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-  (
-    navigator.platform === "MacIntel" &&
-    navigator.maxTouchPoints > 1
-  );
+// Real touchscreen pinch gestures are reported through model-viewer's
+// camera-change event rather than the desktop wheel pathway.
+// Detect the gesture itself instead of relying on the browser user agent,
+// so touch zoom carry-over also works in Android "Desktop site" mode.
+let touchPinchCarryEnabled = false;
+let touchPinchZoomFov = null;
 
-function reapplyTouchCameraAfterSwap(mv, modelId, carriedCam) {
-  if (!IS_TOUCH_CARRY_DEVICE) return;
-  if (!carriedCam) return;
+function markTouchPinchInteraction(mv, event) {
+  if (mv !== activeMv) return;
+  if ((event?.touches?.length || 0) < 2) return;
+
+  touchPinchCarryEnabled = true;
+}
+
+function captureTouchPinchZoomFov(mv) {
+  if (!touchPinchCarryEnabled) return;
+  if (mv !== activeMv) return;
+
+  const fov = mv.getFieldOfView?.();
+
+  if (Number.isFinite(fov)) {
+    touchPinchZoomFov = fov;
+  }
+}
+
+function applyTouchPinchZoomAfterSwap(mv) {
+  if (!touchPinchCarryEnabled) return;
+  if (!Number.isFinite(touchPinchZoomFov)) return;
   if (!mv || !mv.src) return;
 
-  const reapplySavedCamera = () => {
+  const applySavedZoom = () => {
     if (mv !== activeMv || !mv.src) return;
 
-    // Reapply the exact same authoritative camera snapshot already captured
-    // from the previous active viewer immediately before model selection.
-    applyCamWithDelta(mv, modelId, carriedCam);
+    mv.fieldOfView = `${touchPinchZoomFov}deg`;
+
+    try {
+      mv.jumpCameraToGoal?.();
+      mv.requestUpdate?.();
+    } catch (_) {}
   };
 
-  reapplySavedCamera();
+  applySavedZoom();
 
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      reapplySavedCamera();
-
-      // Capture the final applied state as the new carry baseline.
-      if (mv === activeMv && savingEnabled) {
-        const settledCam = readCamWithDelta(mv);
-        if (settledCam) latestCarryCam = cloneCarry(settledCam);
-      }
+      applySavedZoom();
     });
   });
 }
@@ -6043,19 +6053,33 @@ mv.addEventListener('pointerup', () => {
   applyDtiPanOffsetToViewer(mv);
 }, { passive: true });
 
+mv.addEventListener('touchstart', (event) => {
+  markTouchPinchInteraction(mv, event);
+}, { passive: true });
+
+mv.addEventListener('touchmove', (event) => {
+  markTouchPinchInteraction(mv, event);
+}, { passive: true });
+
 mv.addEventListener('touchend', () => {
+  if (touchPinchCarryEnabled && mv === activeMv) {
+    requestAnimationFrame(() => {
+      captureTouchPinchZoomFov(mv);
+    });
+  }
+
   scheduleSettledCarrySnapshotManual();
   applyDtiPanOffsetToViewer(mv);
 }, { passive: true });
 
 mv.addEventListener('camera-change', (event) => {
-  const isTouchUserGesture =
-    IS_TOUCH_CARRY_DEVICE &&
+  const isTouchPinchCarryInteraction =
+    touchPinchCarryEnabled &&
     event?.detail?.source === "user-interaction";
 
-  if (isTouchUserGesture) {
-    // A touchscreen interaction changed the actual live camera state.
-    // Save the complete camera state rather than a second zoom-only value.
+  if (isTouchPinchCarryInteraction) {
+    captureTouchPinchZoomFov(mv);
+
     freezeCarryFromCameraChange = false;
     scheduleSettledCarrySnapshot();
   } else {
@@ -6076,13 +6100,6 @@ const baseTarget = new Map();
 const baseRadiusByModel = new Map();
 const apAxisByModel = new Map();
 const MAX_CAMERA_RADIUS_FACTOR = 1;
-
-// Chrome "Desktop site" mode can mask Android tablets as Linux.
-// Use touch capability plus tablet-sized screen dimensions so the phone
-// keeps its current max-radius behaviour.
-const IS_TABLET_LIKE_TOUCH_DEVICE =
-  navigator.maxTouchPoints > 1 &&
-  Math.min(window.screen.width, window.screen.height) >= 600;
 
 function chooseApAxisForViewer(mv) {
 let dims = null;
@@ -6111,18 +6128,10 @@ if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewe
 }
 
 function applyMaxCameraOrbit(mv, modelId) {
-  // Tablet pinch zoom may use a camera radius that is later clamped when
-  // switching models. Do not apply the max-radius restriction on tablets.
-  if (IS_TABLET_LIKE_TOUCH_DEVICE) {
-    mv.removeAttribute("max-camera-orbit");
-    return;
-  }
-
-  const base = baseRadiusByModel.get(modelId);
-  if (!Number.isFinite(base) || base <= 0) return;
-
-  const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
-  mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
+const base = baseRadiusByModel.get(modelId);
+if (!Number.isFinite(base) || base <= 0) return;
+const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
+mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
 }
 
 const EPS = 1e-4;
@@ -6883,9 +6892,9 @@ currentShownId = modelId;
 cameraReady = true;
 startLoop(activeMv);
 
-// On touch-capable devices, model-viewer can overwrite the carried camera
-// after the new model becomes active. Reapply the exact captured camera state.
-reapplyTouchCameraAfterSwap(activeMv, modelId, camForThisSwap);
+// Touchscreen pinch zoom can be overwritten by model-viewer's post-load framing.
+// Reapply only the saved touch-pinch FOV after the new model becomes active.
+applyTouchPinchZoomAfterSwap(activeMv);
 
 // The former visible viewer is now idle. Clear its live anatomical model
 // after the new model is successfully visible.
