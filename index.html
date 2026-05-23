@@ -1282,7 +1282,7 @@ letter-spacing: 0.2px;
       </span>
     </button>
 
-            <button class="mode-option-btn mode-option-performance" type="button" data-atlas-mode="performance">
+      <button class="mode-option-btn" type="button" data-atlas-mode="performance">
       <span class="mode-option-name">Performance mode</span>
       <span class="mode-option-description">
         Prepares and retains all dissection steps for the fastest switching.
@@ -1727,13 +1727,11 @@ const ATLAS_MODES = Object.freeze({
 let atlasLoadingMode = null;
 let atlasHasLaunched = false;
 
-// Balanced mode retains the four most recently opened anatomical models.
 // Performance mode retains all prepared anatomical models.
-// Models prepared and retained during the current session.
 const performancePreparedModelIds = new Set();
 
 // Balanced mode follows actual viewing history:
-// previous two viewed models + current model + next sequential model.
+// previous two viewed models + current model + prepared next sequential model.
 let balancedViewHistory = [];
 let balancedAheadPromise = null;
 let balancedAheadModelId = null;
@@ -1907,7 +1905,7 @@ const ANNOTATION_RULES = Object.freeze({
 "LabbeV001": { title: "Vein of Labbe", order: 11 },
 "InternalcerebralV001": { title: "Internal Cerebral Vein", order: 14 },
 "InferiorparietalA001": { title: "Inferior Parietal Artery", order: 32 },
-"ICA001": { title: "Internal Cerebral Artery", order: 17 },
+"ICA001": { title: "Internal Carotid Artery", order: 17 },
 "GalenV001": { title: "Vein of Galen", order: 13 },
 "FrontopolarACont001": { title: "Frontopolar Artery", order: 24 },
 "FrontopolarA001": { title: "Frontopolar Artery", order: 23 },
@@ -2268,7 +2266,7 @@ btn.innerHTML = offlinePlatformOriginalMarkup.get(platform) || btn.innerHTML;
 }
 
 // ===== Optional offline atlas storage =====
-// Change v1 to v2 later if GLB files are replaced and saved copies must refresh.
+// Fallback cache names used until the active versioned cache configuration exists.
 const OFFLINE_DATA_CACHE_NAME = "fiber-dissection-offline-data-v1";
 const OFFLINE_SHELL_CACHE_NAME = "fiber-dissection-offline-shell-v1";
 
@@ -3461,7 +3459,6 @@ for (const btn of offlinePlatformButtons) {
 }
 
 let deferredInstallPrompt = null;
-let atlasInstalled = false;
 
 window.addEventListener("beforeinstallprompt", event => {
   event.preventDefault();
@@ -3470,7 +3467,6 @@ window.addEventListener("beforeinstallprompt", event => {
 
 window.addEventListener("appinstalled", () => {
   deferredInstallPrompt = null;
-  atlasInstalled = true;
 
   showOfflineInstallMessage(
     "Installation Complete",
@@ -5024,14 +5020,6 @@ forceViewerRedraw(mv);
 async function refreshDtiSceneForActiveViewer() {
 return refreshDtiSceneForViewer(activeMv, currentShownId);
 }
-  
-function scheduleDtiRefreshAfterModelPrepared() {
-requestAnimationFrame(() => {
-requestAnimationFrame(() => {
-refreshDtiSceneForActiveViewer();
-});
-});
-}
 
 function setDtiVisible(dtiId, visible) {
   if (visible) {
@@ -5338,15 +5326,6 @@ if (!resumeRequested) return;
 if (currentDownloadingId && state.get(currentDownloadingId)?.status === "loading") return;
 resumeRequested = false;
 resumePreload();
-}
-function pausePreloadForAWhile() {
-preloadEnabled = false;
-if (preloadTimer) clearTimeout(preloadTimer);
-preloadTimer = setTimeout(() => {
-preloadEnabled = true;
-resumeRequested = true;
-maybeResumePreload();
-}, 1200);
 }
   
 function kickPreloadSoon() {
@@ -6329,10 +6308,6 @@ const WHEEL_ZOOM_MIN_STEP = 0;
 const WHEEL_ZOOM_MAX_STEP = 5;
 let wheelZoomStep = 0;
 
-window.__wheelDbg = window.__wheelDbg || {};
-window.__wheelDbg.get = () => wheelZoomStep;
-window.__wheelDbg.set = (v) => { wheelZoomStep = Number(v) || 0; };
-
 function handleFixedStepWheelZoom(mv, ev) {
 if (!mv.classList.contains('shownViewer')) return;
 if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
@@ -6665,61 +6640,12 @@ animateCamera(activeMv,
 
 // ===== Invisible prime of model 02 (for consistent alias coordinates) =====
 const PRIME_MODEL_ID = "02_Veselless_Annotated";
-let prime02Started = false;
 let prime02Done = false;
 let prime02Promise = null;
 // ===== Prewarm base state for every model (hidden load) =====
 const prewarmDone = new Set();      // modelId
-const prewarmInFlight = new Map();  // modelId -> Promise
 let mvPrimeLock = Promise.resolve(); // serialize mvPrime usage
 
-async function prewarmModelBaseState(modelId, blobUrlMaybe = null) {
-  if (prewarmDone.has(modelId)) return;
-  if (prewarmInFlight.has(modelId)) return prewarmInFlight.get(modelId);
-
-  const p = (mvPrimeLock = mvPrimeLock.then(async () => {
-    if (prewarmDone.has(modelId)) return;
-    if (backgroundPreparationPausedForSelection) return;
-
-    let blobUrl = blobUrlMaybe;
-
-    if (!blobUrl) {
-      const st = state.get(modelId);
-
-      if (st?.status === "done" && st.blobUrl) {
-        blobUrl = st.blobUrl;
-      } else {
-        blobUrl = await downloadToBlobUrl(modelId);
-      }
-    }
-
-    if (backgroundPreparationPausedForSelection) {
-      releaseModelBlobIfUnused(modelId);
-      return;
-    }
-
-    if (mvPrime.src !== blobUrl) {
-      await new Promise(resolve => {
-        const onLoad = () => resolve();
-        mvPrime.addEventListener("load", onLoad, { once: true });
-        mvPrime.src = blobUrl;
-      });
-    }
-
-    await new Promise(resolve => requestAnimationFrame(resolve));
-    await new Promise(resolve => requestAnimationFrame(resolve));
-
-    captureAutoFrameBase(mvPrime, modelId);
-    prewarmDone.add(modelId);
-
-    await releasePrimeViewerAfterCapture(modelId, blobUrl);
-  })).finally(() => {
-    prewarmInFlight.delete(modelId);
-  });
-
-  prewarmInFlight.set(modelId, p);
-  return p;
-}
 function computeShiftForModel(mv, modelId) {
 const bt = baseTarget.get(modelId);
 const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
@@ -6758,12 +6684,9 @@ async function startPrimeModel02Once() {
   if (prime02Done) return;
   if (prime02Promise) return prime02Promise;
 
-  prime02Started = true;
-
   prime02Promise = (async () => {
     await (mvPrimeLock = mvPrimeLock.then(async () => {
       if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
-        prime02Started = false;
         return;
       }
 
@@ -6789,7 +6712,6 @@ async function startPrimeModel02Once() {
     }));
   })().catch(err => {
     console.warn("Model 2 coordinate prime failed:", err);
-    prime02Started = false;
   }).finally(() => {
     prime02Promise = null;
   });
@@ -7286,9 +7208,9 @@ try {
 
   configureOfflineUiForLaunchMode();
 
-  // If the atlas data was already downloaded in an earlier test,
-  // save the webpage/viewer shell now so it can open offline too.
-  restoreOfflineShellForPreviouslySavedAtlas();
+  // If atlas data was previously downloaded, ensure the application shell
+// is also saved so the atlas can open offline.
+restoreOfflineShellForPreviouslySavedAtlas();
 } catch (err) {
   console.error("Atlas interface initialization failed:", err);
 
