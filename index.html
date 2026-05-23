@@ -7029,6 +7029,12 @@ async function onUserSelect(modelId) {
 // ===== Mode selection startup / switching =====
 function showModeSelectionMenu() {
   const overlay = document.getElementById("modeSelectOverlay");
+  const modeButtons = document.querySelectorAll(".mode-option-btn");
+
+  modeButtons.forEach(button => {
+    button.disabled = false;
+  });
+
   overlay?.classList.remove("mode-hidden");
 }
 
