@@ -3917,13 +3917,16 @@ let currentShownId = selectedId;
   // Preserve the viewer aspect established by the first visible Model 1 load.
 // Narrower layouts will crop horizontally instead of triggering
 // model-viewer's responsive zoom-out framing.
+// Keep model-viewer's internal canvas from becoming narrower than the
+// framing aspect used for the anatomical atlas. In narrow layouts the
+// wrapper clips the sides instead of allowing responsive zoom-out.
 const anatomicalViewerWrap = document.getElementById("viewerWrap");
-let lockedMainViewerAspect = null;
+const PROTECTED_MAIN_VIEWER_ASPECT = 1.0;
+let mainViewerAspectLockEnabled = false;
 let mainViewerAspectResizeObserver = null;
 
 function updateLockedMainViewerWidth() {
-  if (!anatomicalViewerWrap) return;
-  if (!Number.isFinite(lockedMainViewerAspect)) return;
+  if (!anatomicalViewerWrap || !mainViewerAspectLockEnabled) return;
 
   const wrapWidth = anatomicalViewerWrap.clientWidth;
   const wrapHeight = anatomicalViewerWrap.clientHeight;
@@ -3932,7 +3935,7 @@ function updateLockedMainViewerWidth() {
 
   const protectedWidth = Math.max(
     wrapWidth,
-    wrapHeight * lockedMainViewerAspect
+    wrapHeight * PROTECTED_MAIN_VIEWER_ASPECT
   );
 
   anatomicalViewerWrap.style.setProperty(
@@ -3941,17 +3944,10 @@ function updateLockedMainViewerWidth() {
   );
 }
 
-function lockMainViewerAspectAfterInitialFrame() {
-  if (!anatomicalViewerWrap) return;
-  if (Number.isFinite(lockedMainViewerAspect)) return;
+function enableMainViewerAspectLock() {
+  if (!anatomicalViewerWrap || mainViewerAspectLockEnabled) return;
 
-  const width = anatomicalViewerWrap.clientWidth;
-  const height = anatomicalViewerWrap.clientHeight;
-
-  if (!(width > 0) || !(height > 0)) return;
-
-  // Capture the size that model-viewer used for its normal first auto-frame.
-  lockedMainViewerAspect = width / height;
+  mainViewerAspectLockEnabled = true;
 
   mvA.classList.add("camera-aspect-locked");
   mvB.classList.add("camera-aspect-locked");
@@ -7327,11 +7323,6 @@ if (token !== swapToken) return;
 if (modelId === PRIMARY_MODEL_ID) {
   cacheModel1ReferencePointsFromViewer(activeMv);
 
-  // Preserve the aspect ratio used for Model 1's normal initial auto-frame.
-  // Later narrow layouts crop horizontally rather than making model-viewer
-  // reframe radius/FOV to fit a smaller width.
-  lockMainViewerAspectAfterInitialFrame();
-
   // Download DTI tract files immediately after Model 1 is ready.
   // This downloads bytes only; tracts are parsed and mounted only when selected.
   startDtiPreloadOnce();
@@ -7599,6 +7590,11 @@ async function launchAtlasWithMode(modeKey) {
   window.__atlasModeBootstrap?.setStatus?.("Opening atlas…");
 
   applyAtlasModeMemoryPolicy(modeKey);
+
+  // Enable before the first model receives its src, so portrait-first
+  // opening uses the same protected framing behaviour as later resizing.
+  enableMainViewerAspectLock();
+
   hideModeSelectionMenu();
 
   showModel(selectedId);
