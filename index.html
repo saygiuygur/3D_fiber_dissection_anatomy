@@ -3788,11 +3788,16 @@ function setSidebarCollapsed(collapsed, persist = true) {
     } catch (_) {}
   }
 
-  requestAnimationFrame(() => {
-    try { activeMv?.requestUpdate?.(); } catch (_) {}
-    try { idleMv?.requestUpdate?.(); } catch (_) {}
-  });
-}
+  // In portrait touch layout the sidebar is an overlay drawer and no longer
+  // changes viewer dimensions. Avoid forcing model-viewer to update/reframe.
+  // In desktop or landscape layout the sidebar still resizes the viewer,
+  // so retain the redraw behaviour there.
+  if (!isTouchPortraitSidebarLayout()) {
+    requestAnimationFrame(() => {
+      try { activeMv?.requestUpdate?.(); } catch (_) {}
+      try { idleMv?.requestUpdate?.(); } catch (_) {}
+    });
+  }
 
 function syncSidebarResponsiveLayout() {
   const touchPortrait = isTouchPortraitSidebarLayout();
