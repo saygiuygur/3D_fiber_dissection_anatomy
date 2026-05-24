@@ -129,15 +129,20 @@ transform:translateY(-1px);
 
 .sidebar-collapse-btn.collapsed{
 left:0;
-width:42px;
-height:154px;
-border-radius:0;
+width:58px;
+height:170px;
+border:1px solid #dedede;
+border-left:none;
+border-radius:0 22px 22px 0;
+background:#fff;
+box-shadow:0 8px 24px rgba(0,0,0,0.18);
+overflow:visible;
 }
 
 .sidebar-collapse-btn.collapsed .sidebar-collapse-label{
 display:block;
 position:absolute;
-left:13px;
+left:26px;
 top:50%;
 transform:translate(-50%, -50%) rotate(-90deg);
 white-space:nowrap;
@@ -145,15 +150,26 @@ font-size:15px;
 font-weight:700;
 line-height:1.2;
 letter-spacing:0;
-color:#111;
+color:#555;
 }
 
 .sidebar-collapse-btn.collapsed .sidebar-collapse-arrow{
 position:absolute;
-right:4px;
+right:-17px;
 top:50%;
-font-size:29px;
 transform:translateY(-50%);
+width:34px;
+height:26px;
+border:1px solid #dedede;
+border-radius:999px;
+background:#fff;
+box-shadow:0 2px 7px rgba(0,0,0,0.14);
+display:flex;
+align-items:center;
+justify-content:center;
+font-size:25px;
+line-height:1;
+color:#666;
 }
 
 @media (max-width:520px){
@@ -1953,7 +1969,7 @@ const MODEL_DISPLAY_NAMES = Object.freeze({
 "06_Insula_Annotated": "Insula",
 "07_Extreme_Capsule_Annotated": "Extreme Capsule",
 "09_Putamen_External_Capsule_Annotated": "External Capsule and Putamen",
-"10_Lenticulostriate_Perforators_Annotated": "Lenticulostriate Branches of MCA",
+"10_Lenticulostriate_Perforators_Annotated": "Lenticulostriate Branches of Middle Cerebral Artery",
 "11_Anterior_Comissure_Annotated": "Internal Capsule, Globus Pallidus and Anterior Commissure",
 });
 
@@ -5635,14 +5651,28 @@ async function downloadToBlobUrl(modelId) {
     return st.blobUrl;
   }
 
-  // A green-tick model downloaded in Stability/Balanced cache-only mode
-  // should obtain its temporary Blob URL from explicit browser storage,
-  // not through another ordinary GLB fetch.
+  // A green-tick model from the current session obtains its temporary
+  // Blob URL from explicit browser storage.
   if (st.cached === true && !st.blobUrl) {
     return createBlobUrlFromStoredModel(modelId);
   }
 
   if (inFlight.has(modelId)) return inFlight.get(modelId);
+
+  // The mode may have been changed or the page may have been reloaded,
+  // so the session state can say "not cached" even though the completed
+  // GLB already exists in persistent Cache Storage.
+  const storedResponse = await getStoredAnatomicalFileResponse(model.url);
+
+  if (storedResponse) {
+    st.status = "done";
+    st.progressText = "";
+    st.cached = true;
+    st.userPaused = false;
+    refreshMeta(modelId);
+
+    return createBlobUrlFromStoredModel(modelId);
+  }
 
   const p = (async () => {
     const loadingFromAlreadyCachedFile = st.cached === true;
@@ -5788,8 +5818,20 @@ if (err.name === "AbortError") {
 
   if (!model || st.status === "done") return;
 
-  if (inFlight.has(modelId)) {
+    if (inFlight.has(modelId)) {
     await inFlight.get(modelId);
+    return;
+  }
+
+  const storedResponse = await getStoredAnatomicalFileResponse(model.url);
+
+  if (storedResponse) {
+    st.status = "done";
+    st.progressText = "";
+    st.blobUrl = null;
+    st.cached = true;
+    st.userPaused = false;
+    refreshMeta(modelId);
     return;
   }
 
