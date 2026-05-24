@@ -7733,13 +7733,7 @@ if (modelAlreadyAvailable) {
     } catch (_) {}
   }
 
-  if (backgroundPreparationPromise) {
-    try {
-      await backgroundPreparationPromise;
-    } catch (_) {}
-  }
-
-   if (backgroundPreparationPromise) {
+    if (backgroundPreparationPromise) {
     try {
       await backgroundPreparationPromise;
     } catch (_) {}
@@ -7749,9 +7743,6 @@ if (modelAlreadyAvailable) {
   showModel(modelId);
 }
   
-  collapsePortraitSidebarAfterModelSelection();
-  showModel(modelId);
-}
 // ===== Mode selection startup / switching =====
 function showModeSelectionMenu() {
   const overlay = document.getElementById("modeSelectOverlay");
