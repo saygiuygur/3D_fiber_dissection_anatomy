@@ -6734,42 +6734,6 @@ function handleFixedStepWheelZoom(mv, ev) {
   }
 }
 
-  // Do not let tiny touchpad deltas produce weak native zoom changes.
-  // Convert accumulated touchpad input into full native mouse-wheel steps.
-  ev.preventDefault();
-  ev.stopPropagation();
-  ev.stopImmediatePropagation();
-
-  if (touchpadWheelResetTimer) {
-    clearTimeout(touchpadWheelResetTimer);
-  }
-
-  touchpadWheelResetTimer = setTimeout(() => {
-    touchpadWheelDeltaBuffer = 0;
-  }, 180);
-
-  touchpadWheelDeltaBuffer += ev.deltaY;
-
-  while (
-    Math.abs(touchpadWheelDeltaBuffer) >= TOUCHPAD_WHEEL_STEP_THRESHOLD
-  ) {
-    const bufferedZoomIn = touchpadWheelDeltaBuffer < 0;
-
-    const replayed = replayOneNativeMouseWheelStep(mv, bufferedZoomIn);
-
-    touchpadWheelDeltaBuffer += bufferedZoomIn
-      ? TOUCHPAD_WHEEL_STEP_THRESHOLD
-      : -TOUCHPAD_WHEEL_STEP_THRESHOLD;
-
-    // When the permitted zoom range has been reached, discard additional
-    // accumulated movement in that direction.
-    if (!replayed) {
-      touchpadWheelDeltaBuffer = 0;
-      break;
-    }
-  }
-}
-  
 function updateForcedVisible(mv) {
 const st = occState.get(mv);
 if (!st || !st.pointMap) return;
