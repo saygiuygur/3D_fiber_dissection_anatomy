@@ -1004,6 +1004,18 @@ background:var(--viewer-bg);
 --min-hotspot-opacity: 1;
 }
 
+  /* After initial auto-framing, the two visible anatomical viewers may be
+   held wider than the visible container. The wrapper clips the sides instead
+   of allowing model-viewer to zoom out to fit a narrow aspect ratio. */
+#mvA.viewer.camera-aspect-locked,
+#mvB.viewer.camera-aspect-locked{
+  left:50%;
+  right:auto;
+  inset-block:0;
+  width:var(--locked-main-viewer-width, 100%);
+  transform:translateX(-50%);
+}
+  
 /* ===== Right-side DTI panel ===== */
 #dtiPanel{
 position:absolute;
@@ -3902,6 +3914,62 @@ let idleMv = mvB;
 let selectedId = MODELS[0].id;
 let currentShownId = selectedId;
 
+  // Preserve the viewer aspect established by the first visible Model 1 load.
+// Narrower layouts will crop horizontally instead of triggering
+// model-viewer's responsive zoom-out framing.
+const anatomicalViewerWrap = document.getElementById("viewerWrap");
+let lockedMainViewerAspect = null;
+let mainViewerAspectResizeObserver = null;
+
+function updateLockedMainViewerWidth() {
+  if (!anatomicalViewerWrap) return;
+  if (!Number.isFinite(lockedMainViewerAspect)) return;
+
+  const wrapWidth = anatomicalViewerWrap.clientWidth;
+  const wrapHeight = anatomicalViewerWrap.clientHeight;
+
+  if (!(wrapWidth > 0) || !(wrapHeight > 0)) return;
+
+  const protectedWidth = Math.max(
+    wrapWidth,
+    wrapHeight * lockedMainViewerAspect
+  );
+
+  anatomicalViewerWrap.style.setProperty(
+    "--locked-main-viewer-width",
+    `${protectedWidth}px`
+  );
+}
+
+function lockMainViewerAspectAfterInitialFrame() {
+  if (!anatomicalViewerWrap) return;
+  if (Number.isFinite(lockedMainViewerAspect)) return;
+
+  const width = anatomicalViewerWrap.clientWidth;
+  const height = anatomicalViewerWrap.clientHeight;
+
+  if (!(width > 0) || !(height > 0)) return;
+
+  // Capture the size that model-viewer used for its normal first auto-frame.
+  lockedMainViewerAspect = width / height;
+
+  mvA.classList.add("camera-aspect-locked");
+  mvB.classList.add("camera-aspect-locked");
+
+  updateLockedMainViewerWidth();
+
+  if (
+    typeof ResizeObserver !== "undefined" &&
+    !mainViewerAspectResizeObserver
+  ) {
+    mainViewerAspectResizeObserver = new ResizeObserver(() => {
+      updateLockedMainViewerWidth();
+    });
+
+    mainViewerAspectResizeObserver.observe(anatomicalViewerWrap);
+  }
+}
+  
 let selectedAnnoIndex = -1;
 
 function getAnnoListForCurrentModel() { 
@@ -6180,18 +6248,9 @@ async function releasePrimeViewerAfterCapture(modelId, blobUrl) {
 let cameraReady = false;
 
 let latestCarryCam = null;
-
-// Last camera state intentionally produced by the user.
-// Responsive viewer resizing must not overwrite this state.
-let lastIntentionalCarryCam = null;
-
 let savingEnabled = true;
 let settleRaf = 0;
 let freezeCarryFromCameraChange = false;
-
-// True only while the viewer container is being resized and its saved
-// intentional camera is being restored.
-let viewerResizeCameraLockActive = false;
 
 // Real touchscreen pinch gestures are reported through model-viewer's
 // camera-change event rather than the desktop wheel pathway.
@@ -6278,15 +6337,12 @@ function scheduleSettledCarrySnapshotManual() {
 
     if (cam) {
       latestCarryCam = cloneCarry(cam);
-      lastIntentionalCarryCam = cloneCarry(cam);
     }
   });
 }
   
 function scheduleSettledCarrySnapshotCameraChange() {
   if (freezeCarryFromCameraChange) return;
-  if (viewerResizeCameraLockActive) return;
-
   scheduleSettledCarrySnapshot();
 }
 
@@ -6435,9 +6491,8 @@ mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m
 try { mv.jumpCameraToGoal?.(); } catch (_) {}
 }
 
-  // Keep intentional user zoom/orientation stable when model-viewer responds
-// to a narrower or taller viewer container by reframing the model.
-const viewerWrapForCameraLock = document.getElementById("viewerWrap");
+ viewerCameraResizeObserver.observe(viewerWrapForCameraLock);
+}
 let viewerResizeCameraRestoreTimer = null;
 
 if (
@@ -6467,7 +6522,6 @@ if (
     if (!cameraReady) return;
     if (!activeMv?.src) return;
     if (!savingEnabled) return;
-    if (!lastIntentionalCarryCam) return;
 
     viewerResizeCameraLockActive = true;
     freezeCarryFromCameraChange = true;
@@ -6483,13 +6537,10 @@ if (
         !cameraReady ||
         !activeMv?.src ||
         !savingEnabled ||
-        !lastIntentionalCarryCam
       ) {
         viewerResizeCameraLockActive = false;
         return;
       }
-
-      const lockedCam = cloneCarry(lastIntentionalCarryCam);
 
       applyCamWithDelta(activeMv, currentShownId, lockedCam);
       latestCarryCam = cloneCarry(lockedCam);
@@ -7018,7 +7069,6 @@ if (mv === activeMv && savingEnabled) {
 
   if (camNow) {
     latestCarryCam = cloneCarry(camNow);
-    lastIntentionalCarryCam = cloneCarry(camNow);
   }
 
   freezeCarryFromCameraChange = true;
@@ -7345,6 +7395,11 @@ if (token !== swapToken) return;
 
 if (modelId === PRIMARY_MODEL_ID) {
   cacheModel1ReferencePointsFromViewer(activeMv);
+
+  // Preserve the aspect ratio used for Model 1's normal initial auto-frame.
+  // Later narrow layouts crop horizontally rather than making model-viewer
+  // reframe radius/FOV to fit a smaller width.
+  lockMainViewerAspectAfterInitialFrame();
 
   // Download DTI tract files immediately after Model 1 is ready.
   // This downloads bytes only; tracts are parsed and mounted only when selected.
