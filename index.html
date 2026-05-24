@@ -2295,16 +2295,9 @@ const ANNOTATIONS = {
 "11_Anterior_Comissure_Annotated": makeAnnotations("11_Anterior_Comissure_Annotated", MODEL11_NAMES),
 };
 
-// Cross-model anchor aliasing + OFFSET:
-const ANCHOR_ALIASES = {
-"03_U_Fibers_Annotated": {
-"Inferiortemporalsulcus002": {
-modelId: "02_Veselless_Annotated",
-anchor: "Inferiortemporalsulcus001",
-offset: { x: 0, y: -1, z: 0 } // 1m down
-}
-}
-};
+// Optional cross-model anchor aliases.
+// Model 3 annotations are now positioned directly in its own GLB.
+const ANCHOR_ALIASES = {};
 
 const anchorPosCache = new Map();
 function cacheKey(modelId, anchor) { return `${modelId}::${anchor}`; }
@@ -6210,21 +6203,6 @@ if (err.name === "AbortError") {
 
   const nextState = state.get(nextModelId);
 
-  // Model 2 is already prepared through the required initial alias-coordinate
-  // prime process. Do not compete with that same operation.
-  if (
-    nextModelId === PRIME_MODEL_ID &&
-    prime02Promise &&
-    !prime02Done
-  ) {
-    try {
-      await prime02Promise;
-    } catch (_) {}
-
-    releaseModelsOutsideBalancedWindow(currentModelId);
-    return;
-  }
-
   // The next step is already prepared and retained.
   if (nextState?.blobUrl) {
     releaseModelsOutsideBalancedWindow(currentModelId);
@@ -7422,12 +7400,8 @@ animateCamera(activeMv,
 );
 }
 
-// ===== Invisible prime of model 02 (for consistent alias coordinates) =====
-const PRIME_MODEL_ID = "02_Veselless_Annotated";
-let prime02Done = false;
-let prime02Promise = null;
-// ===== Prewarm base state for every model (hidden load) =====
-const prewarmDone = new Set();      // modelId
+// ===== Prewarm base state for mode-specific hidden loads =====
+const prewarmDone = new Set();       // modelId
 let mvPrimeLock = Promise.resolve(); // serialize mvPrime usage
 
 function computeShiftForModel(mv, modelId) {
@@ -7435,80 +7409,6 @@ const bt = baseTarget.get(modelId);
 const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
 const delta = bt ? new THREE.Vector3(ct.x - bt.x, ct.y - bt.y, ct.z - bt.z) : new THREE.Vector3(0,0,0);
 return baseCenter.get(modelId).clone().add(delta);
-}
-
-function primeCacheFromModel02(mv) {
-const scene = getMvScene(mv);
-if (!scene || typeof scene.getObjectByName !== "function") return;
-
-captureAutoFrameBase(mv, PRIME_MODEL_ID);
-
-const bt = baseTarget.get(PRIME_MODEL_ID);
-if (bt) mv.cameraTarget = `${bt.x}m ${bt.y}m ${bt.z}m`;
-
-const shift = computeShiftForModel(mv, PRIME_MODEL_ID);
-
-scene.updateMatrixWorld?.(true);
-
-for (const anchor of MODEL02_NAMES) {
-const obj = scene.getObjectByName(anchor);
-if (!obj) continue;
-const p = obj.getWorldPosition ? obj.getWorldPosition(new THREE.Vector3()) : null;
-if (!p) continue;
-
-const x = p.x + shift.x;
-const y = p.y + shift.y;
-const z = p.z + shift.z;
-
-anchorPosCache.set(cacheKey(PRIME_MODEL_ID, anchor), new THREE.Vector3(x, y, z));
-}
-}
-
-async function startPrimeModel02Once() {
-  if (prime02Done) return;
-  if (prime02Promise) return prime02Promise;
-
-  prime02Promise = (async () => {
-    await (mvPrimeLock = mvPrimeLock.then(async () => {
-      if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
-        return;
-      }
-
-           const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
-
-      // The file itself may finish downloading while the page is hidden,
-      // but hidden model rendering waits for animation frames and can stall
-      // the complete automatic queue. Defer only the visual prime step.
-      if (document.visibilityState !== "visible") {
-        releaseModelBlobIfUnused(PRIME_MODEL_ID);
-        return;
-      }
-
-      if (mvPrime.src !== blobUrl) {
-        await new Promise(resolve => {
-          const onLoad = () => resolve();
-          mvPrime.addEventListener("load", onLoad, { once: true });
-          mvPrime.src = blobUrl;
-        });
-      }
-
-      await new Promise(resolve => requestAnimationFrame(resolve));
-      await new Promise(resolve => requestAnimationFrame(resolve));
-
-      primeCacheFromModel02(mvPrime);
-
-      prime02Done = true;
-      prewarmDone.add(PRIME_MODEL_ID);
-
-      await releasePrimeViewerAfterCapture(PRIME_MODEL_ID, blobUrl);
-    }));
-  })().catch(err => {
-    console.warn("Model 2 coordinate prime failed:", err);
-  }).finally(() => {
-    prime02Promise = null;
-  });
-
-  return prime02Promise;
 }
 // ===== Swap / show model =====
 let swapToken = 0;
@@ -7596,12 +7496,7 @@ releasePreviousIdleViewerAfterSwap();
 retainAnatomicalModelForCurrentMode(modelId);
 
 // Balanced mode prepares exactly one model ahead of the current viewed step.
-// Do not separately prepare Model 2 after Model 1, because Model 2 is already
-// prepared through the required initial annotation-coordinate prime.
-if (
-  atlasLoadingMode === "balanced" &&
-  !(modelId === PRIMARY_MODEL_ID && !prime02Done)
-) {
+if (atlasLoadingMode === "balanced") {
   prepareNextModelForBalancedMode(modelId);
 }
 // Stability releases previous models immediately.
@@ -7649,21 +7544,12 @@ if (modelId === PRIMARY_MODEL_ID) {
   startDtiPreloadOnce();
 }
 
-// If Model 2 was paused during its hidden prime and is later opened by the user,
-// capture the same required alias-coordinate information from the visible viewer.
-if (modelId === PRIME_MODEL_ID && !prime02Done) {
-  primeCacheFromModel02(activeMv);
-  prime02Done = true;
-  prewarmDone.add(PRIME_MODEL_ID);
-}
-
 if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
   backgroundPreparationStarted = true;
 
-  // Prime Model 2 once for existing annotation alias coordinates,
-// then begin the selected mode's background loading behavior.
-await startPrimeModel02Once();
-kickPreloadSoon();
+  // Begin the selected mode's normal background loading order.
+  // Model 2 is no longer secretly opened for annotation coordinates.
+  kickPreloadSoon();
 }
 })));
 };
@@ -7816,18 +7702,6 @@ if (modelAlreadyAvailable) {
   if (backgroundPreparationPromise) {
     try {
       await backgroundPreparationPromise;
-    } catch (_) {}
-  }
-
-  // If Model 2 prime is running for a different request, let only that
-  // essential one-time coordinate operation settle.
-   if (
-    prime02Promise &&
-    !prime02Done &&
-    modelId !== PRIME_MODEL_ID
-  ) {
-    try {
-      await prime02Promise;
     } catch (_) {}
   }
 
