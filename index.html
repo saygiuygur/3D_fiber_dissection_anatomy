@@ -5566,21 +5566,18 @@ async function downloadToBlobUrl(modelId) {
       const blob = new Blob(chunks, { type: "model/gltf-binary" });
       const blobUrl = URL.createObjectURL(blob);
 
-      st.status = "done";
+            st.status = "done";
       st.progressText = "";
-      st.blobUrl = null;
+      st.blobUrl = blobUrl;
       st.cached = true;
       st.userPaused = false;
       refreshMeta(modelId);
 
-      paintDownloading(null);
+      if (!loadingFromAlreadyCachedFile) {
+        paintDownloading(null);
+      }
 
-      // In Performance mode, parse/retain this completed cached model
-      // separately while the file-download queue continues independently.
-      kickPerformanceCachePreparationSoon();
-}
-
-maybeResumePreload();
+      maybeResumePreload();
 
       return blobUrl;
     } catch (err) {
@@ -5675,14 +5672,18 @@ if (err.name === "AbortError") {
         received = blob.size;
       }
 
-      st.status = "done";
-st.progressText = "";
-st.blobUrl = null;
-st.cached = true;
-st.userPaused = false;
-refreshMeta(modelId);
+            st.status = "done";
+      st.progressText = "";
+      st.blobUrl = null;
+      st.cached = true;
+      st.userPaused = false;
+      refreshMeta(modelId);
 
       paintDownloading(null);
+
+      // In Performance mode, parse/retain this completed cached model
+      // separately while the file-download queue continues independently.
+      kickPerformanceCachePreparationSoon();
     } catch (err) {
       paintDownloading(null);
 
@@ -5997,7 +5998,6 @@ async function resumePreload() {
         }
 
         console.warn("Background model processing failed:", id, err);
-            } finally {
              } finally {
         backgroundPreparationPromise = null;
         backgroundPreparationModelId = null;
