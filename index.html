@@ -6203,7 +6203,7 @@ if (err.name === "AbortError") {
 
   const nextState = state.get(nextModelId);
 
-  // The next step is already prepared and retained.
+  // The next step already has a retained Blob URL.
   if (nextState?.blobUrl) {
     releaseModelsOutsideBalancedWindow(currentModelId);
     return;
@@ -6221,10 +6221,40 @@ if (err.name === "AbortError") {
 
   balancedAheadPromise = (async () => {
     try {
-      const blobUrl = await downloadToBlobUrl(nextModelId);
+      // Balanced mode must never initiate the raw GLB download for the
+      // next model. The normal background queue owns model downloads.
+      // Wait until that queue has downloaded and stored this model.
+      while (true) {
+        if (
+          atlasLoadingMode !== "balanced" ||
+          currentShownId !== currentModelId
+        ) {
+          releaseModelsOutsideBalancedWindow(currentShownId);
+          return;
+        }
 
-      // The user may have switched to another model while the next step
-      // was downloading. In that case, do not hidden-prepare an outdated step.
+        const st = state.get(nextModelId);
+
+        if (st?.status === "done" && st?.cached === true) {
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 120));
+      }
+
+      // If browser viewer caching was explicitly cleared and disabled for
+      // this session, do not perform Balanced look-ahead preparation, because
+      // creating the Blob would otherwise require a second download.
+      if (browserViewerCacheDisabledForSession) {
+        releaseModelsOutsideBalancedWindow(currentModelId);
+        return;
+      }
+
+      // Create the Blob URL only from the already downloaded stored model.
+      // No new raw .glb network request should occur here.
+      const blobUrl =
+        await createBlobUrlFromStoredModel(nextModelId);
+
       if (
         atlasLoadingMode !== "balanced" ||
         currentShownId !== currentModelId
@@ -6266,7 +6296,11 @@ if (err.name === "AbortError") {
       releaseModelsOutsideBalancedWindow(currentModelId);
     } catch (err) {
       if (err?.name !== "AbortError") {
-        console.warn("Balanced next-model preparation failed:", nextModelId, err);
+        console.warn(
+          "Balanced next-model preparation failed:",
+          nextModelId,
+          err
+        );
       }
     } finally {
       balancedAheadPromise = null;
