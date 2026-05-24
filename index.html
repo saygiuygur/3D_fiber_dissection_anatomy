@@ -4240,6 +4240,88 @@ MODELS.forEach(m => state.set(m.id, {
 let currentController = null;
 let currentDownloadingId = null;
 const inFlight = new Map();
+  // Completed anatomical GLB files are stored explicitly in browser storage.
+// Stability mode still does not retain Blob URLs for automatically
+// downloaded models.
+const ANATOMICAL_FILE_CACHE_NAME =
+  "fiber-dissection-anatomical-files-v1";
+
+const storedModelBlobReadsInFlight = new Map();
+
+async function storeAnatomicalFileResponse(modelUrl, response) {
+  try {
+    const cache = await caches.open(ANATOMICAL_FILE_CACHE_NAME);
+    await cache.put(modelUrl, response);
+    return true;
+  } catch (err) {
+    console.warn("Could not store anatomical model file:", modelUrl, err);
+    return false;
+  }
+}
+
+async function getStoredAnatomicalFileResponse(modelUrl) {
+  try {
+    const cache = await caches.open(ANATOMICAL_FILE_CACHE_NAME);
+    return await cache.match(modelUrl);
+  } catch (err) {
+    console.warn("Could not retrieve anatomical model file:", modelUrl, err);
+    return null;
+  }
+}
+
+async function createBlobUrlFromStoredModel(modelId) {
+  const model = MODELS.find(x => x.id === modelId);
+  const st = state.get(modelId);
+
+  if (!model || !st) {
+    throw new Error(`Unknown anatomical model: ${modelId}`);
+  }
+
+  if (st.blobUrl) {
+    return st.blobUrl;
+  }
+
+  if (storedModelBlobReadsInFlight.has(modelId)) {
+    return storedModelBlobReadsInFlight.get(modelId);
+  }
+
+  const p = (async () => {
+    let response = await getStoredAnatomicalFileResponse(model.url);
+
+    // Fallback only for files downloaded before explicit Cache Storage
+    // was introduced, or after browser storage was cleared.
+    if (!response) {
+      response = await fetch(model.url, {
+        cache: "force-cache"
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      storeAnatomicalFileResponse(model.url, response.clone());
+    }
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    if (st.blobUrl && st.blobUrl !== blobUrl) {
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch (_) {}
+
+      return st.blobUrl;
+    }
+
+    st.blobUrl = blobUrl;
+    return blobUrl;
+  })().finally(() => {
+    storedModelBlobReadsInFlight.delete(modelId);
+  });
+
+  storedModelBlobReadsInFlight.set(modelId, p);
+  return p;
+}
 let preloadEnabled = true;
 let preloadTimer = null;
 let resumeRequested = false;
@@ -5482,6 +5564,13 @@ async function downloadToBlobUrl(modelId) {
     return st.blobUrl;
   }
 
+  // A green-tick model downloaded in Stability/Balanced cache-only mode
+  // should obtain its temporary Blob URL from explicit browser storage,
+  // not through another ordinary GLB fetch.
+  if (st.cached === true && !st.blobUrl) {
+    return createBlobUrlFromStoredModel(modelId);
+  }
+
   if (inFlight.has(modelId)) return inFlight.get(modelId);
 
   const p = (async () => {
@@ -5541,6 +5630,12 @@ async function downloadToBlobUrl(modelId) {
       const res = await fetch(model.url, fetchOptions);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // Save directly viewed newly downloaded models for later Stability-mode
+      // reopening after their temporary Blob URL has been released.
+      if (!loadingFromAlreadyCachedFile) {
+        storeAnatomicalFileResponse(model.url, res.clone());
+      }
 
       const total = Number(res.headers.get("Content-Length")) || null;
       const reader = res.body.getReader();
@@ -5637,7 +5732,7 @@ if (err.name === "AbortError") {
     currentDownloadingId = modelId;
 
     try {
-      const response = await fetch(model.url, {
+            const response = await fetch(model.url, {
         signal: currentController.signal,
         cache: "force-cache"
       });
@@ -5645,6 +5740,11 @@ if (err.name === "AbortError") {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
+
+      // Store the same downloaded response explicitly in browser storage.
+      // This does not create a Blob URL or load the model into memory for viewing.
+      const storedResponsePromise =
+        storeAnatomicalFileResponse(model.url, response.clone());
 
       const total =
         Number(response.headers.get("Content-Length")) || 0;
@@ -5674,7 +5774,11 @@ if (err.name === "AbortError") {
         received = blob.size;
       }
 
-            st.status = "done";
+                  // Do not show the model as completed until the same downloaded file
+      // is safely available for immediate selected-model retrieval.
+      await storedResponsePromise;
+
+      st.status = "done";
       st.progressText = "";
       st.blobUrl = null;
       st.cached = true;
