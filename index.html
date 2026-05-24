@@ -262,8 +262,9 @@ border-top:1px solid #ededed;
 .offline-row{
 display:flex;
 align-items:center;
-justify-content:space-between;
-gap:12px;
+justify-content:flex-start;
+gap:8px;
+flex-wrap:wrap;
 }
 
 .offline-title{
@@ -291,7 +292,27 @@ transition:background 120ms ease, border-color 120ms ease;
 background:#f4f8fd;
 border-color:#a9c9ed;
 }
+.browser-cache-clear-btn{
+height:38px;
+padding:0 12px;
+border:none;
+border-radius:9px;
+background:#d93025;
+color:#fff;
+font-size:12px;
+font-weight:600;
+cursor:pointer;
+transition:background 120ms ease, opacity 120ms ease;
+}
 
+.browser-cache-clear-btn:hover{
+background:#b3261e;
+}
+
+.browser-cache-clear-btn:disabled{
+opacity:0.55;
+cursor:default;
+}
 .offline-open-btn svg{
 width:22px;
 height:22px;
@@ -1543,7 +1564,47 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
         <path d="M4 17v3h16v-3" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
+    </button>
+
+    <button id="viewerCacheClearBtn"
+      class="browser-cache-clear-btn"
+      type="button">
+      Clear Cache
+    </button>
+  </div>
+
+  <div id="viewerCacheDeletePopup"
+    class="offline-popup installed-manage-popup"
+    aria-label="Clear cached browser model files">
+
+    <button id="viewerCacheDeleteCloseBtn"
+      class="offline-close-btn"
+      type="button"
+      aria-label="Close">×</button>
+
+    <div class="offline-screen">
+      <div class="offline-popup-heading">Clear Cache</div>
+
+      <p class="offline-popup-text">
+        This will delete the cached model files stored in your browser.
+        It will not affect files downloaded for offline use.
+        To delete those files, use the Delete Files button in the downloaded app.
+      </p>
+
+      <div class="installed-manage-actions">
+        <button id="viewerCacheDeleteCancelBtn"
+          class="installed-delete-cancel-btn"
+          type="button">
+          Cancel
         </button>
+
+        <button id="viewerCacheDeleteConfirmBtn"
+          class="installed-delete-confirm-btn"
+          type="button">
+          Delete
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2259,6 +2320,12 @@ const installedDeleteConfirmBtn = document.getElementById('installedDeleteConfir
 const offlineOpenBtn = document.getElementById('offlineOpenBtn');
 const offlinePopup = document.getElementById('offlinePopup');
 const offlineCloseBtn = document.getElementById('offlineCloseBtn');
+
+const viewerCacheClearBtn = document.getElementById('viewerCacheClearBtn');
+const viewerCacheDeletePopup = document.getElementById('viewerCacheDeletePopup');
+const viewerCacheDeleteCloseBtn = document.getElementById('viewerCacheDeleteCloseBtn');
+const viewerCacheDeleteCancelBtn = document.getElementById('viewerCacheDeleteCancelBtn');
+const viewerCacheDeleteConfirmBtn = document.getElementById('viewerCacheDeleteConfirmBtn');
 const offlineContinueBtn = document.getElementById('offlineContinueBtn');
 const offlineIntroScreen = document.getElementById('offlineIntroScreen');
 const offlinePlatformScreen = document.getElementById('offlinePlatformScreen');
@@ -3153,8 +3220,9 @@ async function confirmDeleteInstalledOfflineFiles() {
       cacheNames
         .filter(name =>
           name.startsWith("fiber-dissection-offline-data-") ||
-          name.startsWith("fiber-dissection-offline-shell-") ||
-          name === OFFLINE_CONTROL_CACHE_NAME
+name.startsWith("fiber-dissection-offline-shell-") ||
+name.startsWith(ANATOMICAL_FILE_CACHE_PREFIX) ||
+name === OFFLINE_CONTROL_CACHE_NAME
         )
         .map(name => caches.delete(name))
     );
@@ -3831,7 +3899,66 @@ function closeOfflinePopup() {
   offlinePopup.classList.remove('open');
   resetOfflinePopupScreen();
 }
+function positionViewerCacheDeletePopup() {
+  if (!viewerCacheClearBtn || !viewerCacheDeletePopup) return;
 
+  const buttonRect = viewerCacheClearBtn.getBoundingClientRect();
+  const popupWidth = 320;
+  const popupHeight = viewerCacheDeletePopup.offsetHeight || 235;
+  const gap = 12;
+
+  let left = buttonRect.right + gap;
+  let top = buttonRect.top - 18;
+
+  if (left + popupWidth + 12 > window.innerWidth) {
+    left = Math.max(12, buttonRect.left - popupWidth - gap);
+  }
+
+  top = Math.max(
+    12,
+    Math.min(top, window.innerHeight - popupHeight - 12)
+  );
+
+  viewerCacheDeletePopup.style.left = `${left}px`;
+  viewerCacheDeletePopup.style.top = `${top}px`;
+}
+
+function openViewerCacheDeletePopup() {
+  if (!viewerCacheDeletePopup) return;
+
+  positionViewerCacheDeletePopup();
+  viewerCacheDeletePopup.classList.add('open');
+}
+
+function closeViewerCacheDeletePopup() {
+  viewerCacheDeletePopup?.classList.remove('open');
+}
+
+async function confirmClearStoredViewerModelFiles() {
+  if (!("caches" in window)) return;
+
+  viewerCacheDeleteConfirmBtn.disabled = true;
+  viewerCacheDeleteCancelBtn.disabled = true;
+  viewerCacheClearBtn.disabled = true;
+
+  try {
+    browserViewerCacheDisabledForSession = true;
+
+    await caches.delete(ANATOMICAL_FILE_CACHE_NAME);
+
+    closeViewerCacheDeletePopup();
+  } catch (err) {
+    console.error("Could not clear stored browser model files:", err);
+
+    window.alert(
+      "The cached browser model files could not be deleted. Please try again."
+    );
+  } finally {
+    viewerCacheDeleteConfirmBtn.disabled = false;
+    viewerCacheDeleteCancelBtn.disabled = false;
+    viewerCacheClearBtn.disabled = false;
+  }
+}
 offlineOpenBtn?.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();
@@ -3841,7 +3968,21 @@ offlineOpenBtn?.addEventListener('click', (e) => {
 offlineCloseBtn?.addEventListener('click', () => {
   closeOfflinePopup();
 });
+viewerCacheClearBtn?.addEventListener('click', () => {
+  openViewerCacheDeletePopup();
+});
 
+viewerCacheDeleteCloseBtn?.addEventListener('click', () => {
+  closeViewerCacheDeletePopup();
+});
+
+viewerCacheDeleteCancelBtn?.addEventListener('click', () => {
+  closeViewerCacheDeletePopup();
+});
+
+viewerCacheDeleteConfirmBtn?.addEventListener('click', () => {
+  confirmClearStoredViewerModelFiles();
+});
 offlineContinueBtn?.addEventListener('click', () => {
   showPlatformSelectionScreen();
 });
@@ -3849,6 +3990,10 @@ offlineContinueBtn?.addEventListener('click', () => {
 window.addEventListener('resize', () => {
   if (offlinePopup?.classList.contains('open')) {
     positionOfflinePopup();
+  }
+
+  if (viewerCacheDeletePopup?.classList.contains('open')) {
+    positionViewerCacheDeletePopup();
   }
 });
 
@@ -4414,10 +4559,26 @@ const ANATOMICAL_FILE_CACHE_NAME =
 
 const storedModelBlobReadsInFlight = new Map();
 
+// After the user explicitly clears browser viewer files, do not write them
+// back again during the remainder of this open browser session.
+let browserViewerCacheDisabledForSession = false;
+
 async function storeAnatomicalFileResponse(modelUrl, response) {
+  if (browserViewerCacheDisabledForSession) {
+    return false;
+  }
+
   try {
     const cache = await caches.open(ANATOMICAL_FILE_CACHE_NAME);
     await cache.put(modelUrl, response);
+
+    // If deletion occurred while this write was already running,
+    // remove the cache again instead of recreating it.
+    if (browserViewerCacheDisabledForSession) {
+      await caches.delete(ANATOMICAL_FILE_CACHE_NAME);
+      return false;
+    }
+
     return true;
   } catch (err) {
     console.warn("Could not store anatomical model file:", modelUrl, err);
@@ -4426,6 +4587,10 @@ async function storeAnatomicalFileResponse(modelUrl, response) {
 }
 
 async function getStoredAnatomicalFileResponse(modelUrl) {
+  if (browserViewerCacheDisabledForSession) {
+    return null;
+  }
+
   try {
     const cache = await caches.open(ANATOMICAL_FILE_CACHE_NAME);
     return await cache.match(modelUrl);
