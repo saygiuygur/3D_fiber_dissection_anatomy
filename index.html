@@ -5577,17 +5577,6 @@ async function downloadToBlobUrl(modelId) {
         paintDownloading(null);
       }
 
-      // The automatic anatomical file-download queue may begin as soon as
-      // Model 1's bytes are available. It must not wait for Model 1 to render
-      // visibly, because viewer/render barriers can pause in a hidden tab.
-      if (
-        modelId === PRIMARY_MODEL_ID &&
-        !backgroundPreparationStarted
-      ) {
-        backgroundPreparationStarted = true;
-        kickPreloadSoon();
-      }
-
       maybeResumePreload();
 
       return blobUrl;
@@ -5957,10 +5946,7 @@ async function resumePreload() {
     return;
   }
 
-    // The automatic queue downloads file bytes only. It may begin once the
-  // primary model file is ready, without waiting for the visible viewer or
-  // camera setup to complete.
-  if (!backgroundPreparationStarted) {
+  if (!cameraReady) {
     resumeRequested = true;
     return;
   }
@@ -6991,20 +6977,11 @@ async function startPrimeModel02Once() {
 
   prime02Promise = (async () => {
     await (mvPrimeLock = mvPrimeLock.then(async () => {
-            if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
+      if (!GLOBAL_BASE_CENTER || !GLOBAL_BASE_TARGET) {
         return;
       }
 
-      // Model 2 may already be downloading through the independent automatic
-      // file queue. Let that download finish first, then create the Blob URL
-      // from the completed cached file for the coordinate-prime viewer step.
-      if (inFlight.has(PRIME_MODEL_ID)) {
-        try {
-          await inFlight.get(PRIME_MODEL_ID);
-        } catch (_) {}
-      }
-
-      const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
+           const blobUrl = await downloadToBlobUrl(PRIME_MODEL_ID);
 
       // The file itself may finish downloading while the page is hidden,
       // but hidden model rendering waits for animation frames and can stall
@@ -7187,10 +7164,13 @@ if (modelId === PRIME_MODEL_ID && !prime02Done) {
   prewarmDone.add(PRIME_MODEL_ID);
 }
 
-if (modelId === PRIMARY_MODEL_ID && !prime02Done) {
-  // Model 2 coordinate priming still requires a rendered viewer, but it
-  // must not gate or delay the automatic anatomical file-download queue.
-  startPrimeModel02Once();
+if (!backgroundPreparationStarted && modelId === PRIMARY_MODEL_ID) {
+  backgroundPreparationStarted = true;
+
+  // Prime Model 2 once for existing annotation alias coordinates,
+// then begin the selected mode's background loading behavior.
+await startPrimeModel02Once();
+kickPreloadSoon();
 }
 })));
 };
