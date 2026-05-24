@@ -6180,9 +6180,18 @@ async function releasePrimeViewerAfterCapture(modelId, blobUrl) {
 let cameraReady = false;
 
 let latestCarryCam = null;
+
+// Last camera state intentionally produced by the user.
+// Responsive viewer resizing must not overwrite this state.
+let lastIntentionalCarryCam = null;
+
 let savingEnabled = true;
 let settleRaf = 0;
 let freezeCarryFromCameraChange = false;
+
+// True only while the viewer container is being resized and its saved
+// intentional camera is being restored.
+let viewerResizeCameraLockActive = false;
 
 // Real touchscreen pinch gestures are reported through model-viewer's
 // camera-change event rather than the desktop wheel pathway.
@@ -6255,13 +6264,30 @@ if (cam) latestCarryCam = cloneCarry(cam);
 }
 
 function scheduleSettledCarrySnapshotManual() {
-freezeCarryFromCameraChange = false;
-scheduleSettledCarrySnapshot();
-}
+  freezeCarryFromCameraChange = false;
 
+  if (!savingEnabled) return;
+  if (!activeMv || !activeMv.classList.contains('shownViewer')) return;
+
+  if (settleRaf) cancelAnimationFrame(settleRaf);
+
+  settleRaf = requestAnimationFrame(() => {
+    settleRaf = 0;
+
+    const cam = readCamWithDelta(activeMv);
+
+    if (cam) {
+      latestCarryCam = cloneCarry(cam);
+      lastIntentionalCarryCam = cloneCarry(cam);
+    }
+  });
+}
+  
 function scheduleSettledCarrySnapshotCameraChange() {
-if (freezeCarryFromCameraChange) return;
-scheduleSettledCarrySnapshot();
+  if (freezeCarryFromCameraChange) return;
+  if (viewerResizeCameraLockActive) return;
+
+  scheduleSettledCarrySnapshot();
 }
 
 for (const mv of [mvA, mvB]) {
@@ -6409,6 +6435,80 @@ mv.cameraOrbit = `${cam.orbit.theta}rad ${cam.orbit.phi}rad ${cam.orbit.radius}m
 try { mv.jumpCameraToGoal?.(); } catch (_) {}
 }
 
+  // Keep intentional user zoom/orientation stable when model-viewer responds
+// to a narrower or taller viewer container by reframing the model.
+const viewerWrapForCameraLock = document.getElementById("viewerWrap");
+let viewerResizeCameraRestoreTimer = null;
+
+if (
+  viewerWrapForCameraLock &&
+  typeof ResizeObserver !== "undefined"
+) {
+  let previousViewerWidth = viewerWrapForCameraLock.clientWidth;
+  let previousViewerHeight = viewerWrapForCameraLock.clientHeight;
+
+  const viewerCameraResizeObserver = new ResizeObserver(entries => {
+    const entry = entries[0];
+    if (!entry) return;
+
+    const nextWidth = Math.round(entry.contentRect.width);
+    const nextHeight = Math.round(entry.contentRect.height);
+
+    if (
+      nextWidth === previousViewerWidth &&
+      nextHeight === previousViewerHeight
+    ) {
+      return;
+    }
+
+    previousViewerWidth = nextWidth;
+    previousViewerHeight = nextHeight;
+
+    if (!cameraReady) return;
+    if (!activeMv?.src) return;
+    if (!savingEnabled) return;
+    if (!lastIntentionalCarryCam) return;
+
+    viewerResizeCameraLockActive = true;
+    freezeCarryFromCameraChange = true;
+
+    if (viewerResizeCameraRestoreTimer) {
+      clearTimeout(viewerResizeCameraRestoreTimer);
+    }
+
+    // Wait until resizing/sidebar/orientation changes settle, then restore
+    // the last camera state intentionally selected by the user.
+    viewerResizeCameraRestoreTimer = setTimeout(() => {
+      if (
+        !cameraReady ||
+        !activeMv?.src ||
+        !savingEnabled ||
+        !lastIntentionalCarryCam
+      ) {
+        viewerResizeCameraLockActive = false;
+        return;
+      }
+
+      const lockedCam = cloneCarry(lastIntentionalCarryCam);
+
+      applyCamWithDelta(activeMv, currentShownId, lockedCam);
+      latestCarryCam = cloneCarry(lockedCam);
+
+      try {
+        activeMv.requestUpdate?.();
+      } catch (_) {}
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          viewerResizeCameraLockActive = false;
+        });
+      });
+    }, 140);
+  });
+
+  viewerCameraResizeObserver.observe(viewerWrapForCameraLock);
+}
+  
 function clearHotspots(mv) {
 mv.querySelectorAll('[slot^="hotspot-"]').forEach(el => el.remove());
 }
@@ -6914,9 +7014,14 @@ try { mv.jumpCameraToGoal?.(); } catch (_) {}
 // focus doesn't trigger wheel/pointerup -> force carry snapshot
 try {
 if (mv === activeMv && savingEnabled) {
-const camNow = readCamWithDelta(activeMv);
-if (camNow) latestCarryCam = cloneCarry(camNow);
-freezeCarryFromCameraChange = true;
+  const camNow = readCamWithDelta(activeMv);
+
+  if (camNow) {
+    latestCarryCam = cloneCarry(camNow);
+    lastIntentionalCarryCam = cloneCarry(camNow);
+  }
+
+  freezeCarryFromCameraChange = true;
 }
 } catch (_) {}
 
@@ -7361,19 +7466,9 @@ async function onUserSelect(modelId) {
     return;
   }
 
-  // Clicking an already downloaded model opens it, while a manually paused
-// anatomical download queue remains paused.
+  // Clicking an already downloaded model opens immediately.
+// Optional Balanced next-model preparation must never block navigation.
 if (modelAlreadyAvailable) {
-  if (
-    atlasLoadingMode === "balanced" &&
-    balancedAheadPromise &&
-    balancedAheadModelId !== modelId
-  ) {
-    try {
-      await balancedAheadPromise;
-    } catch (_) {}
-  }
-
   collapsePortraitSidebarAfterModelSelection();
   showModel(modelId);
   return;
