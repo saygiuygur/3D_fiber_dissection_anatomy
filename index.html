@@ -6603,9 +6603,9 @@ const WHEEL_ZOOM_MAX_STEP = 5;
 // native mouse-wheel-like event through model-viewer's interaction surface.
 const TOUCHPAD_PIXEL_STEP_THRESHOLD = 18;
 
-// Default until a real physical mouse-wheel step is observed.
-// On ordinary desktop mouse wheels, the observed native delta will replace it.
-let nativeMouseWheelStepDelta = 100;
+// A real physical mouse-wheel event can calibrate the native viewer input.
+// Until such an event is observed, touchpad conversion is not applied.
+let nativeMouseWheelStepDelta = null;
 
 let wheelZoomStep = 0;
 let touchpadPixelBuffer = 0;
@@ -6638,7 +6638,8 @@ function allowNativeZoomStep(ev, zoomIn) {
 }
 
 function replayOneNativeViewerZoomStep(interactionTarget, zoomIn) {
-  if (!interactionTarget?.dispatchEvent) return false;
+    if (!interactionTarget?.dispatchEvent) return false;
+  if (!Number.isFinite(nativeMouseWheelStepDelta)) return false;
   if (!allowNativeZoomStep(null, zoomIn)) return false;
 
   replayingNativeWheelStep = true;
@@ -6681,12 +6682,18 @@ function handleFixedStepWheelZoom(mv, ev) {
     touchpadBurstActive ||
     absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD;
 
-  if (!isTouchpadInput) {
-    // A genuine physical mouse-wheel step is already a native viewer input.
-    // Remember its actual size so converted touchpad steps match it.
+   if (!isTouchpadInput) {
+    // Use one genuine physical mouse-wheel movement to calibrate the exact
+    // native wheel input that model-viewer receives on this computer.
     nativeMouseWheelStepDelta = absDelta;
 
     allowNativeZoomStep(ev, zoomIn);
+    return;
+  }
+
+  // Touchpad conversion requires one prior genuine mouse-wheel movement.
+  // Until calibrated, let the touchpad keep its native behaviour.
+  if (!Number.isFinite(nativeMouseWheelStepDelta)) {
     return;
   }
 
