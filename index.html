@@ -131,10 +131,39 @@ justify-content:center;
 width:15px;
 height:15px;
 display:block;
-transform:rotate(-90deg); /* open sidebar: arrow points left */
+transform:rotate(-90deg); /* expanded sidebar: points left */
 transition:transform .18s ease;
 }
 
+/* Collapsed vertical Dissection Steps tab */
+.sidebar-collapse-btn.collapsed{
+left:0;
+width:58px;
+height:170px;
+border:1px solid #dedede;
+border-left:none;
+border-radius:0 22px 22px 0;
+background:#fff;
+box-shadow:0 8px 24px rgba(0,0,0,0.18);
+overflow:visible;
+}
+
+/* Vertical label shown only when sidebar is collapsed */
+.sidebar-collapse-btn.collapsed .sidebar-collapse-label{
+display:block;
+position:absolute;
+left:26px;
+top:50%;
+transform:translate(-50%, -50%) rotate(-90deg);
+white-space:nowrap;
+font-size:15px;
+font-weight:700;
+line-height:1.2;
+letter-spacing:0;
+color:#111;
+}
+
+/* Separate vertical pill matching the DTI control */
 .sidebar-collapse-btn.collapsed .sidebar-collapse-arrow{
 position:absolute;
 right:-13px;
@@ -154,8 +183,9 @@ box-sizing:border-box;
 color:#666;
 }
 
+/* Same SVG as DTI, rotated to point right */
 .sidebar-collapse-btn.collapsed .sidebar-collapse-arrow svg{
-transform:rotate(90deg); /* collapsed sidebar: arrow points right */
+transform:rotate(90deg);
 }
 
 @media (max-width:520px){
