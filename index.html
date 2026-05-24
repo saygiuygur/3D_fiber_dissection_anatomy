@@ -5466,21 +5466,6 @@ function kickPreloadSoon() {
   }, 0);
 }
   
-  document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
-  if (!backgroundPreparationStarted) return;
-  if (anatomicalDownloadsUserPaused) return;
-
-  // Model 2 may have downloaded while hidden without completing the
-  // one-time hidden coordinate-prime step. Complete that step now.
-  if (!prime02Done) {
-    startPrimeModel02Once();
-  }
-
-  // Resume any remaining automatic download/preparation work in all modes.
-  kickPreloadSoon();
-});
-  
 async function downloadToBlobUrl(modelId) {
   const model = MODELS.find(x => x.id === modelId);
   const st = state.get(modelId);
@@ -5726,15 +5711,6 @@ refreshMeta(modelId);
     return;
   }
 
-  // Never let Balanced look-ahead preparation interrupt the current
-  // automatic anatomical download. The active download must finish first.
-  if (
-    currentDownloadingId &&
-    state.get(currentDownloadingId)?.status === "loading"
-  ) {
-    return;
-  }
-
   const nextState = state.get(nextModelId);
 
   // Model 2 is already prepared through the required initial alias-coordinate
@@ -5840,14 +5816,6 @@ async function prepareModelForPerformanceMode(modelId) {
   await (mvPrimeLock = mvPrimeLock.then(async () => {
     if (performancePreparedModelIds.has(modelId)) return;
 
-    // Do not begin hidden model rendering when the page is not visible.
-    // requestAnimationFrame/model-viewer preparation may pause in the
-    // background and would block later downloads in the queue.
-    if (document.visibilityState !== "visible") {
-      releaseModelBlobIfUnused(modelId);
-      return;
-    }
-
     if (mvPrime.src !== blobUrl) {
       await new Promise(resolve => {
         const onLoad = () => resolve();
@@ -5927,17 +5895,8 @@ async function resumePreload() {
     continue;
   }
 
-  if (document.visibilityState !== "visible") {
-    // While hidden, keep downloading files but do not load/render them
-    // into mvPrime, because rendering waits can block the queue.
-    if (st?.status === "done") continue;
-
-    backgroundPreparationPromise =
-      downloadModelToCacheOnly(id);
-  } else {
-    backgroundPreparationPromise =
-      prepareModelForPerformanceMode(id);
-  }
+  backgroundPreparationPromise =
+    prepareModelForPerformanceMode(id);
 } else {
   // Stability and Balanced download model files in the background,
   // but parse/open them only when the user selects them.
@@ -5962,15 +5921,6 @@ async function resumePreload() {
       }
     }
 
-    // After the automatic anatomical download queue is no longer competing
-    // for the network/controller, Balanced mode may safely prepare the next
-    // sequential model for faster switching.
-    if (
-      atlasLoadingMode === "balanced" &&
-      !anatomicalDownloadsUserPaused
-    ) {
-      prepareNextModelForBalancedMode(currentShownId);
-    }
   } finally {
     preloadRunning = false;
   }
