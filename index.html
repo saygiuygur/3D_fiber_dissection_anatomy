@@ -3349,29 +3349,109 @@ function updateOfflineDownloadProgress(platform, bytesCompleted, currentBytes) {
     offlineCurrentPercent
   );
 }
+async function getViewerDownloadedModelForOffline(
+  asset,
+  platform,
+  bytesCompleted
+) {
+  let storedResponse =
+    await getStoredAnatomicalFileResponse(asset.url);
 
+  if (storedResponse) {
+    return storedResponse;
+  }
+
+  const expectedBytes = offlineAssetSizes.get(asset.url) || 0;
+
+  // Use the existing viewer download pathway. If this model is already
+  // downloading, downloadModelToCacheOnly() joins the same in-flight promise.
+  // If it has not started yet, this starts it through the viewer pipeline,
+  // so it becomes available for viewing as soon as completed.
+  const viewerDownloadPromise = downloadModelToCacheOnly(asset.id);
+
+  const progressTimer = setInterval(() => {
+    const st = state.get(asset.id);
+    const percent = parsePercent(st?.progressText);
+
+    if (expectedBytes > 0 && percent > 0) {
+      updateOfflineDownloadProgress(
+        platform,
+        bytesCompleted,
+        expectedBytes * percent / 100
+      );
+    }
+  }, 100);
+
+  try {
+    await viewerDownloadPromise;
+  } finally {
+    clearInterval(progressTimer);
+  }
+
+  storedResponse =
+    await getStoredAnatomicalFileResponse(asset.url);
+
+  if (!storedResponse) {
+    throw new Error(
+      `Viewer completed ${asset.id}, but its stored model file was not found.`
+    );
+  }
+
+  return storedResponse;
+}
 async function saveOneAssetForOffline(
   asset,
   cache,
   platform,
   bytesCompleted
 ) {
+  // Already saved for offline use: count it immediately and skip downloading.
   const alreadySaved = await cache.match(asset.url);
 
-if (alreadySaved) {
-  const savedBlob = await alreadySaved.blob();
-  rememberOfflineAssetSize(asset.url, savedBlob.size);
+  if (alreadySaved) {
+    const savedBlob = await alreadySaved.blob();
 
-  updateOfflineDownloadProgress(
-    platform,
-    bytesCompleted,
-    savedBlob.size
-  );
+    rememberOfflineAssetSize(asset.url, savedBlob.size);
 
-  return savedBlob.size;
-}
+    updateOfflineDownloadProgress(
+      platform,
+      bytesCompleted,
+      savedBlob.size
+    );
 
-const response = await fetch(asset.url, { cache: "force-cache" });
+    return savedBlob.size;
+  }
+
+  // Anatomical models are owned by the viewer downloader.
+  // Copy them into the offline cache only after the viewer cache has them,
+  // so model viewing remains available during offline preparation.
+  if (asset.type === "model") {
+    const viewerStoredResponse =
+      await getViewerDownloadedModelForOffline(
+        asset,
+        platform,
+        bytesCompleted
+      );
+
+    const offlineCopy = viewerStoredResponse.clone();
+    const storedBlob = await viewerStoredResponse.blob();
+
+    rememberOfflineAssetSize(asset.url, storedBlob.size);
+
+    await cache.put(asset.url, offlineCopy);
+
+    updateOfflineDownloadProgress(
+      platform,
+      bytesCompleted,
+      storedBlob.size
+    );
+
+    return storedBlob.size;
+  }
+
+  // DTI files are not part of the anatomical viewer model queue,
+  // so continue downloading them directly for offline storage.
+  const response = await fetch(asset.url, { cache: "force-cache" });
 
   if (!response.ok) {
     throw new Error(`Could not download ${asset.id}: HTTP ${response.status}`);
@@ -3431,7 +3511,6 @@ const response = await fetch(asset.url, { cache: "force-cache" });
 
   return blob.size;
 }
-
 async function startOfflineAtlasDownload(platform) {
   if (offlineDownloadRunning) return;
 
