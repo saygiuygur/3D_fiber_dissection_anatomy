@@ -6544,85 +6544,119 @@ t.z + r * sinPhi * Math.cos(theta)
 
 const WHEEL_ZOOM_MIN_STEP = 0;
 const WHEEL_ZOOM_MAX_STEP = 5;
-const WHEEL_ZOOM_RADIUS_FACTOR = 0.88;
-const FINE_WHEEL_STEP_THRESHOLD = 18;
+
+// Small wheel deltas are typically produced by touchpad scroll/pinch.
+// Accumulate them and replay one ordinary mouse-wheel-style step through
+// model-viewer's native zoom handling.
+const TOUCHPAD_WHEEL_STEP_THRESHOLD = 18;
+const NATIVE_MOUSE_WHEEL_DELTA = 100;
 
 let wheelZoomStep = 0;
-let fineWheelDeltaBuffer = 0;
-let fineWheelResetTimer = null;
-let wheelZoomGoalRadius = null;
+let touchpadWheelDeltaBuffer = 0;
+let touchpadWheelResetTimer = null;
+let replayingNativeWheelStep = false;
 
-function applySmoothWheelZoomStep(mv, zoomIn) {
-  if (!mv.classList.contains('shownViewer')) return;
-
-  const orbit = mv.getCameraOrbit?.();
-  if (!orbit || !Number.isFinite(orbit.radius)) return;
-
+function allowWheelStepOrBlock(ev, zoomIn) {
   if (zoomIn) {
-    if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) return;
+    if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
+      ev?.preventDefault?.();
+      ev?.stopPropagation?.();
+      ev?.stopImmediatePropagation?.();
+      return false;
+    }
+
     wheelZoomStep += 1;
-  } else {
-    if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) return;
-    wheelZoomStep -= 1;
+    return true;
   }
 
-  const startingRadius = Number.isFinite(wheelZoomGoalRadius)
-    ? wheelZoomGoalRadius
-    : orbit.radius;
+  if (wheelZoomStep <= WHEEL_ZOOM_MIN_STEP) {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    ev?.stopImmediatePropagation?.();
+    return false;
+  }
 
-  wheelZoomGoalRadius = zoomIn
-    ? startingRadius * WHEEL_ZOOM_RADIUS_FACTOR
-    : startingRadius / WHEEL_ZOOM_RADIUS_FACTOR;
+  wheelZoomStep -= 1;
+  return true;
+}
 
-  // Setting cameraOrbit defines the new target. Do not call
-  // jumpCameraToGoal(), so model-viewer keeps its smooth transition.
-  mv.cameraOrbit =
-    `${orbit.theta}rad ${orbit.phi}rad ${wheelZoomGoalRadius}m`;
+function replayOneNativeMouseWheelStep(mv, zoomIn) {
+  if (!allowWheelStepOrBlock(null, zoomIn)) return false;
+
+  replayingNativeWheelStep = true;
 
   try {
-    mv.requestUpdate?.();
-  } catch (_) {}
+    mv.dispatchEvent(new WheelEvent("wheel", {
+      deltaY: zoomIn ? -NATIVE_MOUSE_WHEEL_DELTA : NATIVE_MOUSE_WHEEL_DELTA,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    }));
+  } finally {
+    replayingNativeWheelStep = false;
+  }
+
+  return true;
 }
 
 function handleFixedStepWheelZoom(mv, ev) {
   if (!mv.classList.contains('shownViewer')) return;
   if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
 
-  // Handle mouse-wheel, touchpad two-finger scroll and touchpad pinch
-  // through the same controlled five-step zoom system.
+  // The replayed event must pass directly to model-viewer so its native
+  // wheel zoom performs the actual camera change.
+  if (replayingNativeWheelStep) {
+    return;
+  }
+
+  const zoomIn = ev.deltaY < 0;
+  const looksLikeTouchpadInput =
+    ev.ctrlKey || Math.abs(ev.deltaY) < TOUCHPAD_WHEEL_STEP_THRESHOLD;
+
+  // Ordinary mouse-wheel input remains native. We only enforce the existing
+  // permitted zoom range.
+  if (!looksLikeTouchpadInput) {
+    allowWheelStepOrBlock(ev, zoomIn);
+    return;
+  }
+
+  // Do not let tiny touchpad deltas produce weak native zoom changes.
+  // Convert accumulated touchpad input into full native mouse-wheel steps.
   ev.preventDefault();
   ev.stopPropagation();
   ev.stopImmediatePropagation();
 
-  if (fineWheelResetTimer) {
-    clearTimeout(fineWheelResetTimer);
+  if (touchpadWheelResetTimer) {
+    clearTimeout(touchpadWheelResetTimer);
   }
 
-  fineWheelResetTimer = setTimeout(() => {
-    fineWheelDeltaBuffer = 0;
-    wheelZoomGoalRadius = null;
+  touchpadWheelResetTimer = setTimeout(() => {
+    touchpadWheelDeltaBuffer = 0;
   }, 180);
 
-  const absDelta = Math.abs(ev.deltaY);
+  touchpadWheelDeltaBuffer += ev.deltaY;
 
-  // Mouse-wheel clicks and strong gestures count as one clear zoom step.
-  if (absDelta >= FINE_WHEEL_STEP_THRESHOLD) {
-    fineWheelDeltaBuffer = 0;
-    applySmoothWheelZoomStep(mv, ev.deltaY < 0);
-    return;
+  while (
+    Math.abs(touchpadWheelDeltaBuffer) >= TOUCHPAD_WHEEL_STEP_THRESHOLD
+  ) {
+    const bufferedZoomIn = touchpadWheelDeltaBuffer < 0;
+
+    const replayed = replayOneNativeMouseWheelStep(mv, bufferedZoomIn);
+
+    touchpadWheelDeltaBuffer += bufferedZoomIn
+      ? TOUCHPAD_WHEEL_STEP_THRESHOLD
+      : -TOUCHPAD_WHEEL_STEP_THRESHOLD;
+
+    // When the permitted zoom range has been reached, discard additional
+    // accumulated movement in that direction.
+    if (!replayed) {
+      touchpadWheelDeltaBuffer = 0;
+      break;
+    }
   }
-
-  // Small touchpad deltas accumulate until they correspond to one zoom step.
-  fineWheelDeltaBuffer += ev.deltaY;
-
-  if (Math.abs(fineWheelDeltaBuffer) < FINE_WHEEL_STEP_THRESHOLD) {
-    return;
-  }
-
-  const zoomIn = fineWheelDeltaBuffer < 0;
-  fineWheelDeltaBuffer = 0;
-  applySmoothWheelZoomStep(mv, zoomIn);
 }
+  
 function updateForcedVisible(mv) {
 const st = occState.get(mv);
 if (!st || !st.pointMap) return;
