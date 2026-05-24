@@ -262,11 +262,15 @@ border-top:1px solid #ededed;
 .offline-row{
 display:flex;
 align-items:center;
-justify-content:flex-start;
-gap:8px;
-flex-wrap:wrap;
+justify-content:space-between;
+gap:12px;
 }
-
+.browser-offline-actions{
+display:flex;
+align-items:center;
+gap:8px;
+flex:0 0 auto;
+}
 .offline-title{
 font-size:14px;
 font-weight:600;
@@ -1551,8 +1555,9 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
 
 <div id="browserOfflineSection" class="offline-section">
   <div class="offline-row">
-    <div class="offline-title">Download for Offline Access</div>
+  <div class="offline-title">Download for Offline Access</div>
 
+  <div class="browser-offline-actions">
     <button id="offlineOpenBtn" class="offline-open-btn"
       type="button" aria-label="Download for offline access"
       title="Download for offline access">
@@ -1572,6 +1577,7 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
       Clear Cache
     </button>
   </div>
+</div>
 
   <div id="viewerCacheDeletePopup"
     class="offline-popup installed-manage-popup"
@@ -1588,7 +1594,7 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
       <p class="offline-popup-text">
         This will delete the cached model files stored in your browser.
         It will not affect files downloaded for offline use.
-        To delete those files, use the Delete Files button in the downloaded app.
+        To delete offline files, use the "Delete Files" button in the downloaded app.
       </p>
 
       <div class="installed-manage-actions">
@@ -3422,50 +3428,90 @@ async function getViewerDownloadedModelForOffline(
   platform,
   bytesCompleted
 ) {
-  let storedResponse =
-    await getStoredAnatomicalFileResponse(asset.url);
-
-  if (storedResponse) {
-    return storedResponse;
-  }
-
   const expectedBytes = offlineAssetSizes.get(asset.url) || 0;
 
-  // Use the existing viewer download pathway. If this model is already
-  // downloading, downloadModelToCacheOnly() joins the same in-flight promise.
-  // If it has not started yet, this starts it through the viewer pipeline,
-  // so it becomes available for viewing as soon as completed.
-  const viewerDownloadPromise = downloadModelToCacheOnly(asset.id);
+  while (true) {
+    let storedResponse =
+      await getStoredAnatomicalFileResponse(asset.url);
 
-  const progressTimer = setInterval(() => {
-    const st = state.get(asset.id);
-    const percent = parsePercent(st?.progressText);
-
-    if (expectedBytes > 0 && percent > 0) {
-      updateOfflineDownloadProgress(
-        platform,
-        bytesCompleted,
-        expectedBytes * percent / 100
-      );
+    if (storedResponse) {
+      return storedResponse;
     }
-  }, 100);
 
-  try {
-    await viewerDownloadPromise;
-  } finally {
-    clearInterval(progressTimer);
+    // If the user deliberately paused anatomical downloading, keep the
+    // offline process waiting quietly until the viewer queue is resumed.
+    if (anatomicalDownloadsUserPaused) {
+      await new Promise(resolve => setTimeout(resolve, 180));
+      continue;
+    }
+
+    let progressTimer = null;
+
+    try {
+      let viewerDownloadPromise = null;
+
+      if (inFlight.has(asset.id)) {
+        // This exact model is already being downloaded by the viewer.
+        viewerDownloadPromise = inFlight.get(asset.id);
+
+        progressTimer = setInterval(() => {
+          const st = state.get(asset.id);
+          const percent = parsePercent(st?.progressText);
+
+          if (expectedBytes > 0 && percent > 0) {
+            updateOfflineDownloadProgress(
+              platform,
+              bytesCompleted,
+              expectedBytes * percent / 100
+            );
+          }
+        }, 100);
+      } else if (
+        currentDownloadingId &&
+        state.get(currentDownloadingId)?.status === "loading"
+      ) {
+        // The user selected another model while offline preparation was
+        // waiting. Let that viewer-priority request finish first.
+        viewerDownloadPromise = inFlight.get(currentDownloadingId);
+      } else {
+        // No viewer download is active. Continue this required model through
+        // the viewer's own downloader, so it becomes viewable and is then
+        // copied into offline storage.
+        viewerDownloadPromise = downloadModelToCacheOnly(asset.id);
+
+        progressTimer = setInterval(() => {
+          const st = state.get(asset.id);
+          const percent = parsePercent(st?.progressText);
+
+          if (expectedBytes > 0 && percent > 0) {
+            updateOfflineDownloadProgress(
+              platform,
+              bytesCompleted,
+              expectedBytes * percent / 100
+            );
+          }
+        }, 100);
+      }
+
+      if (viewerDownloadPromise) {
+        await viewerDownloadPromise;
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        throw err;
+      }
+
+      // A viewer download was intentionally interrupted because the user
+      // selected another model. This is normal navigation, not an offline
+      // download failure. Loop again and continue after viewer priority work.
+    } finally {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+      }
+    }
   }
-
-  storedResponse =
-    await getStoredAnatomicalFileResponse(asset.url);
-
-  if (!storedResponse) {
-    throw new Error(
-      `Viewer completed ${asset.id}, but its stored model file was not found.`
-    );
-  }
-
-  return storedResponse;
 }
 async function saveOneAssetForOffline(
   asset,
