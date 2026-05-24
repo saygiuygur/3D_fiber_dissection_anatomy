@@ -5726,6 +5726,15 @@ refreshMeta(modelId);
     return;
   }
 
+  // Never let Balanced look-ahead preparation interrupt the current
+  // automatic anatomical download. The active download must finish first.
+  if (
+    currentDownloadingId &&
+    state.get(currentDownloadingId)?.status === "loading"
+  ) {
+    return;
+  }
+
   const nextState = state.get(nextModelId);
 
   // Model 2 is already prepared through the required initial alias-coordinate
@@ -5947,10 +5956,20 @@ async function resumePreload() {
         }
 
         console.warn("Background model processing failed:", id, err);
-      } finally {
+            } finally {
         backgroundPreparationPromise = null;
         backgroundPreparationModelId = null;
       }
+    }
+
+    // After the automatic anatomical download queue is no longer competing
+    // for the network/controller, Balanced mode may safely prepare the next
+    // sequential model for faster switching.
+    if (
+      atlasLoadingMode === "balanced" &&
+      !anatomicalDownloadsUserPaused
+    ) {
+      prepareNextModelForBalancedMode(currentShownId);
     }
   } finally {
     preloadRunning = false;
