@@ -3245,15 +3245,24 @@ async function confirmDeleteInstalledOfflineFiles() {
   setInstalledOfflineButtonsBusy(true);
 
   try {
+    // Stop browser-viewer anatomical files from being recreated during the
+    // remainder of this open app session after the user deletes stored files.
+    browserViewerCacheDisabledForSession = true;
+
+    // Abort any anatomical file currently being downloaded into viewer cache.
+    try {
+      currentController?.abort();
+    } catch (_) {}
+
     const cacheNames = await caches.keys();
 
     await Promise.all(
       cacheNames
         .filter(name =>
           name.startsWith("fiber-dissection-offline-data-") ||
-name.startsWith("fiber-dissection-offline-shell-") ||
-name.startsWith(ANATOMICAL_FILE_CACHE_PREFIX) ||
-name === OFFLINE_CONTROL_CACHE_NAME
+          name.startsWith("fiber-dissection-offline-shell-") ||
+          name === OFFLINE_CONTROL_CACHE_NAME ||
+          name === ANATOMICAL_FILE_CACHE_NAME
         )
         .map(name => caches.delete(name))
     );
