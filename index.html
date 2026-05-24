@@ -4256,6 +4256,12 @@ let backgroundPreparationPromise = null;
 let backgroundPreparationModelId = null;
 let backgroundPreparationStarted = false;
 
+// Performance parsing/preparation is intentionally separate from the
+// automatic file-download queue. It may pause while the page is hidden,
+// but it must never prevent later anatomical files from downloading.
+let performanceCachePreparationRunning = false;
+let performanceCachePreparationRequested = false;
+
 // Manual pause state for the anatomical-model download queue only.
 // This does not pause or alter DTI tract downloads.
 let anatomicalDownloadsUserPaused = false;
@@ -5561,14 +5567,17 @@ async function downloadToBlobUrl(modelId) {
       const blobUrl = URL.createObjectURL(blob);
 
       st.status = "done";
-st.progressText = "";
-st.blobUrl = blobUrl;
-st.cached = true;
-st.userPaused = false;
-refreshMeta(modelId);
+      st.progressText = "";
+      st.blobUrl = null;
+      st.cached = true;
+      st.userPaused = false;
+      refreshMeta(modelId);
 
-      if (!loadingFromAlreadyCachedFile) {
-  paintDownloading(null);
+      paintDownloading(null);
+
+      // In Performance mode, parse/retain this completed cached model
+      // separately while the file-download queue continues independently.
+      kickPerformanceCachePreparationSoon();
 }
 
 maybeResumePreload();
@@ -5711,6 +5720,15 @@ refreshMeta(modelId);
     return;
   }
 
+  // Look-ahead preparation is optional acceleration. It must never cancel
+  // or restart a file that is already downloading automatically.
+  if (
+    currentDownloadingId &&
+    state.get(currentDownloadingId)?.status === "loading"
+  ) {
+    return;
+  }
+
   const nextState = state.get(nextModelId);
 
   // Model 2 is already prepared through the required initial alias-coordinate
@@ -5843,6 +5861,79 @@ async function prepareModelForPerformanceMode(modelId) {
     await new Promise(resolve => requestAnimationFrame(resolve));
   }));
 }
+
+function kickPerformanceCachePreparationSoon() {
+  if (atlasLoadingMode !== "performance") return;
+  if (document.visibilityState !== "visible") return;
+
+  performanceCachePreparationRequested = true;
+
+  setTimeout(() => {
+    runPerformanceCachePreparation();
+  }, 0);
+}
+
+async function runPerformanceCachePreparation() {
+  if (atlasLoadingMode !== "performance") return;
+  if (document.visibilityState !== "visible") return;
+  if (performanceCachePreparationRunning) return;
+  if (!performanceCachePreparationRequested) return;
+
+  performanceCachePreparationRequested = false;
+  performanceCachePreparationRunning = true;
+
+  try {
+    for (const id of preloadQueue) {
+      if (atlasLoadingMode !== "performance") return;
+      if (document.visibilityState !== "visible") {
+        performanceCachePreparationRequested = true;
+        return;
+      }
+
+      const st = state.get(id);
+
+      // Only prepare models whose file download is already complete.
+      // Reading the completed cached file into a Blob URL does not own or
+      // cancel the active automatic-download controller.
+      if (st?.status !== "done") continue;
+
+      if (
+        performancePreparedModelIds.has(id) ||
+        id === currentShownId
+      ) {
+        performancePreparedModelIds.add(id);
+        retainAnatomicalModelForCurrentMode(id);
+        continue;
+      }
+
+      try {
+        await prepareModelForPerformanceMode(id);
+      } catch (err) {
+        console.warn("Performance cached-model preparation failed:", id, err);
+      }
+    }
+  } finally {
+    performanceCachePreparationRunning = false;
+
+    if (
+      performanceCachePreparationRequested &&
+      document.visibilityState === "visible"
+    ) {
+      kickPerformanceCachePreparationSoon();
+    }
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (
+    document.visibilityState === "visible" &&
+    atlasLoadingMode === "performance"
+  ) {
+    // Hidden-page downloads may already have completed. Parse and retain
+    // them now that model-viewer can render again.
+    kickPerformanceCachePreparationSoon();
+  }
+});
   
 async function resumePreload() {
   if (!preloadEnabled) return;
@@ -5885,26 +5976,17 @@ async function resumePreload() {
 
       backgroundPreparationModelId = id;
 
-     if (atlasLoadingMode === "performance") {
-  if (
-    performancePreparedModelIds.has(id) ||
-    id === currentShownId
-  ) {
-    performancePreparedModelIds.add(id);
-    retainAnatomicalModelForCurrentMode(id);
-    continue;
-  }
+      // The automatic queue downloads file bytes only in every mode.
+      // Viewer parsing/preparation must never block progression to the next file.
+      if (st?.status === "done") {
+        if (atlasLoadingMode === "performance") {
+          kickPerformanceCachePreparationSoon();
+        }
+        continue;
+      }
 
-  backgroundPreparationPromise =
-    prepareModelForPerformanceMode(id);
-} else {
-  // Stability and Balanced download model files in the background,
-  // but parse/open them only when the user selects them.
-  if (st?.status === "done") continue;
-
-  backgroundPreparationPromise =
-    downloadModelToCacheOnly(id);
-}
+      backgroundPreparationPromise =
+        downloadModelToCacheOnly(id);
 
       try {
         await backgroundPreparationPromise;
@@ -5916,11 +5998,22 @@ async function resumePreload() {
 
         console.warn("Background model processing failed:", id, err);
             } finally {
+             } finally {
         backgroundPreparationPromise = null;
         backgroundPreparationModelId = null;
       }
     }
 
+    if (
+      atlasLoadingMode === "balanced" &&
+      !anatomicalDownloadsUserPaused
+    ) {
+      prepareNextModelForBalancedMode(currentShownId);
+    }
+
+    if (atlasLoadingMode === "performance") {
+      kickPerformanceCachePreparationSoon();
+    }
   } finally {
     preloadRunning = false;
   }
@@ -7178,22 +7271,23 @@ async function onUserSelect(modelId) {
     return;
   }
 
-  // Clicking an already downloaded model opens it, while a manually paused
-  // anatomical download queue remains paused.
+  // Opening an already downloaded model must never interrupt the anatomical
+  // file currently downloading in the background.
   if (modelAlreadyAvailable) {
-  if (
-    atlasLoadingMode === "balanced" &&
-    balancedAheadPromise &&
-    balancedAheadModelId !== modelId
-  ) {
-    try {
-      await balancedAheadPromise;
-    } catch (_) {}
-  }
+    if (
+      atlasLoadingMode === "balanced" &&
+      balancedAheadPromise &&
+      balancedAheadModelId !== modelId
+    ) {
+      try {
+        await balancedAheadPromise;
+      } catch (_) {}
+    }
 
-  collapsePortraitSidebarAfterModelSelection();
-  showModel(modelId);
-}
+    collapsePortraitSidebarAfterModelSelection();
+    showModel(modelId);
+    return;
+  }
 
   // Clicking the paused model again, or selecting another not-yet-downloaded
   // model, resumes anatomical downloading with that clicked model as priority.
