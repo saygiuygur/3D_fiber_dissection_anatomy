@@ -7739,17 +7739,15 @@ if (modelAlreadyAvailable) {
     } catch (_) {}
   }
 
-  // Avoid opening a selected anatomical model while Balanced mode is
-  // still preparing another look-ahead model.
-  if (
-    atlasLoadingMode === "balanced" &&
-    balancedAheadPromise &&
-    balancedAheadModelId !== modelId
-  ) {
+   if (backgroundPreparationPromise) {
     try {
-      await balancedAheadPromise;
+      await backgroundPreparationPromise;
     } catch (_) {}
   }
+
+  collapsePortraitSidebarAfterModelSelection();
+  showModel(modelId);
+}
   
   collapsePortraitSidebarAfterModelSelection();
   showModel(modelId);
