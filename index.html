@@ -122,35 +122,17 @@ display:none;
 }
 
 .sidebar-collapse-arrow{
-display:block;
-font-size:29px;
-transform:translateY(-1px);
+display:flex;
+align-items:center;
+justify-content:center;
 }
 
-.sidebar-collapse-btn.collapsed{
-left:0;
-width:58px;
-height:170px;
-border:1px solid #dedede;
-border-left:none;
-border-radius:0 22px 22px 0;
-background:#fff;
-box-shadow:0 8px 24px rgba(0,0,0,0.18);
-overflow:visible;
-}
-
-.sidebar-collapse-btn.collapsed .sidebar-collapse-label{
+.sidebar-collapse-arrow svg{
+width:15px;
+height:15px;
 display:block;
-position:absolute;
-left:26px;
-top:50%;
-transform:translate(-50%, -50%) rotate(-90deg);
-white-space:nowrap;
-font-size:15px;
-font-weight:700;
-line-height:1.2;
-letter-spacing:0;
-color:#111;
+transform:rotate(-90deg); /* open sidebar: arrow points left */
+transition:transform .18s ease;
 }
 
 .sidebar-collapse-btn.collapsed .sidebar-collapse-arrow{
@@ -167,9 +149,13 @@ box-shadow:0 2px 7px rgba(0,0,0,0.14);
 display:flex;
 align-items:center;
 justify-content:center;
-font-size:25px;
-line-height:1;
+padding:0;
+box-sizing:border-box;
 color:#666;
+}
+
+.sidebar-collapse-btn.collapsed .sidebar-collapse-arrow svg{
+transform:rotate(90deg); /* collapsed sidebar: arrow points right */
 }
 
 @media (max-width:520px){
@@ -1788,7 +1774,16 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
   aria-label="Collapse left menu"
   title="Collapse left menu">
   <span class="sidebar-collapse-label">Dissection Steps</span>
-  <span id="sidebarCollapseArrow" class="sidebar-collapse-arrow">‹</span>
+  <span id="sidebarCollapseArrow" class="sidebar-collapse-arrow">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 15l6-6 6 6"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.4"
+      stroke-linecap="round"
+      stroke-linejoin="round"/>
+  </svg>
+</span>
 </button>
   
 <div class="viewer-wrap" id="viewerWrap">
@@ -3431,86 +3426,35 @@ async function getViewerDownloadedModelForOffline(
   const expectedBytes = offlineAssetSizes.get(asset.url) || 0;
 
   while (true) {
-    let storedResponse =
+    const storedResponse =
       await getStoredAnatomicalFileResponse(asset.url);
 
     if (storedResponse) {
       return storedResponse;
     }
 
-    // If the user deliberately paused anatomical downloading, keep the
-    // offline process waiting quietly until the viewer queue is resumed.
-    if (anatomicalDownloadsUserPaused) {
-      await new Promise(resolve => setTimeout(resolve, 180));
-      continue;
-    }
+    // Offline saving observes the normal viewer download pipeline only.
+    // It must never restart an interrupted model or compete with a model
+    // selected by the user.
+    const st = state.get(asset.id);
 
-    let progressTimer = null;
+    if (
+      currentDownloadingId === asset.id &&
+      st?.status === "loading" &&
+      expectedBytes > 0
+    ) {
+      const percent = parsePercent(st.progressText);
 
-    try {
-      let viewerDownloadPromise = null;
-
-      if (inFlight.has(asset.id)) {
-        // This exact model is already being downloaded by the viewer.
-        viewerDownloadPromise = inFlight.get(asset.id);
-
-        progressTimer = setInterval(() => {
-          const st = state.get(asset.id);
-          const percent = parsePercent(st?.progressText);
-
-          if (expectedBytes > 0 && percent > 0) {
-            updateOfflineDownloadProgress(
-              platform,
-              bytesCompleted,
-              expectedBytes * percent / 100
-            );
-          }
-        }, 100);
-      } else if (
-        currentDownloadingId &&
-        state.get(currentDownloadingId)?.status === "loading"
-      ) {
-        // The user selected another model while offline preparation was
-        // waiting. Let that viewer-priority request finish first.
-        viewerDownloadPromise = inFlight.get(currentDownloadingId);
-      } else {
-        // No viewer download is active. Continue this required model through
-        // the viewer's own downloader, so it becomes viewable and is then
-        // copied into offline storage.
-        viewerDownloadPromise = downloadModelToCacheOnly(asset.id);
-
-        progressTimer = setInterval(() => {
-          const st = state.get(asset.id);
-          const percent = parsePercent(st?.progressText);
-
-          if (expectedBytes > 0 && percent > 0) {
-            updateOfflineDownloadProgress(
-              platform,
-              bytesCompleted,
-              expectedBytes * percent / 100
-            );
-          }
-        }, 100);
-      }
-
-      if (viewerDownloadPromise) {
-        await viewerDownloadPromise;
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    } catch (err) {
-      if (err?.name !== "AbortError") {
-        throw err;
-      }
-
-      // A viewer download was intentionally interrupted because the user
-      // selected another model. This is normal navigation, not an offline
-      // download failure. Loop again and continue after viewer priority work.
-    } finally {
-      if (progressTimer) {
-        clearInterval(progressTimer);
+      if (percent > 0) {
+        updateOfflineDownloadProgress(
+          platform,
+          bytesCompleted,
+          expectedBytes * percent / 100
+        );
       }
     }
+
+    await new Promise(resolve => setTimeout(resolve, 120));
   }
 }
 async function saveOneAssetForOffline(
@@ -4073,7 +4017,6 @@ function setSidebarCollapsed(collapsed, persist = true) {
   sidebar.classList.toggle("sidebar-collapsed", collapsed);
   sidebarCollapseBtn.classList.toggle("collapsed", collapsed);
 
-  sidebarCollapseArrow.textContent = collapsed ? "›" : "‹";
   sidebarCollapseBtn.setAttribute(
     "aria-label",
     collapsed ? "Expand dissection steps" : "Collapse dissection steps"
