@@ -5901,7 +5901,7 @@ async function resumePreload() {
 
       backgroundPreparationModelId = id;
 
-          if (atlasLoadingMode === "performance") {
+      if (atlasLoadingMode === "performance") {
         if (
           performancePreparedModelIds.has(id) ||
           id === currentShownId
@@ -5940,24 +5940,10 @@ async function resumePreload() {
         }
 
         console.warn("Background model processing failed:", id, err);
-             } finally {
+      } finally {
         backgroundPreparationPromise = null;
         backgroundPreparationModelId = null;
       }
-    }
-
-          } finally {
-        backgroundPreparationPromise = null;
-        backgroundPreparationModelId = null;
-      }
-    }
-  } finally {
-    preloadRunning = false;
-  }
-}
-
-    if (atlasLoadingMode === "performance") {
-      kickPerformanceCachePreparationSoon();
     }
   } finally {
     preloadRunning = false;
@@ -6495,9 +6481,9 @@ const WHEEL_ZOOM_MAX_STEP = 5;
 // native mouse-wheel-like event through model-viewer's interaction surface.
 const TOUCHPAD_PIXEL_STEP_THRESHOLD = 18;
 
-// A real physical mouse-wheel event can calibrate the native viewer input.
-// Until such an event is observed, touchpad conversion is not applied.
-let nativeMouseWheelStepDelta = null;
+// Fixed input equivalent to one physical mouse-wheel step on the tested setup.
+const NATIVE_MOUSE_WHEEL_STEP_DELTA = 100;
+const NATIVE_MOUSE_WHEEL_DELTA_MODE = WheelEvent.DOM_DELTA_PIXEL;
 
 let wheelZoomStep = 0;
 let touchpadPixelBuffer = 0;
@@ -6530,18 +6516,17 @@ function allowNativeZoomStep(ev, zoomIn) {
 }
 
 function replayOneNativeViewerZoomStep(interactionTarget, zoomIn) {
-    if (!interactionTarget?.dispatchEvent) return false;
-  if (!Number.isFinite(nativeMouseWheelStepDelta)) return false;
+  if (!interactionTarget?.dispatchEvent) return false;
   if (!allowNativeZoomStep(null, zoomIn)) return false;
 
   replayingNativeWheelStep = true;
 
   try {
     interactionTarget.dispatchEvent(new WheelEvent("wheel", {
-      deltaY: zoomIn
-        ? -nativeMouseWheelStepDelta
-        : nativeMouseWheelStepDelta,
-      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+            deltaY: zoomIn
+        ? -NATIVE_MOUSE_WHEEL_STEP_DELTA
+        : NATIVE_MOUSE_WHEEL_STEP_DELTA,
+      deltaMode: NATIVE_MOUSE_WHEEL_DELTA_MODE,
       bubbles: true,
       cancelable: true,
       composed: true
@@ -6574,32 +6559,9 @@ function handleFixedStepWheelZoom(mv, ev) {
     touchpadBurstActive ||
     absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD;
 
-   if (!isTouchpadInput) {
-  // Temporary diagnostic: record exactly what one real mouse-wheel step
-  // sends to model-viewer so touchpad replay can use the same event format.
-  window.__mouseWheelCalibration = {
-    deltaY: ev.deltaY,
-    absDelta: Math.abs(ev.deltaY),
-    deltaMode: ev.deltaMode,
-    deltaModeName:
-      ev.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? "pixel" :
-      ev.deltaMode === WheelEvent.DOM_DELTA_LINE ? "line" :
-      ev.deltaMode === WheelEvent.DOM_DELTA_PAGE ? "page" :
-      "unknown",
-    ctrlKey: ev.ctrlKey
-  };
-
-  console.log("REAL MOUSE WHEEL CALIBRATION:", window.__mouseWheelCalibration);
-
-  nativeMouseWheelStepDelta = absDelta;
-
-  allowNativeZoomStep(ev, zoomIn);
-  return;
-}
-
-  // Touchpad conversion requires one prior genuine mouse-wheel movement.
-  // Until calibrated, let the touchpad keep its native behaviour.
-  if (!Number.isFinite(nativeMouseWheelStepDelta)) {
+     if (!isTouchpadInput) {
+    // Genuine physical mouse-wheel input remains native.
+    allowNativeZoomStep(ev, zoomIn);
     return;
   }
 
