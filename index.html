@@ -4240,7 +4240,9 @@ MODELS.forEach(m => state.set(m.id, {
 let currentController = null;
 let currentDownloadingId = null;
 const inFlight = new Map();
-
+// Cache-to-Blob reads requested for viewing are independent of the automatic
+// anatomical download queue. They must never abort, pause, or wait for it.
+const selectedBlobReadsInFlight = new Map();
 let preloadEnabled = true;
 let preloadTimer = null;
 let resumeRequested = false;
@@ -5471,7 +5473,58 @@ function kickPreloadSoon() {
     maybeResumePreload();
   }, 0);
 }
-  
+  async function getSelectedCachedModelBlobUrl(modelId) {
+  const model = MODELS.find(x => x.id === modelId);
+  const st = state.get(modelId);
+
+  if (!model || !st?.cached) {
+    return downloadToBlobUrl(modelId);
+  }
+
+  if (st.blobUrl) {
+    return st.blobUrl;
+  }
+
+  if (selectedBlobReadsInFlight.has(modelId)) {
+    return selectedBlobReadsInFlight.get(modelId);
+  }
+
+  const p = (async () => {
+    // This request is intentionally independent:
+    // - no AbortController from the automatic downloader
+    // - no currentDownloadingId changes
+    // - no progress-icon changes
+    // - no automatic queue state changes
+    const response = await fetch(model.url, {
+      cache: "force-cache"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    // The model may already have received a Blob URL from another pathway
+    // while this cached read was completing. Keep only one retained URL.
+    if (st.blobUrl && st.blobUrl !== blobUrl) {
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch (_) {}
+
+      return st.blobUrl;
+    }
+
+    st.blobUrl = blobUrl;
+    return blobUrl;
+  })().finally(() => {
+    selectedBlobReadsInFlight.delete(modelId);
+  });
+
+  selectedBlobReadsInFlight.set(modelId, p);
+  return p;
+}
 async function downloadToBlobUrl(modelId) {
   const model = MODELS.find(x => x.id === modelId);
   const st = state.get(modelId);
@@ -6545,18 +6598,22 @@ t.z + r * sinPhi * Math.cos(theta)
 const WHEEL_ZOOM_MIN_STEP = 0;
 const WHEEL_ZOOM_MAX_STEP = 5;
 
-// Small wheel deltas are typically produced by touchpad scroll/pinch.
-// Accumulate them and replay one ordinary mouse-wheel-style step through
-// model-viewer's native zoom handling.
-const TOUCHPAD_WHEEL_STEP_THRESHOLD = 18;
-const NATIVE_MOUSE_WHEEL_DELTA = 100;
+// Touchpad input is continuous rather than detented like a mouse wheel.
+// Once this accumulated movement reaches one threshold, replay exactly one
+// native mouse-wheel-like event through model-viewer's interaction surface.
+const TOUCHPAD_PIXEL_STEP_THRESHOLD = 18;
+
+// Default until a real physical mouse-wheel step is observed.
+// On ordinary desktop mouse wheels, the observed native delta will replace it.
+let nativeMouseWheelStepDelta = 100;
 
 let wheelZoomStep = 0;
-let touchpadWheelDeltaBuffer = 0;
-let touchpadWheelResetTimer = null;
+let touchpadPixelBuffer = 0;
+let touchpadBurstActive = false;
+let touchpadBurstResetTimer = null;
 let replayingNativeWheelStep = false;
 
-function allowWheelStepOrBlock(ev, zoomIn) {
+function allowNativeZoomStep(ev, zoomIn) {
   if (zoomIn) {
     if (wheelZoomStep >= WHEEL_ZOOM_MAX_STEP) {
       ev?.preventDefault?.();
@@ -6580,14 +6637,17 @@ function allowWheelStepOrBlock(ev, zoomIn) {
   return true;
 }
 
-function replayOneNativeMouseWheelStep(mv, zoomIn) {
-  if (!allowWheelStepOrBlock(null, zoomIn)) return false;
+function replayOneNativeViewerZoomStep(interactionTarget, zoomIn) {
+  if (!interactionTarget?.dispatchEvent) return false;
+  if (!allowNativeZoomStep(null, zoomIn)) return false;
 
   replayingNativeWheelStep = true;
 
   try {
-    mv.dispatchEvent(new WheelEvent("wheel", {
-      deltaY: zoomIn ? -NATIVE_MOUSE_WHEEL_DELTA : NATIVE_MOUSE_WHEEL_DELTA,
+    interactionTarget.dispatchEvent(new WheelEvent("wheel", {
+      deltaY: zoomIn
+        ? -nativeMouseWheelStepDelta
+        : nativeMouseWheelStepDelta,
       deltaMode: WheelEvent.DOM_DELTA_PIXEL,
       bubbles: true,
       cancelable: true,
@@ -6601,25 +6661,78 @@ function replayOneNativeMouseWheelStep(mv, zoomIn) {
 }
 
 function handleFixedStepWheelZoom(mv, ev) {
-  if (!mv.classList.contains('shownViewer')) return;
+  if (!mv.classList.contains("shownViewer")) return;
   if (!ev || !Number.isFinite(ev.deltaY) || ev.deltaY === 0) return;
 
-  // The replayed event must pass directly to model-viewer so its native
-  // wheel zoom performs the actual camera change.
+  // A replayed event must pass untouched to model-viewer's own native
+  // camera-controls listener.
   if (replayingNativeWheelStep) {
     return;
   }
 
+  const absDelta = Math.abs(ev.deltaY);
   const zoomIn = ev.deltaY < 0;
-  const looksLikeTouchpadInput =
-    ev.ctrlKey || Math.abs(ev.deltaY) < TOUCHPAD_WHEEL_STEP_THRESHOLD;
 
-  // Ordinary mouse-wheel input remains native. We only enforce the existing
-  // permitted zoom range.
-  if (!looksLikeTouchpadInput) {
-    allowWheelStepOrBlock(ev, zoomIn);
+  // Pinch is normally reported as ctrlKey + wheel.
+  // Once a fine touchpad burst begins, keep treating the rest of that
+  // short burst as touchpad input even if individual deltas vary.
+  const isTouchpadInput =
+    ev.ctrlKey ||
+    touchpadBurstActive ||
+    absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD;
+
+  if (!isTouchpadInput) {
+    // A genuine physical mouse-wheel step is already a native viewer input.
+    // Remember its actual size so converted touchpad steps match it.
+    nativeMouseWheelStepDelta = absDelta;
+
+    allowNativeZoomStep(ev, zoomIn);
     return;
   }
+
+  // Stop the weak/raw touchpad event from also changing zoom.
+  ev.preventDefault();
+  ev.stopPropagation();
+  ev.stopImmediatePropagation();
+
+  touchpadBurstActive = true;
+
+  if (touchpadBurstResetTimer) {
+    clearTimeout(touchpadBurstResetTimer);
+  }
+
+  touchpadBurstResetTimer = setTimeout(() => {
+    touchpadPixelBuffer = 0;
+    touchpadBurstActive = false;
+  }, 180);
+
+  touchpadPixelBuffer += ev.deltaY;
+
+  const interactionTarget =
+    ev.composedPath?.()[0] ||
+    ev.target ||
+    mv;
+
+  while (
+    Math.abs(touchpadPixelBuffer) >= TOUCHPAD_PIXEL_STEP_THRESHOLD
+  ) {
+    const bufferedZoomIn = touchpadPixelBuffer < 0;
+
+    const replayed = replayOneNativeViewerZoomStep(
+      interactionTarget,
+      bufferedZoomIn
+    );
+
+    touchpadPixelBuffer += bufferedZoomIn
+      ? TOUCHPAD_PIXEL_STEP_THRESHOLD
+      : -TOUCHPAD_PIXEL_STEP_THRESHOLD;
+
+    if (!replayed) {
+      touchpadPixelBuffer = 0;
+      break;
+    }
+  }
+}
 
   // Do not let tiny touchpad deltas produce weak native zoom changes.
   // Convert accumulated touchpad input into full native mouse-wheel steps.
@@ -7241,15 +7354,18 @@ finalizeAfterBarrier();
 idleMv.addEventListener('load', onIdleLoad, { once:true });
 
 try {
-const blobUrl = await downloadToBlobUrl(modelId);
-if (token !== swapToken) return;
+  const blobUrl = st.cached
+    ? await getSelectedCachedModelBlobUrl(modelId)
+    : await downloadToBlobUrl(modelId);
 
-// The selected model itself provides its base state through applyAfterLoad().
-idleMv.src = blobUrl;
+  if (token !== swapToken) return;
+
+  // The selected model itself provides its base state through applyAfterLoad().
+  idleMv.src = blobUrl;
 } catch (_) {
-savingEnabled = true;
-backgroundPreparationPausedForSelection = false;
-kickPreloadSoon();
+  savingEnabled = true;
+  backgroundPreparationPausedForSelection = false;
+  kickPreloadSoon();
 }
 }
 
@@ -7305,19 +7421,9 @@ async function onUserSelect(modelId) {
     return;
   }
 
-  // Opening an already downloaded model must never interrupt the anatomical
-  // file currently downloading in the background.
+  // Opening an already downloaded model must never wait for or interrupt
+  // another automatic download or optional preparation task.
   if (modelAlreadyAvailable) {
-    if (
-      atlasLoadingMode === "balanced" &&
-      balancedAheadPromise &&
-      balancedAheadModelId !== modelId
-    ) {
-      try {
-        await balancedAheadPromise;
-      } catch (_) {}
-    }
-
     collapsePortraitSidebarAfterModelSelection();
     showModel(modelId);
     return;
