@@ -6683,13 +6683,27 @@ function handleFixedStepWheelZoom(mv, ev) {
     absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD;
 
    if (!isTouchpadInput) {
-    // Use one genuine physical mouse-wheel movement to calibrate the exact
-    // native wheel input that model-viewer receives on this computer.
-    nativeMouseWheelStepDelta = absDelta;
+  // Temporary diagnostic: record exactly what one real mouse-wheel step
+  // sends to model-viewer so touchpad replay can use the same event format.
+  window.__mouseWheelCalibration = {
+    deltaY: ev.deltaY,
+    absDelta: Math.abs(ev.deltaY),
+    deltaMode: ev.deltaMode,
+    deltaModeName:
+      ev.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? "pixel" :
+      ev.deltaMode === WheelEvent.DOM_DELTA_LINE ? "line" :
+      ev.deltaMode === WheelEvent.DOM_DELTA_PAGE ? "page" :
+      "unknown",
+    ctrlKey: ev.ctrlKey
+  };
 
-    allowNativeZoomStep(ev, zoomIn);
-    return;
-  }
+  console.log("REAL MOUSE WHEEL CALIBRATION:", window.__mouseWheelCalibration);
+
+  nativeMouseWheelStepDelta = absDelta;
+
+  allowNativeZoomStep(ev, zoomIn);
+  return;
+}
 
   // Touchpad conversion requires one prior genuine mouse-wheel movement.
   // Until calibrated, let the touchpad keep its native behaviour.
