@@ -7111,6 +7111,26 @@ const NATIVE_MOUSE_WHEEL_STEP_DELTA = 100;
 const NATIVE_MOUSE_WHEEL_DELTA_MODE = WheelEvent.DOM_DELTA_PIXEL;
 
 let wheelZoomStep = 0;
+
+// TEMPORARY DEBUG: expose the true internal 0–5 zoom-step counter.
+window.__wheelDbg = {
+  get: () => wheelZoomStep,
+  set: (value) => {
+    const nextValue = Number(value);
+
+    if (!Number.isFinite(nextValue)) {
+      return wheelZoomStep;
+    }
+
+    wheelZoomStep = Math.max(
+      WHEEL_ZOOM_MIN_STEP,
+      Math.min(WHEEL_ZOOM_MAX_STEP, Math.round(nextValue))
+    );
+
+    return wheelZoomStep;
+  }
+};
+
 let touchpadPixelBuffer = 0;
 let touchpadBurstActive = false;
 let touchpadBurstResetTimer = null;
