@@ -7196,21 +7196,37 @@ function handleFixedStepWheelZoom(mv, ev) {
   const absDelta = Math.abs(ev.deltaY);
   const zoomIn = ev.deltaY < 0;
 
-  // Pinch is normally reported as ctrlKey + wheel.
-  // Once a fine touchpad burst begins, keep treating the rest of that
-  // short burst as touchpad input even if individual deltas vary.
+  const interactionTarget =
+    ev.composedPath?.()[0] ||
+    ev.target ||
+    mv;
+
+  // Pinch gestures normally arrive as ctrlKey + wheel.
+  // Fine continuous pixel events are treated as touchpad input and accumulated.
+  // Line/page wheel events, and larger pixel wheel events, are treated as
+  // physical mouse-wheel steps and replaced by one controlled 100 px event.
   const isTouchpadInput =
     ev.ctrlKey ||
-    touchpadBurstActive ||
-    absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD;
+    (
+      ev.deltaMode === WheelEvent.DOM_DELTA_PIXEL &&
+      (
+        touchpadBurstActive ||
+        absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD
+      )
+    );
 
   if (!isTouchpadInput) {
-    // Genuine physical mouse-wheel input remains native.
-    allowNativeZoomStep(ev, zoomIn);
+    // Block the device/browser-defined mouse wheel amount and replace it
+    // with exactly one standardized native model-viewer zoom step.
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+
+    replayOneNativeViewerZoomStep(interactionTarget, zoomIn);
     return;
   }
 
-  // Stop the weak/raw touchpad event from also changing zoom.
+  // Stop the weak/raw touchpad or pinch event from also changing zoom.
   ev.preventDefault();
   ev.stopPropagation();
   ev.stopImmediatePropagation();
@@ -7227,11 +7243,6 @@ function handleFixedStepWheelZoom(mv, ev) {
   }, 180);
 
   touchpadPixelBuffer += ev.deltaY;
-
-  const interactionTarget =
-    ev.composedPath?.()[0] ||
-    ev.target ||
-    mv;
 
   while (
     Math.abs(touchpadPixelBuffer) >= TOUCHPAD_PIXEL_STEP_THRESHOLD
