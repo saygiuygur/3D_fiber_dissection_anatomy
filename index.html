@@ -6776,15 +6776,19 @@ function scheduleSettledCarrySnapshotCameraChange() {
 }
 
 for (const mv of [mvA, mvB]) {
-mv.addEventListener('wheel', (e) => {
-  // This listener now prevents the event before the later focus listener
-  // receives it, so clear any annotation-focus carry state here as well.
+mv.addEventListener('wheel', () => {
+  // Fixed-step wheel interception now occurs at viewerWrap so it remains
+  // reliable across fresh model-viewer loads and viewer swaps.
   focusCarryCam.delete(mv);
 
-  handleFixedStepWheelZoom(mv, e);
   scheduleSettledCarrySnapshotManual();
   applyDtiPanOffsetToViewer(mv);
-}, { passive: false, capture: true });
+}, { passive: true });
+
+mv.addEventListener('pointerup', () => {
+  scheduleSettledCarrySnapshotManual();
+  applyDtiPanOffsetToViewer(mv);
+}, { passive: true });
 
 mv.addEventListener('pointerup', () => {
   scheduleSettledCarrySnapshotManual();
@@ -7246,6 +7250,16 @@ function handleFixedStepWheelZoom(mv, ev) {
   }
 }
 
+// Capture wheel input at the common viewer container before it reaches
+// whichever model-viewer instance is currently visible. This keeps the
+// fixed 0–5 zoom limiter active even after Stability-mode loads or
+// previously unprepared Balanced-mode swaps.
+viewerWrap.addEventListener("wheel", (e) => {
+  if (isViewerUiEventTarget(e.target)) return;
+
+  handleFixedStepWheelZoom(activeMv, e);
+}, { passive: false, capture: true });
+  
 function updateForcedVisible(mv) {
 const st = occState.get(mv);
 if (!st || !st.pointMap) return;
