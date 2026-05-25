@@ -2693,25 +2693,54 @@ function configureOfflineUiForLaunchMode() {
   );
 }
 
+function positionPopupInsideSidebar(popup, preferredTop, defaultHeight) {
+  if (!popup || !sidebar) return;
+
+  const sidebarRect = sidebar.getBoundingClientRect();
+  const inset = 12;
+
+  const availableWidth = Math.max(1, sidebarRect.width - (inset * 2));
+  const popupWidth = Math.min(320, availableWidth);
+
+  const availableHeight = Math.max(120, sidebarRect.height - (inset * 2));
+  const popupHeight = Math.min(defaultHeight, availableHeight);
+
+  popup.style.width = `${popupWidth}px`;
+  popup.style.maxHeight = `${availableHeight}px`;
+  popup.style.overflowY =
+    defaultHeight > availableHeight ? "auto" : "";
+
+  const left =
+    sidebarRect.left + Math.max(
+      inset,
+      (sidebarRect.width - popupWidth) / 2
+    );
+
+  const minTop = sidebarRect.top + inset;
+  const maxTop = Math.max(
+    minTop,
+    sidebarRect.bottom - popupHeight - inset
+  );
+
+  const top = Math.max(
+    minTop,
+    Math.min(preferredTop, maxTop)
+  );
+
+  popup.style.left = `${left}px`;
+  popup.style.top = `${top}px`;
+}
+
 function positionInstalledManagePopup(anchorButton) {
   if (!anchorButton || !installedManagePopup) return;
 
   const buttonRect = anchorButton.getBoundingClientRect();
-  const popupWidth = 320;
-const popupHeight = installedManagePopup?.offsetHeight || 235;
-const gap = 12;
 
-  let left = buttonRect.right + gap;
-  let top = buttonRect.top - 18;
-
-  if (left + popupWidth + 12 > window.innerWidth) {
-    left = Math.max(12, buttonRect.left - popupWidth - gap);
-  }
-
-  top = Math.max(12, Math.min(top, window.innerHeight - popupHeight - 12));
-
-  installedManagePopup.style.left = `${left}px`;
-  installedManagePopup.style.top = `${top}px`;
+  positionPopupInsideSidebar(
+    installedManagePopup,
+    buttonRect.top - 18,
+    235
+  );
 }
 
 function openInstalledUpdatePopup() {
@@ -3860,21 +3889,12 @@ function positionOfflinePopup() {
   if (!offlineOpenBtn || !offlinePopup) return;
 
   const buttonRect = offlineOpenBtn.getBoundingClientRect();
-  const popupWidth = 320;
-  const popupHeight = 300;
-  const gap = 12;
 
-  let left = buttonRect.right + gap;
-  let top = buttonRect.top - 18;
-
-  if (left + popupWidth + 12 > window.innerWidth) {
-    left = Math.max(12, buttonRect.left - popupWidth - gap);
-  }
-
-  top = Math.max(12, Math.min(top, window.innerHeight - popupHeight - 12));
-
-  offlinePopup.style.left = `${left}px`;
-  offlinePopup.style.top = `${top}px`;
+  positionPopupInsideSidebar(
+    offlinePopup,
+    buttonRect.top - 18,
+    300
+  );
 }
 
 function resetOfflinePopupScreen() {
@@ -3929,24 +3949,12 @@ function positionViewerCacheDeletePopup() {
   if (!viewerCacheClearBtn || !viewerCacheDeletePopup) return;
 
   const buttonRect = viewerCacheClearBtn.getBoundingClientRect();
-  const popupWidth = 320;
-  const popupHeight = viewerCacheDeletePopup.offsetHeight || 235;
-  const gap = 12;
 
-  let left = buttonRect.right + gap;
-  let top = buttonRect.top - 18;
-
-  if (left + popupWidth + 12 > window.innerWidth) {
-    left = Math.max(12, buttonRect.left - popupWidth - gap);
-  }
-
-  top = Math.max(
-    12,
-    Math.min(top, window.innerHeight - popupHeight - 12)
+  positionPopupInsideSidebar(
+    viewerCacheDeletePopup,
+    buttonRect.top - 18,
+    235
   );
-
-  viewerCacheDeletePopup.style.left = `${left}px`;
-  viewerCacheDeletePopup.style.top = `${top}px`;
 }
 
 function openViewerCacheDeletePopup() {
