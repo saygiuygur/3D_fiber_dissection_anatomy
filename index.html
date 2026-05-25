@@ -4417,20 +4417,6 @@ function restoreHotspotClickCamera(mv, cam) {
     mv.requestUpdate?.();
   } catch (_) {}
 }
-  
-const HOTSPOT_TIP_RELEASE_DURATION = 1000;
-
-let hotspotTipAnchor = null;
-let hotspotTipHideTimer = null;
-let hotspotTipPinned = false;
-let hotspotTipTrackRaf = 0;
-
-function clearHotspotTipHideTimer() {
-  if (hotspotTipHideTimer) {
-    clearTimeout(hotspotTipHideTimer);
-    hotspotTipHideTimer = null;
-  }
-}
 
 const HOTSPOT_TIP_RELEASE_DURATION = 1000;
 
