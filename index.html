@@ -7568,6 +7568,47 @@ animateCamera(activeMv,
 const prewarmDone = new Set();       // modelId
 let mvPrimeLock = Promise.resolve(); // serialize mvPrime usage
 
+async function prepareSelectedModelBaseStateIfNeeded(modelId, blobUrl) {
+  // The first visible model has no carried camera state capable of polluting
+  // its initial base radius, so do not delay initial atlas opening.
+  if (!cameraReady) return;
+
+  // Models already hidden-prepared by Performance or Balanced mode already
+  // have a reliable normal zoom-out radius.
+  if (prewarmDone.has(modelId) && baseRadiusByModel.has(modelId)) {
+    return;
+  }
+
+  await (mvPrimeLock = mvPrimeLock.then(async () => {
+    if (prewarmDone.has(modelId) && baseRadiusByModel.has(modelId)) {
+      return;
+    }
+
+    if (mvPrime.src !== blobUrl) {
+      await new Promise(resolve => {
+        const onLoad = () => resolve();
+        mvPrime.addEventListener("load", onLoad, { once: true });
+        mvPrime.src = blobUrl;
+      });
+    }
+
+    // Let model-viewer establish the true default framing before storing
+    // the base radius used by max-camera-orbit.
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
+    captureAutoFrameBase(mvPrime, modelId);
+    prewarmDone.add(modelId);
+
+    try {
+      mvPrime.removeAttribute("src");
+    } catch (_) {}
+
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+  }));
+}
+
 function computeShiftForModel(mv, modelId) {
 const bt = baseTarget.get(modelId);
 const ct = mv.getCameraTarget?.() || {x:bt?.x||0,y:bt?.y||0,z:bt?.z||0};
@@ -7737,10 +7778,13 @@ finalizeAfterBarrier();
 };
 idleMv.addEventListener('load', onIdleLoad, { once:true });
 
-// The selected model itself provides its base state through applyAfterLoad().
+// For a model not already prepared by the current loading mode, establish
+// its true default base radius before applying any carried focused camera.
+await prepareSelectedModelBaseStateIfNeeded(modelId, targetSrc);
+if (token !== swapToken) return;
+
 idleMv.src = targetSrc;
 return;
-}
 
 const onIdleLoad = () => {
 if (token !== swapToken) return;
@@ -7753,7 +7797,11 @@ try {
   const blobUrl = await downloadToBlobUrl(modelId);
   if (token !== swapToken) return;
 
-  // The selected model itself provides its base state through applyAfterLoad().
+  // Establish the true default base radius before a carried focused camera
+  // can become the model's mistaken maximum zoom-out distance.
+  await prepareSelectedModelBaseStateIfNeeded(modelId, blobUrl);
+  if (token !== swapToken) return;
+
   idleMv.src = blobUrl;
 } catch (_) {
   savingEnabled = true;
