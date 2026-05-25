@@ -138,7 +138,7 @@ transition:transform .18s ease;
 /* Collapsed vertical Dissection Steps tab */
 .sidebar-collapse-btn.collapsed{
 left:0;
-width:58px;
+width:48px;
 height:170px;
 border:1px solid #dedede;
 border-left:none;
@@ -152,7 +152,7 @@ overflow:visible;
 .sidebar-collapse-btn.collapsed .sidebar-collapse-label{
 display:block;
 position:absolute;
-left:26px;
+left:21px;
 top:50%;
 transform:translate(-50%, -50%) rotate(-90deg);
 white-space:nowrap;
@@ -1323,18 +1323,22 @@ pointer-events: none;
 }
 
 #hotspotTip{
-position: absolute;
-z-index: 60;
-display: none;
-padding: 6px 8px;
-border-radius: 8px;
-background: rgba(0,0,0,0.85);
-color: #fff;
-font-size: 12px;
-line-height: 1.2;
-pointer-events: none;
-max-width: 280px;
-white-space: nowrap;
+position:absolute;
+z-index:60;
+display:none;
+padding:5px 8px;
+border:2px solid #000;
+border-radius:8px;
+background:rgba(255,255,255,0.65);
+color:#000;
+font-size:12px;
+font-weight:600;
+line-height:1.2;
+pointer-events:none;
+max-width:280px;
+white-space:nowrap;
+box-sizing:border-box;
+transform:translate(-50%, calc(-100% - 7px));
 }
 
 .annOff .hotspot{ display:none !important; }
@@ -4091,6 +4095,10 @@ function syncSidebarResponsiveLayout() {
   }
 
   lastTouchPortraitLayout = touchPortrait;
+
+  // Keep desktop/landscape at the existing zoom-out limit,
+  // but allow additional zoom-out immediately after entering touch portrait.
+  applyMaxCameraOrbit(activeMv, currentShownId);
 }
 
 function collapsePortraitSidebarAfterModelSelection() {
@@ -4410,8 +4418,45 @@ function restoreHotspotClickCamera(mv, cam) {
   } catch (_) {}
 }
   
+const HOTSPOT_TIP_RELEASE_DURATION = 1000;
+
+let hotspotTipAnchor = null;
+let hotspotTipHideTimer = null;
+let hotspotTipPinned = false;
+let hotspotTipTrackRaf = 0;
+
+function clearHotspotTipHideTimer() {
+  if (hotspotTipHideTimer) {
+    clearTimeout(hotspotTipHideTimer);
+    hotspotTipHideTimer = null;
+  }
+}
+
+const HOTSPOT_TIP_RELEASE_DURATION = 1000;
+
+let hotspotTipAnchor = null;
+let hotspotTipHideTimer = null;
+let hotspotTipPinned = false;
+let hotspotTipTrackRaf = 0;
+
+function clearHotspotTipHideTimer() {
+  if (hotspotTipHideTimer) {
+    clearTimeout(hotspotTipHideTimer);
+    hotspotTipHideTimer = null;
+  }
+}
+
 function hideTip(){
+  clearHotspotTipHideTimer();
+
+  hotspotTipPinned = false;
+  hotspotTipAnchor = null;
   hotspotTip.style.display = 'none';
+
+  if (hotspotTipTrackRaf) {
+    cancelAnimationFrame(hotspotTipTrackRaf);
+    hotspotTipTrackRaf = 0;
+  }
 }
 
 function attachTip(el, slotName = null) {
@@ -4448,32 +4493,91 @@ function getHotspotAtClientPoint(clientX, clientY) {
   return null;
 }
 
-function showTipForHotspot(el, clientX, clientY) {
+function positionTipAboveHotspot(el) {
+  if (!el || !el.isConnected || hotspotTip.style.display === "none") {
+    hideTip();
+    return;
+  }
+
+  const wrapRect = viewerWrap.getBoundingClientRect();
+  const hotspotRect = el.getBoundingClientRect();
+
+  hotspotTip.style.left =
+    `${hotspotRect.left - wrapRect.left + (hotspotRect.width / 2)}px`;
+
+  hotspotTip.style.top =
+    `${hotspotRect.top - wrapRect.top}px`;
+}
+
+function trackVisibleHotspotTip() {
+  hotspotTipTrackRaf = 0;
+
+  if (!hotspotTipAnchor || hotspotTip.style.display === "none") {
+    return;
+  }
+
+  positionTipAboveHotspot(hotspotTipAnchor);
+
+  if (hotspotTipAnchor && hotspotTip.style.display !== "none") {
+    hotspotTipTrackRaf = requestAnimationFrame(trackVisibleHotspotTip);
+  }
+}
+
+function startHotspotTipTracking() {
+  if (!hotspotTipTrackRaf) {
+    hotspotTipTrackRaf = requestAnimationFrame(trackVisibleHotspotTip);
+  }
+}
+
+function showTipForHotspot(el) {
   const text = el?.dataset?.label || "";
+
   if (!text) {
     hideTip();
     return;
   }
 
+  if (hotspotTipAnchor && hotspotTipAnchor !== el) {
+    clearHotspotTipHideTimer();
+    hotspotTipPinned = false;
+  }
+
+  hotspotTipAnchor = el;
   hotspotTip.textContent = text;
   hotspotTip.style.display = "block";
 
-  const rect = viewerWrap.getBoundingClientRect();
-  hotspotTip.style.left = (clientX - rect.left + 12) + "px";
-  hotspotTip.style.top  = (clientY - rect.top + 12) + "px";
+  positionTipAboveHotspot(el);
+  startHotspotTipTracking();
 }
 
+function keepTipVisibleAfterRelease(el) {
+  if (!el) return;
+
+  showTipForHotspot(el);
+  clearHotspotTipHideTimer();
+
+  hotspotTipPinned = true;
+
+  hotspotTipHideTimer = setTimeout(() => {
+    hotspotTipHideTimer = null;
+    hotspotTipPinned = false;
+    hideTip();
+  }, HOTSPOT_TIP_RELEASE_DURATION);
+}
+  
 viewerWrap.addEventListener("pointermove", (e) => {
   if (isViewerUiEventTarget(e.target)) {
-    hideTip();
+    if (!hotspotTipPinned) {
+      hideTip();
+    }
     return;
   }
 
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
 
   if (hit) {
-    showTipForHotspot(hit, e.clientX, e.clientY);
-  } else {
+    showTipForHotspot(hit);
+  } else if (!hotspotTipPinned) {
     hideTip();
   }
 
@@ -4489,7 +4593,9 @@ viewerWrap.addEventListener("pointermove", (e) => {
 }, { passive:true });
 
 viewerWrap.addEventListener("pointerleave", () => {
-  hideTip();
+  if (!hotspotTipPinned) {
+    hideTip();
+  }
 }, { passive:true });
 
 viewerWrap.addEventListener("pointerdown", (e) => {
@@ -4497,6 +4603,10 @@ viewerWrap.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
 
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
+
+  if (hit) {
+    showTipForHotspot(hit);
+  }
 
   hotspotClickCandidate = hit
   ? {
@@ -4522,8 +4632,10 @@ viewerWrap.addEventListener("pointerup", (e) => {
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
   const releasedOnSameHotspot = hit === candidate.el;
 
-  if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
-  hideTip();
+ if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
+  // Keep the selected annotation label visible above its circle
+  // during the focus movement, then hide it after one second.
+  keepTipVisibleAfterRelease(candidate.el);
 
   // Remove the tiny accidental camera movement caused by click-down/up.
   restoreHotspotClickCamera(activeMv, candidate.startCam);
@@ -4537,13 +4649,15 @@ viewerWrap.addEventListener("pointerup", (e) => {
 }, { passive:true });
 
 viewerWrap.addEventListener("wheel", (e) => {
-  // Do not preventDefault.
-  // Model-viewer receives wheel normally because hotspots do not capture pointer events.
+  // A tooltip held after annotation release stays attached to that
+  // annotation during zoom until its one-second timeout expires.
+  if (hotspotTipPinned) {
+    return;
+  }
 
   const x = e.clientX;
   const y = e.clientY;
 
-  // Hide immediately because zoom may move the annotation away from the mouse.
   hideTip();
 
   requestAnimationFrame(() => {
@@ -4551,7 +4665,7 @@ viewerWrap.addEventListener("wheel", (e) => {
       const hit = getHotspotAtClientPoint(x, y);
 
       if (hit) {
-        showTipForHotspot(hit, x, y);
+        showTipForHotspot(hit);
       } else {
         hideTip();
       }
@@ -6738,6 +6852,7 @@ const baseTarget = new Map();
 const baseRadiusByModel = new Map();
 const apAxisByModel = new Map();
 const MAX_CAMERA_RADIUS_FACTOR = 1;
+const TOUCH_PORTRAIT_MAX_CAMERA_RADIUS_FACTOR = 1.5;
 
 function chooseApAxisForViewer(mv) {
 let dims = null;
@@ -6768,8 +6883,18 @@ if (!apAxisByModel.has(modelId)) apAxisByModel.set(modelId, chooseApAxisForViewe
 function applyMaxCameraOrbit(mv, modelId) {
 const base = baseRadiusByModel.get(modelId);
 if (!Number.isFinite(base) || base <= 0) return;
-const maxR = base * MAX_CAMERA_RADIUS_FACTOR;
+
+const radiusFactor = isTouchPortraitSidebarLayout()
+  ? TOUCH_PORTRAIT_MAX_CAMERA_RADIUS_FACTOR
+  : MAX_CAMERA_RADIUS_FACTOR;
+
+const maxR = base * radiusFactor;
+
 mv.setAttribute("max-camera-orbit", `auto auto ${maxR}m`);
+
+try {
+  mv.requestUpdate?.();
+} catch (_) {}
 }
 
 const EPS = 1e-4;
@@ -7066,21 +7191,37 @@ function handleFixedStepWheelZoom(mv, ev) {
   const absDelta = Math.abs(ev.deltaY);
   const zoomIn = ev.deltaY < 0;
 
-  // Pinch is normally reported as ctrlKey + wheel.
-  // Once a fine touchpad burst begins, keep treating the rest of that
-  // short burst as touchpad input even if individual deltas vary.
+  const interactionTarget =
+    ev.composedPath?.()[0] ||
+    ev.target ||
+    mv;
+
+  // Pinch gestures normally arrive as ctrlKey + wheel.
+  // Fine continuous pixel events are kept as touchpad input and accumulated.
+  // Line/page wheel events, and larger pixel wheel events, are treated as
+  // physical mouse-wheel steps and replaced by one controlled 100 px event.
   const isTouchpadInput =
     ev.ctrlKey ||
-    touchpadBurstActive ||
-    absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD;
+    (
+      ev.deltaMode === WheelEvent.DOM_DELTA_PIXEL &&
+      (
+        touchpadBurstActive ||
+        absDelta < TOUCHPAD_PIXEL_STEP_THRESHOLD
+      )
+    );
 
-     if (!isTouchpadInput) {
-    // Genuine physical mouse-wheel input remains native.
-    allowNativeZoomStep(ev, zoomIn);
+  if (!isTouchpadInput) {
+    // Block the device/browser-defined mouse wheel amount and replace it
+    // with exactly one standardized native model-viewer zoom step.
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+
+    replayOneNativeViewerZoomStep(interactionTarget, zoomIn);
     return;
   }
 
-  // Stop the weak/raw touchpad event from also changing zoom.
+  // Stop the weak/raw touchpad or pinch event from also changing zoom.
   ev.preventDefault();
   ev.stopPropagation();
   ev.stopImmediatePropagation();
@@ -7097,11 +7238,6 @@ function handleFixedStepWheelZoom(mv, ev) {
   }, 180);
 
   touchpadPixelBuffer += ev.deltaY;
-
-  const interactionTarget =
-    ev.composedPath?.()[0] ||
-    ev.target ||
-    mv;
 
   while (
     Math.abs(touchpadPixelBuffer) >= TOUCHPAD_PIXEL_STEP_THRESHOLD
