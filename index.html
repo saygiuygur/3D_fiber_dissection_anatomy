@@ -6838,7 +6838,7 @@ const baseTarget = new Map();
 const baseRadiusByModel = new Map();
 const apAxisByModel = new Map();
 const MAX_CAMERA_RADIUS_FACTOR = 1;
-const TOUCH_PORTRAIT_MAX_CAMERA_RADIUS_FACTOR = 1.5;
+const TOUCH_PORTRAIT_MAX_CAMERA_RADIUS_FACTOR = 1.75;
 
 function chooseApAxisForViewer(mv) {
 let dims = null;
@@ -7610,6 +7610,11 @@ mv.__hasOccListener = true;
 async function showModel(modelId) {
 const token = ++swapToken;
 
+// The visual camera carry-over and the 0–5 wheel limiter are separate states.
+// Preserve the logical wheel step from the outgoing visible model while the
+// incoming model is being downloaded, parsed, or prepared.
+const wheelZoomStepForThisSwap = wheelZoomStep;
+
 const camForThisSwap = cloneCarry(focusCarryCam.get(activeMv)) || readCamWithDelta(activeMv) || cloneCarry(latestCarryCam);
 savingEnabled = false;
 
@@ -7639,6 +7644,14 @@ if (token !== swapToken) return;
 swapViewersNow();
 currentShownId = modelId;
 cameraReady = true;
+
+// Restore only the fixed-wheel zoom counter.
+// The carried camera view is already correct and must not be modified here.
+wheelZoomStep = Math.max(
+  WHEEL_ZOOM_MIN_STEP,
+  Math.min(WHEEL_ZOOM_MAX_STEP, wheelZoomStepForThisSwap)
+);
+
 startLoop(activeMv);
 
 // Touchscreen pinch zoom can be overwritten by model-viewer's post-load framing.
