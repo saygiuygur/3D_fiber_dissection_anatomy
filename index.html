@@ -2359,6 +2359,11 @@ name: "AF",
 url: "models/DTI/AF.glb"
 },
 {
+id: "MdLF",
+name: "MdLF",
+url: "models/DTI/MdLF.glb"
+},
+{
 id: "IFOF",
 name: "IFOF",
 url: "models/DTI/IFOF.glb"
@@ -2370,14 +2375,15 @@ url: "models/DTI/UF.glb"
 }
 ];
     
-    const DTI_COLORS = {
+  const DTI_COLORS = {
   CST: "#0000FFFF",
   IFOF: "#FFFF00FF",
   SLF_I: "#00D5BBFF",
   SLF_II: "#00D5BBFF",
   SLF_III: "#00D5BBFF",
   UF: "#9C00FFFF",
-  AF: "#FF0000FF"
+  AF: "#FF0000FF",
+  MdLF: "#00D500FF"
 };
 
 const DTI_TRACT_INFORMATION = Object.freeze({
@@ -2405,7 +2411,12 @@ const DTI_TRACT_INFORMATION = Object.freeze({
     title: "Arcuate Fascicle",
     text: "The arcuate fasciculus is a long perisylvian association pathway connecting temporal language-related regions with frontal areas. It courses in close relationship with the SLF and can be examined as dorsal and ventral segments."
   },
-
+  
+  MdLF: {
+    title: "Middle Longitudinal Fascicle",
+    text: "Information about the middle longitudinal fascicle will be added here."
+  },
+  
   IFOF: {
     title: "Inferior Fronto-Occipital Fascicle",
     text: "The IFOF is a deep association pathway connecting the frontal lobe with posterior parietal and occipital regions. It narrows near the limen insulae and courses deep to the insular region before extending posteriorly."
