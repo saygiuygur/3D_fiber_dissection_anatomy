@@ -4688,10 +4688,10 @@ function showTipForHotspot(el) {
     return;
   }
 
-  if (hotspotTipAnchor && hotspotTipAnchor !== el) {
-    clearHotspotTipHideTimer();
-    hotspotTipPinned = false;
-  }
+  // Any active hover has priority over a tooltip waiting to disappear.
+  // This also means hovering another annotation immediately replaces it.
+  clearHotspotTipHideTimer();
+  hotspotTipPinned = false;
 
   hotspotTipAnchor = el;
   hotspotTip.textContent = text;
@@ -4701,8 +4701,8 @@ function showTipForHotspot(el) {
   startHotspotTipTracking();
 }
 
-function keepTipVisibleAfterRelease(el) {
-  if (!el) return;
+function keepTipVisibleForOneSecond(el = hotspotTipAnchor) {
+  if (!el || hotspotTip.style.display === "none") return;
 
   showTipForHotspot(el);
   clearHotspotTipHideTimer();
@@ -4711,15 +4711,18 @@ function keepTipVisibleAfterRelease(el) {
 
   hotspotTipHideTimer = setTimeout(() => {
     hotspotTipHideTimer = null;
-    hotspotTipPinned = false;
-    hideTip();
+
+    if (hotspotTipPinned && hotspotTipAnchor === el) {
+      hotspotTipPinned = false;
+      hideTip();
+    }
   }, HOTSPOT_TIP_RELEASE_DURATION);
 }
   
 viewerWrap.addEventListener("pointermove", (e) => {
   if (isViewerUiEventTarget(e.target)) {
-    if (!hotspotTipPinned) {
-      hideTip();
+    if (!hotspotTipPinned && hotspotTipAnchor) {
+      keepTipVisibleForOneSecond(hotspotTipAnchor);
     }
     return;
   }
@@ -4727,9 +4730,12 @@ viewerWrap.addEventListener("pointermove", (e) => {
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
 
   if (hit) {
+    // Hovering a circle displays it immediately and cancels any previous timer.
     showTipForHotspot(hit);
-  } else if (!hotspotTipPinned) {
-    hideTip();
+  } else if (!hotspotTipPinned && hotspotTipAnchor) {
+    // Pointer has left the last hovered annotation:
+    // keep its tooltip visible for up to one second.
+    keepTipVisibleForOneSecond(hotspotTipAnchor);
   }
 
   if (hotspotClickCandidate) {
@@ -4744,8 +4750,8 @@ viewerWrap.addEventListener("pointermove", (e) => {
 }, { passive:true });
 
 viewerWrap.addEventListener("pointerleave", () => {
-  if (!hotspotTipPinned) {
-    hideTip();
+  if (!hotspotTipPinned && hotspotTipAnchor) {
+    keepTipVisibleForOneSecond(hotspotTipAnchor);
   }
 }, { passive:true });
 
@@ -4786,7 +4792,7 @@ viewerWrap.addEventListener("pointerup", (e) => {
  if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
   // Keep the selected annotation label visible above its circle
   // during the focus movement, then hide it after one second.
-  keepTipVisibleAfterRelease(candidate.el);
+  keepTipVisibleForOneSecond(candidate.el);
 
   // Remove the tiny accidental camera movement caused by click-down/up.
   restoreHotspotClickCamera(activeMv, candidate.startCam);
