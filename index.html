@@ -1294,18 +1294,17 @@ margin:0;
 border:none;
 border-radius:50%;
 background:transparent;
-color:#1e88e5;
 cursor:pointer;
 box-sizing:border-box;
 touch-action:manipulation;
 }
 
 .dti-info-btn:hover{
-color:#156fca;
+background:rgba(0,0,0,0.035);
 }
 
 .dti-info-btn:focus-visible{
-outline:2px solid #1e88e5;
+outline:2px solid #757575;
 outline-offset:2px;
 }
 
@@ -6120,20 +6119,20 @@ if (!turnOn) {
     infoBtn.title = "Click for information about the tract";
 
     infoBtn.innerHTML = `
-      <svg viewBox="0 0 20 20" aria-hidden="true">
-        <circle cx="10" cy="10" r="7.75"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"></circle>
-        <circle cx="10" cy="6.5" r="1.15"
-          fill="currentColor"></circle>
-        <path d="M10 9.5v4.6"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"></path>
-      </svg>
-    `;
+  <svg viewBox="0 0 20 20" aria-hidden="true">
+    <circle cx="10" cy="10" r="7.75"
+      fill="none"
+      stroke="#d6d6d6"
+      stroke-width="2.5"></circle>
+    <circle cx="10" cy="6.5" r="1.15"
+      fill="#757575"></circle>
+    <path d="M10 9.5v4.6"
+      fill="none"
+      stroke="#757575"
+      stroke-width="2"
+      stroke-linecap="round"></path>
+  </svg>
+`;
 
     // The row itself is a label connected to the tract checkbox.
     // Stop the information-circle interaction before it can toggle the tract.
