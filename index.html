@@ -1278,6 +1278,102 @@ text-align:center;
 font-size:12px;
 color:#666;
 }
+
+/* Clickable information circle shown immediately left of each DTI status icon. */
+.dti-info-btn{
+position:relative;
+z-index:2;
+width:20px;
+height:20px;
+flex:0 0 20px;
+display:flex;
+align-items:center;
+justify-content:center;
+padding:0;
+margin:0;
+border:none;
+border-radius:50%;
+background:transparent;
+color:#1e88e5;
+cursor:pointer;
+box-sizing:border-box;
+touch-action:manipulation;
+}
+
+.dti-info-btn:hover{
+color:#156fca;
+}
+
+.dti-info-btn:focus-visible{
+outline:2px solid #1e88e5;
+outline-offset:2px;
+}
+
+.dti-info-btn svg{
+width:20px;
+height:20px;
+display:block;
+pointer-events:none;
+}
+
+/* DTI tract information pop-up. */
+.dti-info-popup{
+position:fixed;
+z-index:70;
+display:none;
+width:min(320px, calc(100vw - 24px));
+max-height:calc(100dvh - 24px);
+overflow-y:auto;
+padding:15px 16px 16px;
+box-sizing:border-box;
+border:1px solid rgba(0,0,0,0.12);
+border-radius:14px;
+background:rgba(255,255,255,0.97);
+box-shadow:0 12px 36px rgba(0,0,0,0.22);
+}
+
+.dti-info-popup.open{
+display:block;
+}
+
+.dti-info-close-btn{
+position:absolute;
+right:8px;
+top:7px;
+width:28px;
+height:28px;
+display:flex;
+align-items:center;
+justify-content:center;
+padding:0;
+border:none;
+border-radius:50%;
+background:transparent;
+color:#555;
+font-size:21px;
+line-height:1;
+cursor:pointer;
+}
+
+.dti-info-close-btn:hover{
+background:#eeeeee;
+}
+
+.dti-info-heading{
+margin:0 30px 10px 0;
+font-size:16px;
+font-weight:700;
+line-height:1.3;
+color:#111;
+}
+
+.dti-info-text{
+margin:0;
+font-size:13px;
+line-height:1.5;
+color:#444;
+white-space:pre-line;
+}
   
 .dti-tip{
 font-size:11px;
@@ -1855,6 +1951,21 @@ Select a model, use the mouse to rotate, zoom, and pan, and click annotations to
   </button>
 </div>
 
+<div id="dtiInfoPopup"
+  class="dti-info-popup"
+  role="dialog"
+  aria-modal="false"
+  aria-labelledby="dtiInfoTitle">
+
+  <button id="dtiInfoCloseBtn"
+    class="dti-info-close-btn"
+    type="button"
+    aria-label="Close tract information">×</button>
+
+  <h4 id="dtiInfoTitle" class="dti-info-heading"></h4>
+  <p id="dtiInfoText" class="dti-info-text"></p>
+</div>
+
 <model-viewer id="mvA" class="viewer shownViewer"
 camera-controls interaction-prompt="none" exposure="1" shadow-intensity="1"
 min-camera-orbit="auto auto 0m"></model-viewer>
@@ -2269,6 +2380,43 @@ url: "models/DTI/UF.glb"
   UF: "#9C00FFFF",
   AF: "#FF0000FF"
 };
+
+const DTI_TRACT_INFORMATION = Object.freeze({
+  CST: {
+    title: "Corticospinal Tract (CST)",
+    text: "Information about the corticospinal tract will be added here."
+  },
+
+  SLF_I: {
+    title: "Superior Longitudinal Fascicle I (SLF I)",
+    text: "Information about the superior longitudinal fascicle I will be added here."
+  },
+
+  SLF_II: {
+    title: "Superior Longitudinal Fascicle II (SLF II)",
+    text: "Information about the superior longitudinal fascicle II will be added here."
+  },
+
+  SLF_III: {
+    title: "Superior Longitudinal Fascicle III (SLF III)",
+    text: "Information about the superior longitudinal fascicle III will be added here."
+  },
+
+  AF: {
+    title: "Arcuate Fascicle (AF)",
+    text: "Information about the arcuate fascicle will be added here."
+  },
+
+  IFOF: {
+    title: "Inferior Fronto-Occipital Fascicle (IFOF)",
+    text: "Information about the inferior fronto-occipital fascicle will be added here."
+  },
+
+  UF: {
+    title: "Uncinate Fascicle (UF)",
+    text: "Information about the uncinate fascicle will be added here."
+  }
+});
 function makeAnnotations(modelId, names) {
 return names.map((name, i) => {
 const rule = ANNOTATION_RULES[modelId]?.[name] || {};
@@ -2327,6 +2475,12 @@ const annoLabel = document.getElementById('annoLabel');
 const dtiPanel = document.getElementById('dtiPanel');
 const dtiList = document.getElementById('dtiList');
 const dtiCollapseBtn = document.getElementById('dtiCollapseBtn');
+
+const dtiInfoPopup = document.getElementById('dtiInfoPopup');
+const dtiInfoCloseBtn = document.getElementById('dtiInfoCloseBtn');
+const dtiInfoTitle = document.getElementById('dtiInfoTitle');
+const dtiInfoText = document.getElementById('dtiInfoText');
+let dtiInfoAnchorBtn = null;
 
 const browserOfflineSection = document.getElementById('browserOfflineSection');
 
@@ -4168,6 +4322,10 @@ function setDtiPanelCollapsed(collapsed) {
   dtiCollapseBtn.title =
     collapsed ? "Expand DTI tracts panel" : "Collapse DTI tracts panel";
 
+  if (collapsed) {
+    closeDtiInfoPopup();
+  }
+
   try {
     localStorage.setItem(DTI_PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
   } catch (_) {}
@@ -4458,9 +4616,9 @@ function attachTip(el, slotName = null) {
 }
 
 function isViewerUiEventTarget(target) {
-  return !!target?.closest?.("#dtiPanel, #annoNav, .sidebar");
+  return !!target?.closest?.("#dtiPanel, #dtiInfoPopup, #annoNav, .sidebar");
 }
-
+  
 function getHotspotAtClientPoint(clientX, clientY) {
   if (!activeMv) return null;
 
@@ -5796,6 +5954,75 @@ function initModelOpacitySelector() {
 
   setModelOpacity(initial);
 }
+
+function positionDtiInfoPopup(anchorButton) {
+  if (!anchorButton || !dtiInfoPopup) return;
+
+  const anchorRect = anchorButton.getBoundingClientRect();
+  const popupRect = dtiInfoPopup.getBoundingClientRect();
+  const viewportInset = 12;
+  const gap = 10;
+
+  // Prefer opening to the left of the right-side DTI panel.
+  let left = anchorRect.left - popupRect.width - gap;
+
+  // On narrow portrait screens, keep the pop-up fully inside the viewport.
+  if (left < viewportInset) {
+    left = Math.max(
+      viewportInset,
+      window.innerWidth - popupRect.width - viewportInset
+    );
+  }
+
+  left = Math.max(
+    viewportInset,
+    Math.min(left, window.innerWidth - popupRect.width - viewportInset)
+  );
+
+  let top = anchorRect.top - 10;
+
+  top = Math.max(
+    viewportInset,
+    Math.min(top, window.innerHeight - popupRect.height - viewportInset)
+  );
+
+  dtiInfoPopup.style.left = `${left}px`;
+  dtiInfoPopup.style.top = `${top}px`;
+}
+
+function openDtiInfoPopup(dti, anchorButton) {
+  if (!dtiInfoPopup || !dtiInfoTitle || !dtiInfoText || !dti) return;
+
+  const info = DTI_TRACT_INFORMATION[dti.id] || {
+    title: dti.name,
+    text: "Information about this tract will be added here."
+  };
+
+  dtiInfoTitle.textContent = info.title;
+  dtiInfoText.textContent = info.text;
+  dtiInfoAnchorBtn = anchorButton;
+
+  dtiInfoPopup.classList.add("open");
+  positionDtiInfoPopup(anchorButton);
+}
+
+function closeDtiInfoPopup() {
+  dtiInfoPopup?.classList.remove("open");
+  dtiInfoAnchorBtn = null;
+}
+
+dtiInfoCloseBtn?.addEventListener("click", () => {
+  closeDtiInfoPopup();
+});
+
+window.addEventListener("resize", () => {
+  if (
+    dtiInfoPopup?.classList.contains("open") &&
+    dtiInfoAnchorBtn
+  ) {
+    positionDtiInfoPopup(dtiInfoAnchorBtn);
+  }
+});
   
 function buildDtiListOnce() {
   if (!dtiList) return;
@@ -5878,15 +6105,61 @@ if (!turnOn) {
     dot.className = "dti-dot";
     dot.setAttribute("aria-hidden", "true");
 
-    const name = document.createElement('div');
+        const name = document.createElement('div');
     name.className = "dti-name";
     name.textContent = dti.name;
+
+    const infoBtn = document.createElement('span');
+    infoBtn.className = "dti-info-btn";
+    infoBtn.setAttribute("role", "button");
+    infoBtn.setAttribute("tabindex", "0");
+    infoBtn.setAttribute(
+      "aria-label",
+      `Information about ${dti.name}`
+    );
+    infoBtn.title = "Click for information about the tract";
+
+    infoBtn.innerHTML = `
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="7.75"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"></circle>
+        <circle cx="10" cy="6.5" r="1.15"
+          fill="currentColor"></circle>
+        <path d="M10 9.5v4.6"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"></path>
+      </svg>
+    `;
+
+    // The row itself is a label connected to the tract checkbox.
+    // Stop the information-circle interaction before it can toggle the tract.
+    infoBtn.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
+
+    infoBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openDtiInfoPopup(dti, infoBtn);
+    });
+
+    infoBtn.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      openDtiInfoPopup(dti, infoBtn);
+    });
 
     const status = document.createElement('div');
     status.className = "dti-status";
     status.textContent = "";
 
-    dtiUi.set(dti.id, { checkbox, status });
+    dtiUi.set(dti.id, { checkbox, status, infoBtn });
 
     refreshDtiMeta(dti.id);
 
@@ -5898,6 +6171,7 @@ if (!turnOn) {
     row.appendChild(checkbox);
     row.appendChild(dot);
     row.appendChild(name);
+    row.appendChild(infoBtn);
     row.appendChild(status);
     dtiList.appendChild(row);
   }
