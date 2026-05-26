@@ -4589,6 +4589,7 @@ let hotspotTipAnchor = null;
 let hotspotTipHideTimer = null;
 let hotspotTipPinned = false;
 let hotspotTipTrackRaf = 0;
+let hotspotTouchHoldPointerId = null;
 
 function clearHotspotTipHideTimer() {
   if (hotspotTipHideTimer) {
@@ -4602,6 +4603,7 @@ function hideTip(){
 
   hotspotTipPinned = false;
   hotspotTipAnchor = null;
+  hotspotTouchHoldPointerId = null;
   hotspotTip.style.display = 'none';
 
   if (hotspotTipTrackRaf) {
@@ -4688,10 +4690,10 @@ function showTipForHotspot(el) {
     return;
   }
 
-  // Any active hover has priority over a tooltip waiting to disappear.
-  // This also means hovering another annotation immediately replaces it.
-  clearHotspotTipHideTimer();
-  hotspotTipPinned = false;
+  if (hotspotTipAnchor && hotspotTipAnchor !== el) {
+    clearHotspotTipHideTimer();
+    hotspotTipPinned = false;
+  }
 
   hotspotTipAnchor = el;
   hotspotTip.textContent = text;
@@ -4701,8 +4703,8 @@ function showTipForHotspot(el) {
   startHotspotTipTracking();
 }
 
-function keepTipVisibleForOneSecond(el = hotspotTipAnchor) {
-  if (!el || hotspotTip.style.display === "none") return;
+function keepTipVisibleAfterRelease(el) {
+  if (!el) return;
 
   showTipForHotspot(el);
   clearHotspotTipHideTimer();
@@ -4711,47 +4713,62 @@ function keepTipVisibleForOneSecond(el = hotspotTipAnchor) {
 
   hotspotTipHideTimer = setTimeout(() => {
     hotspotTipHideTimer = null;
-
-    if (hotspotTipPinned && hotspotTipAnchor === el) {
-      hotspotTipPinned = false;
-      hideTip();
-    }
+    hotspotTipPinned = false;
+    hideTip();
   }, HOTSPOT_TIP_RELEASE_DURATION);
 }
   
 viewerWrap.addEventListener("pointermove", (e) => {
+  const holdingTouchTooltip =
+    e.pointerType === "touch" &&
+    hotspotTouchHoldPointerId === e.pointerId &&
+    !!hotspotTipAnchor;
+
   if (isViewerUiEventTarget(e.target)) {
-    if (!hotspotTipPinned && hotspotTipAnchor) {
-      keepTipVisibleForOneSecond(hotspotTipAnchor);
+    if (!hotspotTipPinned && !holdingTouchTooltip) {
+      hideTip();
     }
     return;
   }
 
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
 
-  if (hit) {
-    // Hovering a circle displays it immediately and cancels any previous timer.
+  if (holdingTouchTooltip) {
+    // A touch that began on an annotation keeps that same tooltip visible
+    // while the finger rotates or moves the model.
+  } else if (hit) {
     showTipForHotspot(hit);
-  } else if (!hotspotTipPinned && hotspotTipAnchor) {
-    // Pointer has left the last hovered annotation:
-    // keep its tooltip visible for up to one second.
-    keepTipVisibleForOneSecond(hotspotTipAnchor);
+  } else if (!hotspotTipPinned) {
+    hideTip();
   }
 
-  if (hotspotClickCandidate) {
+  if (
+    hotspotClickCandidate &&
+    hotspotClickCandidate.pointerId === e.pointerId
+  ) {
     const dx = e.clientX - hotspotClickCandidate.startX;
     const dy = e.clientY - hotspotClickCandidate.startY;
 
     if (Math.sqrt(dx * dx + dy * dy) > HOTSPOT_CLICK_MOVE_THRESHOLD) {
       hotspotClickCandidate.moved = true;
-      hideTip();
+
+      // Mouse dragging keeps the original behavior and removes the tooltip.
+      // Touch dragging keeps it visible until that finger is released.
+      if (!holdingTouchTooltip) {
+        hideTip();
+      }
     }
   }
 }, { passive:true });
 
-viewerWrap.addEventListener("pointerleave", () => {
-  if (!hotspotTipPinned && hotspotTipAnchor) {
-    keepTipVisibleForOneSecond(hotspotTipAnchor);
+viewerWrap.addEventListener("pointerleave", (e) => {
+  const holdingTouchTooltip =
+    e.pointerType === "touch" &&
+    hotspotTouchHoldPointerId === e.pointerId &&
+    !!hotspotTipAnchor;
+
+  if (!hotspotTipPinned && !holdingTouchTooltip) {
+    hideTip();
   }
 }, { passive:true });
 
@@ -4762,11 +4779,20 @@ viewerWrap.addEventListener("pointerdown", (e) => {
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
 
   if (hit) {
+    if (e.pointerType === "touch") {
+      // A new touch on an annotation overrides any existing release timer
+      // and keeps the tooltip visible until that touch ends.
+      clearHotspotTipHideTimer();
+      hotspotTipPinned = false;
+      hotspotTouchHoldPointerId = e.pointerId;
+    }
+
     showTipForHotspot(hit);
   }
 
   hotspotClickCandidate = hit
   ? {
+      pointerId: e.pointerId,
       el: hit,
       slotName: hit.dataset.slotName || "",
       startX: e.clientX,
@@ -4781,7 +4807,23 @@ viewerWrap.addEventListener("pointerdown", (e) => {
 }, { passive:true });
 
 viewerWrap.addEventListener("pointerup", (e) => {
-  if (!hotspotClickCandidate) return;
+  const releasingHeldTouch =
+    e.pointerType === "touch" &&
+    hotspotTouchHoldPointerId === e.pointerId;
+
+  if (releasingHeldTouch) {
+    hotspotTouchHoldPointerId = null;
+  }
+
+  if (
+    !hotspotClickCandidate ||
+    hotspotClickCandidate.pointerId !== e.pointerId
+  ) {
+    if (releasingHeldTouch && !hotspotTipPinned) {
+      hideTip();
+    }
+    return;
+  }
 
   const candidate = hotspotClickCandidate;
   hotspotClickCandidate = null;
@@ -4789,20 +4831,44 @@ viewerWrap.addEventListener("pointerup", (e) => {
   const hit = getHotspotAtClientPoint(e.clientX, e.clientY);
   const releasedOnSameHotspot = hit === candidate.el;
 
- if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
-  // Keep the selected annotation label visible above its circle
-  // during the focus movement, then hide it after one second.
-  keepTipVisibleForOneSecond(candidate.el);
+  if (!candidate.moved && releasedOnSameHotspot && candidate.slotName) {
+    // Existing focus behavior remains unchanged:
+    // after a successful annotation tap/click, keep the tooltip for one second.
+    keepTipVisibleAfterRelease(candidate.el);
 
-  // Remove the tiny accidental camera movement caused by click-down/up.
-  restoreHotspotClickCamera(activeMv, candidate.startCam);
+    // Remove the tiny accidental camera movement caused by click-down/up.
+    restoreHotspotClickCamera(activeMv, candidate.startCam);
 
-  setSelectedAnnoBySlot(candidate.slotName);
-  focusHotspot(candidate.slotName);
-}
+    setSelectedAnnoBySlot(candidate.slotName);
+    focusHotspot(candidate.slotName);
+    return;
+  }
 
-  // If mouse moved before release, do nothing here.
+  // A touch drag beginning on an annotation keeps the tooltip while dragging,
+  // but removes it immediately when that touch is released without selecting it.
+  if (releasingHeldTouch) {
+    hideTip();
+  }
+
+  // Mouse dragging retains the previous behavior.
   // Model-viewer already handled the drag normally.
+}, { passive:true });
+
+viewerWrap.addEventListener("pointercancel", (e) => {
+  if (
+    hotspotClickCandidate &&
+    hotspotClickCandidate.pointerId === e.pointerId
+  ) {
+    hotspotClickCandidate = null;
+  }
+
+  if (
+    e.pointerType === "touch" &&
+    hotspotTouchHoldPointerId === e.pointerId
+  ) {
+    hotspotTouchHoldPointerId = null;
+    hideTip();
+  }
 }, { passive:true });
 
 viewerWrap.addEventListener("wheel", (e) => {
